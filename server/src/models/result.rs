@@ -49,3 +49,64 @@ pub struct FailingTest {
     /// Severity level of the test failure.
     pub severity: String,
 }
+
+/// Validation results for a single CSAF document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentValidation {
+    /// CSAF tracking ID (e.g. `RHSA-2024:1234`).
+    pub tracking_id: String,
+    /// Document title from the CSAF metadata.
+    pub title: String,
+    /// URL where the document was discovered.
+    pub url: String,
+    /// Per-profile validation results.
+    pub profiles: DocumentProfileResults,
+    /// Signature validation error message, if the signature was invalid.
+    pub signature_error: Option<String>,
+    /// Whether a signature file was present for this document.
+    pub signature_present: bool,
+}
+
+/// Per-profile failure information for a single document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentProfileResults {
+    /// Failures in the basic profile.
+    pub basic: Option<DocumentProfileDetail>,
+    /// Failures in the extended profile.
+    pub extended: Option<DocumentProfileDetail>,
+    /// Failures in the full profile.
+    pub full: Option<DocumentProfileDetail>,
+}
+
+/// Detail of test failures for one profile on one document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentProfileDetail {
+    /// Whether this profile passed (zero failures).
+    pub passed: bool,
+    /// Total number of check errors for this profile.
+    pub error_count: u64,
+    /// Individual failing tests.
+    pub failing_tests: Vec<DocumentCheckFailure>,
+}
+
+/// A single check failure on a document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentCheckFailure {
+    /// Test identifier (e.g. `6.1.27.5`).
+    pub test_id: String,
+    /// Human-readable failure description.
+    pub message: String,
+}
+
+/// Paginated response wrapper for document validation results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedDocuments {
+    /// The current page of document results.
+    pub items: Vec<DocumentValidation>,
+    /// Total number of documents matching the query.
+    pub total: u64,
+    /// Zero-based offset of the first item in this page.
+    pub offset: u64,
+    /// Maximum items per page.
+    pub limit: u64,
+}

@@ -1,3 +1,4 @@
+pub mod documents;
 pub mod git_repo;
 pub mod results;
 pub mod state;
@@ -6,7 +7,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::models::{metrics::MetricsTimeSeries, result::ProviderSummary, state::SyncState};
+use crate::models::{
+    metrics::MetricsTimeSeries,
+    result::{DocumentValidation, PaginatedDocuments, ProviderSummary},
+    state::SyncState,
+};
 
 /// Manages on-disk persistence for repos, state, results, and metrics.
 pub struct Storage {
@@ -106,5 +111,30 @@ impl Storage {
         let data = serde_json::to_string_pretty(metrics)?;
         tokio::fs::write(&path, data).await?;
         Ok(())
+    }
+
+    /// Replaces all per-document validation results for a provider.
+    pub fn save_documents(&self, domain: &str, docs: &[DocumentValidation]) -> Result<()> {
+        documents::save_documents(&self.results_dir, domain, docs)
+    }
+
+    /// Loads paginated document validation results for a provider.
+    pub fn load_documents_paginated(
+        &self,
+        domain: &str,
+        offset: u64,
+        limit: u64,
+        status_filter: Option<&str>,
+    ) -> Result<Option<PaginatedDocuments>> {
+        documents::load_documents_paginated(&self.results_dir, domain, offset, limit, status_filter)
+    }
+
+    /// Loads a single document's validation results by tracking ID.
+    pub fn load_document(
+        &self,
+        domain: &str,
+        tracking_id: &str,
+    ) -> Result<Option<DocumentValidation>> {
+        documents::load_document(&self.results_dir, domain, tracking_id)
     }
 }

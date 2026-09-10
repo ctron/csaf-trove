@@ -6,7 +6,9 @@ use leptos_router::{
 
 use crate::{
     components::theme_toggle::ThemeToggle,
-    pages::{home::HomePage, provider::ProviderPage, sync_status::SyncStatusPage},
+    pages::{
+        document::DocumentPage, home::HomePage, provider::ProviderPage, sync_status::SyncStatusPage,
+    },
 };
 
 #[component]
@@ -28,6 +30,7 @@ pub fn App() -> impl IntoView {
                     <Routes fallback=|| view! { <p>"Page not found."</p> }>
                         <Route path=path!("/") view=HomePage />
                         <Route path=path!("/providers/:domain") view=ProviderPage />
+                        <Route path=path!("/providers/:domain/documents/:tracking_id") view=DocumentPage />
                         <Route path=path!("/sync") view=SyncStatusPage />
                     </Routes>
                 </div>

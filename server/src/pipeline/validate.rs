@@ -3,10 +3,17 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use anyhow::Result;
 use csaf_walker::{
     check::CheckError,
+    common::{
+        utils::{openpgp::PublicKey, url::Urlify},
+        validate::{
+            ValidationOptions, digest::validate_digest, openpgp::validate_signature,
+            source::KeySource,
+        },
+    },
     retrieve::{RetrievedAdvisory, RetrievingVisitor},
-    source::FileSource,
+    source::{FileSource, Source as CsafSource},
     verification::{
-        VerifiedAdvisory, VerifyingVisitor,
+        VerificationError, VerifiedAdvisory, VerifyingVisitor,
         check::{Check, CsafValidation},
     },
     walker::Walker,
@@ -16,15 +23,43 @@ use parking_lot::Mutex;
 use crate::{
     AppState,
     models::{
-        result::{FailingTest, ProfileResults, ProfileSummary, ProviderSummary},
+        result::{
+            DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
+            DocumentValidation, FailingTest, ProfileResults, ProfileSummary, ProviderSummary,
+        },
         source::Source,
     },
 };
 
 #[derive(Debug)]
 struct DocumentResult {
+    /// CSAF tracking ID.
+    tracking_id: String,
+    /// Document title.
+    title: String,
+    /// Discovery URL.
+    url: String,
+    /// Profile name → check errors.
     failures: HashMap<String, Vec<CheckError>>,
+    /// Profile names that passed.
     successes: Vec<String>,
+    /// Signature/digest error message, if any.
+    signature_error: Option<String>,
+    /// Whether a signature file was present.
+    signature_present: bool,
+}
+
+/// Loads OpenPGP public keys from the provider metadata in the worktree.
+async fn load_keys(file_source: &FileSource) -> Result<Vec<PublicKey>> {
+    let metadata = file_source.load_metadata().await?;
+    let mut keys = Vec::with_capacity(metadata.public_openpgp_keys.len());
+    for key in &metadata.public_openpgp_keys {
+        match file_source.load_public_key(key.into()).await {
+            Ok(pk) => keys.push(pk),
+            Err(e) => tracing::warn!("Failed to load public key: {e}"),
+        }
+    }
+    Ok(keys)
 }
 
 /// Validates all documents in the worktree against basic, extended, and full CSAF profiles.
@@ -38,6 +73,12 @@ pub async fn validate_provider(
 
     let file_source = FileSource::new(worktree_dir, None)?;
 
+    let keys = Arc::new(load_keys(&file_source).await.unwrap_or_else(|e| {
+        tracing::warn!("Failed to load keys for {domain}: {e}");
+        vec![]
+    }));
+    let validation_options = Arc::new(ValidationOptions::new());
+
     let results: Arc<Mutex<Vec<DocumentResult>>> = Arc::new(Mutex::new(Vec::new()));
     let results_ref = results.clone();
 
@@ -48,24 +89,88 @@ pub async fn validate_provider(
     ];
 
     let verifier = VerifyingVisitor::with_checks(
-        move |result: Result<VerifiedAdvisory<RetrievedAdvisory, String>, _>| {
+        move |result: Result<
+            VerifiedAdvisory<RetrievedAdvisory, String>,
+            VerificationError<_, RetrievedAdvisory>,
+        >| {
             let results = results_ref.clone();
+            let keys = keys.clone();
+            let opts = validation_options.clone();
             async move {
-                if let Ok(verified) = result {
-                    let failures: HashMap<String, Vec<CheckError>> = verified
-                        .failures
-                        .into_iter()
-                        .map(|(k, v)| (k.to_string(), v))
-                        .collect();
-                    let successes: Vec<String> = verified
-                        .successes
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect();
-                    results.lock().push(DocumentResult {
-                        failures,
-                        successes,
-                    });
+                match result {
+                    Ok(verified) => {
+                        let tracking_id = verified.csaf.document().tracking().id().to_string();
+                        let title = verified.csaf.document().title().to_string();
+                        let url = verified.advisory.discovered.url.to_string();
+
+                        let signature_present = verified.advisory.signature.is_some();
+                        let mut sig_errors = Vec::new();
+
+                        if let Some(sig) = &verified.advisory.signature
+                            && let Err(e) =
+                                validate_signature(&opts, &keys, sig, &verified.advisory.data)
+                        {
+                            sig_errors.push(format!("Invalid signature: {e}"));
+                        }
+
+                        if let Err((expected, actual)) = validate_digest(&verified.advisory.sha256)
+                        {
+                            sig_errors.push(format!(
+                                "SHA-256 mismatch: expected {expected}, got {actual}"
+                            ));
+                        }
+                        if let Err((expected, actual)) = validate_digest(&verified.advisory.sha512)
+                        {
+                            sig_errors.push(format!(
+                                "SHA-512 mismatch: expected {expected}, got {actual}"
+                            ));
+                        }
+
+                        let signature_error = if sig_errors.is_empty() {
+                            None
+                        } else {
+                            Some(sig_errors.join("; "))
+                        };
+
+                        let failures: HashMap<String, Vec<CheckError>> = verified
+                            .failures
+                            .into_iter()
+                            .map(|(k, v)| (k.to_string(), v))
+                            .collect();
+                        let successes: Vec<String> = verified
+                            .successes
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect();
+
+                        results.lock().push(DocumentResult {
+                            tracking_id,
+                            title,
+                            url,
+                            failures,
+                            successes,
+                            signature_error,
+                            signature_present,
+                        });
+                    }
+                    Err(e) => {
+                        let url = e.url().to_string();
+                        let tracking_id = url
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&url)
+                            .trim_end_matches(".json")
+                            .to_string();
+                        results.lock().push(DocumentResult {
+                            tracking_id,
+                            title: format!("Parse error: {e}"),
+                            url,
+                            failures: HashMap::new(),
+                            successes: vec![],
+                            signature_error: Some(format!("Document error: {e}")),
+                            signature_present: false,
+                        });
+                    }
                 }
                 Ok::<_, anyhow::Error>(())
             }
@@ -87,11 +192,58 @@ pub async fn validate_provider(
     let summary = build_summary(domain, &results);
     state.storage.save_summary(domain, &summary).await?;
 
+    let documents = build_document_results(&results);
+    state.storage.save_documents(domain, &documents)?;
+
     tracing::info!(
         "Validation complete for {domain}: {} documents",
         results.len()
     );
     Ok(())
+}
+
+/// Converts internal results into serializable document validation records.
+fn build_document_results(results: &[DocumentResult]) -> Vec<DocumentValidation> {
+    results
+        .iter()
+        .map(|doc| DocumentValidation {
+            tracking_id: doc.tracking_id.clone(),
+            title: doc.title.clone(),
+            url: doc.url.clone(),
+            profiles: DocumentProfileResults {
+                basic: build_doc_profile_detail(doc, "basic"),
+                extended: build_doc_profile_detail(doc, "extended"),
+                full: build_doc_profile_detail(doc, "full"),
+            },
+            signature_error: doc.signature_error.clone(),
+            signature_present: doc.signature_present,
+        })
+        .collect()
+}
+
+/// Builds per-profile detail for a single document.
+fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<DocumentProfileDetail> {
+    if let Some(errors) = doc.failures.get(profile) {
+        Some(DocumentProfileDetail {
+            passed: false,
+            error_count: errors.len() as u64,
+            failing_tests: errors
+                .iter()
+                .map(|e| DocumentCheckFailure {
+                    test_id: e.id.to_string(),
+                    message: e.message.to_string(),
+                })
+                .collect(),
+        })
+    } else if doc.successes.iter().any(|s| s == profile) {
+        Some(DocumentProfileDetail {
+            passed: true,
+            error_count: 0,
+            failing_tests: vec![],
+        })
+    } else {
+        None
+    }
 }
 
 fn build_summary(domain: &str, results: &[DocumentResult]) -> ProviderSummary {

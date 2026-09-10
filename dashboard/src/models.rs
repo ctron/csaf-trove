@@ -70,3 +70,41 @@ pub struct JobStatus {
     pub documents_total: u64,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentValidation {
+    pub tracking_id: String,
+    pub title: String,
+    pub url: String,
+    pub profiles: DocumentProfileResults,
+    pub signature_error: Option<String>,
+    pub signature_present: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentProfileResults {
+    pub basic: Option<DocumentProfileDetail>,
+    pub extended: Option<DocumentProfileDetail>,
+    pub full: Option<DocumentProfileDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentProfileDetail {
+    pub passed: bool,
+    pub error_count: u64,
+    pub failing_tests: Vec<DocumentCheckFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentCheckFailure {
+    pub test_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedDocuments {
+    pub items: Vec<DocumentValidation>,
+    pub total: u64,
+    pub offset: u64,
+    pub limit: u64,
+}

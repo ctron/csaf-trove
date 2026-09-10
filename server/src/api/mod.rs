@@ -10,7 +10,12 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         web::scope("/providers")
             .route("", web::get().to(providers::list))
             .route("/{domain}", web::get().to(providers::detail))
-            .route("/{domain}/history", web::get().to(providers::history)),
+            .route("/{domain}/history", web::get().to(providers::history))
+            .route("/{domain}/document", web::get().to(providers::documents))
+            .route(
+                "/{domain}/document/{tracking_id}",
+                web::get().to(providers::document_detail),
+            ),
     )
     .service(
         web::scope("/sync")
