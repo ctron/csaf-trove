@@ -14,13 +14,15 @@ use std::{
     time::Duration,
 };
 
-use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
+use actix_web::{App, HttpServer, web};
+use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
 use clap::Parser;
-use rust_embed::Embed;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tracing_actix_web::TracingLogger;
+
+include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 use crate::{
     models::{source::Source, state::JobStatus},
@@ -156,32 +158,6 @@ impl AppState {
     }
 }
 
-/// Pre-built WASM dashboard files embedded at compile time.
-#[derive(Embed)]
-#[folder = "../dashboard/dist/"]
-struct DashboardAssets;
-
-/// Serves embedded dashboard assets, falling back to `index.html` for SPA routing.
-async fn serve_dashboard(req: HttpRequest) -> HttpResponse {
-    let path = req.path().trim_start_matches('/');
-    let path = if path.is_empty() { "index.html" } else { path };
-
-    match DashboardAssets::get(path) {
-        Some(file) => {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            HttpResponse::Ok()
-                .content_type(mime.as_ref())
-                .body(file.data.into_owned())
-        }
-        None => match DashboardAssets::get("index.html") {
-            Some(file) => HttpResponse::Ok()
-                .content_type("text/html")
-                .body(file.data.into_owned()),
-            None => HttpResponse::NotFound().finish(),
-        },
-    }
-}
-
 /// Reads a secret from a plain text file, trimming whitespace.
 fn read_secret_file(path: &Path) -> Result<String> {
     let content = fs::read_to_string(path)
@@ -283,18 +259,14 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting server on {listen}");
 
-    anyhow::ensure!(
-        DashboardAssets::get("index.html").is_some(),
-        "Dashboard assets not embedded. Build the dashboard first: cd dashboard && trunk build"
-    );
-
     let server_state = state.clone();
     HttpServer::new(move || {
+        let generated = generate();
         App::new()
             .wrap(TracingLogger::default())
             .app_data(web::Data::from(server_state.clone()))
             .service(web::scope("/api").configure(api::config))
-            .default_service(web::route().to(serve_dashboard))
+            .service(ResourceFiles::new("/", generated).resolve_not_found_to_root())
     })
     .bind(&listen)?
     .run()
