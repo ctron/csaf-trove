@@ -1652,7 +1652,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-dashboard"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-server"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
