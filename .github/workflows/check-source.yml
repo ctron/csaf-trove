@@ -14,8 +14,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Install csaf-cli
-        run: cargo install csaf-cli
+        run: cargo binstall --no-confirm csaf-cli
 
       - name: Identify changed sources
         id: changes

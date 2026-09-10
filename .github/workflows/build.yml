@@ -20,8 +20,11 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Install Trunk
-        run: cargo install trunk
+        run: cargo binstall --no-confirm trunk
 
       - name: Build dashboard
         working-directory: dashboard
@@ -57,8 +60,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Install cross
-        run: cargo install cross
+        run: cargo binstall --no-confirm cross
 
       - name: Build server
         run: cross build --release --target ${{ matrix.target }} --manifest-path server/Cargo.toml

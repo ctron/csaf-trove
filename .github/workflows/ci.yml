@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  clippy-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --manifest-path dashboard/Cargo.toml --target wasm32-unknown-unknown -- -D warnings
+
+  clippy-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk
+        run: cargo binstall --no-confirm trunk
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: trunk build --release
+
+      - name: Clippy
+        run: cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk
+        run: cargo binstall --no-confirm trunk
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: trunk build --release
+
+      - name: Test
+        run: cargo test --manifest-path server/Cargo.toml
