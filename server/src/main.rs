@@ -1,6 +1,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod api;
+mod config_sync;
 mod models;
 mod pipeline;
 mod scheduler;
@@ -19,7 +20,7 @@ use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, task::spawn_blocking};
 use tracing_actix_web::TracingLogger;
 
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
@@ -156,6 +157,20 @@ impl AppState {
             job.phase = Some(phase.to_string());
         }
     }
+
+    /// Syncs the config repo from GitHub and reloads provider sources.
+    pub async fn sync_and_reload_sources(&self) {
+        let data_dir = self.data_dir.clone();
+        let repo_url = self.config.github.repo.clone();
+
+        match spawn_blocking(move || config_sync::sync(&data_dir, &repo_url)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!("Config sync failed: {e}"),
+            Err(e) => tracing::error!("Config sync task failed: {e}"),
+        }
+
+        self.reload_sources().await;
+    }
 }
 
 /// Reads a secret from a plain text file, trimming whitespace.
@@ -236,6 +251,16 @@ async fn main() -> Result<()> {
         .map(|path| read_secret_file(path))
         .transpose()
         .context("Failed to read webhook secret")?;
+
+    {
+        let sync_dir = data_dir.clone();
+        let sync_url = config.github.repo.clone();
+        match spawn_blocking(move || config_sync::sync(&sync_dir, &sync_url)).await {
+            Ok(Ok(())) => tracing::info!("Initial config sync complete"),
+            Ok(Err(e)) => tracing::warn!("Initial config sync failed: {e}"),
+            Err(e) => tracing::warn!("Config sync task failed: {e}"),
+        }
+    }
 
     let sources = load_sources_from_dir(&data_dir.join("sources"))
         .await

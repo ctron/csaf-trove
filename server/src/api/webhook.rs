@@ -18,8 +18,8 @@ pub async fn github(
         return HttpResponse::Unauthorized().finish();
     }
 
-    tracing::info!("GitHub webhook received, triggering source config reload");
-    state.reload_sources().await;
+    tracing::info!("GitHub webhook received, syncing config repo");
+    state.sync_and_reload_sources().await;
     HttpResponse::Ok().json(serde_json::json!({ "status": "reloaded" }))
 }
 

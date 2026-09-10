@@ -13,7 +13,7 @@ pub async fn run(state: Arc<AppState>) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(poll_interval).await;
-            state_poll.reload_sources().await;
+            state_poll.sync_and_reload_sources().await;
         }
     });
 
