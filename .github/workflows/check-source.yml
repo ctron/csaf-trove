@@ -10,12 +10,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        with:
+          fetch-depth: 0
 
       - name: Install cargo-binstall
         run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
@@ -29,46 +25,29 @@ jobs:
           git diff --name-only ${{ github.event.pull_request.base.sha }} -- sources/ \
             | tee changed_sources.txt
 
-      - name: Validate each source
-        id: validate
+      - name: Validate sources
         run: |
-          RESULTS=""
+          echo "## CSAF Source Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Domain | Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+
           EXIT_CODE=0
           for src in $(cat changed_sources.txt); do
             domain=$(grep '^domain' "$src" | sed 's/.*= *"\(.*\)"/\1/')
-            echo "## Checking $domain"
 
-            echo "### Metadata"
             if csaf metadata "$domain" 2>&1; then
-              RESULTS="${RESULTS}\n| ${domain} | metadata | :white_check_mark: OK |"
+              echo "| ${domain} | metadata | :white_check_mark: OK |" >> $GITHUB_STEP_SUMMARY
             else
-              RESULTS="${RESULTS}\n| ${domain} | metadata | :x: Failed |"
+              echo "| ${domain} | metadata | :x: Failed |" >> $GITHUB_STEP_SUMMARY
               EXIT_CODE=1
             fi
 
-            echo "### Discovery"
             if csaf discover "$domain" 2>&1; then
-              RESULTS="${RESULTS}\n| ${domain} | discover | :white_check_mark: OK |"
+              echo "| ${domain} | discover | :white_check_mark: OK |" >> $GITHUB_STEP_SUMMARY
             else
-              RESULTS="${RESULTS}\n| ${domain} | discover | :x: Failed |"
+              echo "| ${domain} | discover | :x: Failed |" >> $GITHUB_STEP_SUMMARY
               EXIT_CODE=1
             fi
           done
-          echo "results<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$RESULTS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
           exit $EXIT_CODE
-
-      - name: Post PR comment
-        if: always()
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const results = `${{ steps.validate.outputs.results }}`;
-            const body = `## CSAF Source Validation\n\n| Domain | Check | Status |\n|--------|-------|--------|\n${results}\n`;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
