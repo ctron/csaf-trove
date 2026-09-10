@@ -1,16 +1,13 @@
 [server]
 listen = "{{ csaf_trove_listen }}"
-api_token = "{{ csaf_trove_api_token }}"
+api_token_file = "{{ csaf_trove_api_token_file }}"
 
 [data]
 dir = "{{ csaf_trove_data_dir }}"
-dashboard_dir = "{{ csaf_trove_dashboard_dir }}"
 
 [github]
 repo = "{{ csaf_trove_github_source_repo }}"
-{% if csaf_trove_webhook_secret %}
-webhook_secret = "{{ csaf_trove_webhook_secret }}"
-{% endif %}
+webhook_secret_file = "{{ csaf_trove_webhook_secret_file }}"
 poll_interval = "{{ csaf_trove_poll_interval }}"
 
 [scheduler]

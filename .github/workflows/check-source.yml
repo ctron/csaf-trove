@@ -31,10 +31,20 @@ jobs:
           for src in $(cat changed_sources.txt); do
             domain=$(grep '^domain' "$src" | sed 's/.*= *"\(.*\)"/\1/')
             echo "## Checking $domain"
-            if csaf discover "$domain" 2>&1 | tee "/tmp/discover-${domain}.txt"; then
-              RESULTS="${RESULTS}\n| ${domain} | :white_check_mark: Valid |"
+
+            echo "### Metadata"
+            if csaf metadata "$domain" 2>&1; then
+              RESULTS="${RESULTS}\n| ${domain} | metadata | :white_check_mark: OK |"
             else
-              RESULTS="${RESULTS}\n| ${domain} | :x: Invalid |"
+              RESULTS="${RESULTS}\n| ${domain} | metadata | :x: Failed |"
+              EXIT_CODE=1
+            fi
+
+            echo "### Discovery"
+            if csaf discover "$domain" 2>&1; then
+              RESULTS="${RESULTS}\n| ${domain} | discover | :white_check_mark: OK |"
+            else
+              RESULTS="${RESULTS}\n| ${domain} | discover | :x: Failed |"
               EXIT_CODE=1
             fi
           done
@@ -49,7 +59,7 @@ jobs:
         with:
           script: |
             const results = `${{ steps.validate.outputs.results }}`;
-            const body = `## CSAF Source Validation\n\n| Domain | Status |\n|--------|--------|\n${results}\n`;
+            const body = `## CSAF Source Validation\n\n| Domain | Check | Status |\n|--------|-------|--------|\n${results}\n`;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,

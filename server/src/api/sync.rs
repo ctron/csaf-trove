@@ -14,7 +14,11 @@ pub async fn trigger(
     state: web::Data<AppState>,
     domain: web::Path<String>,
 ) -> HttpResponse {
-    if !verify_bearer_token(&req, &state.config.server.api_token) {
+    let Some(ref token) = state.api_token else {
+        return HttpResponse::Forbidden().finish();
+    };
+
+    if !verify_bearer_token(&req, token) {
         return HttpResponse::Unauthorized().finish();
     }
 

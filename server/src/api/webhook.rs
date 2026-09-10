@@ -10,7 +10,7 @@ pub async fn github(
     state: web::Data<AppState>,
     body: web::Bytes,
 ) -> HttpResponse {
-    let Some(ref secret) = state.config.github.webhook_secret else {
+    let Some(ref secret) = state.webhook_secret else {
         return HttpResponse::Forbidden().finish();
     };
 

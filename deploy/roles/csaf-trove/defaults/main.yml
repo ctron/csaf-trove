@@ -1,6 +1,6 @@
 ---
 # GitHub repository for downloading release artifacts.
-csaf_trove_github_repo: "changeme/csaf-trove"
+csaf_trove_github_repo: "ctron/csaf-trove"
 
 # Release version tag to deploy (e.g. "v0.1.0").
 csaf_trove_version: "v0.1.0"
@@ -17,21 +17,26 @@ csaf_trove_group: "csaf-trove"
 csaf_trove_bin_dir: "/usr/local/bin"
 csaf_trove_config_dir: "/etc/csaf-trove"
 csaf_trove_data_dir: "/var/lib/csaf-trove"
-csaf_trove_dashboard_dir: "/var/lib/csaf-trove/dashboard"
 
 # Server configuration.
 csaf_trove_listen: "127.0.0.1:8080"
-csaf_trove_api_token: "changeme"
+
+# Path to the API token file. Generated on first deploy if absent.
+csaf_trove_api_token_file: "/etc/csaf-trove/api_token"
 
 # GitHub integration.
-csaf_trove_github_source_repo: "https://github.com/changeme/csaf-trove.git"
-csaf_trove_webhook_secret: ""
+csaf_trove_github_source_repo: "https://github.com/ctron/csaf-trove.git"
+
+# Path to the webhook secret file. Generated on first deploy if absent.
+csaf_trove_webhook_secret_file: "/etc/csaf-trove/webhook_secret"
 
 # Scheduler configuration (humantime durations).
 csaf_trove_poll_interval: "5m"
 csaf_trove_sync_interval: "1d"
 csaf_trove_max_concurrent: 5
 
-# Optional: Caddy reverse proxy.
-csaf_trove_caddy_enabled: false
-csaf_trove_domain: "csaf-trove.example.com"
+# Caddy reverse proxy.
+csaf_trove_caddy_enabled: true
+
+# Domain for Caddy TLS. Defaults to the inventory hostname; override as needed.
+csaf_trove_domain: "{{ ansible_fqdn | default(inventory_hostname) }}"

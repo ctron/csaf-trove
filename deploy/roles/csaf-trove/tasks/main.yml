@@ -29,23 +29,24 @@
     - "{{ csaf_trove_data_dir }}/metrics"
     - "{{ csaf_trove_data_dir }}/work"
     - "{{ csaf_trove_data_dir }}/sources"
-    - "{{ csaf_trove_dashboard_dir }}"
 
-- name: Download server binary
-  ansible.builtin.unarchive:
-    src: "https://github.com/{{ csaf_trove_github_repo }}/releases/download/{{ csaf_trove_version }}/csaf-trove-server-{{ csaf_trove_target }}.tar.gz"
-    dest: "{{ csaf_trove_bin_dir }}"
-    remote_src: true
-    mode: "0755"
-  notify: Restart csaf-trove
-
-- name: Download dashboard
-  ansible.builtin.unarchive:
-    src: "https://github.com/{{ csaf_trove_github_repo }}/releases/download/{{ csaf_trove_version }}/csaf-trove-dashboard.tar.gz"
-    dest: "{{ csaf_trove_dashboard_dir }}"
-    remote_src: true
+- name: Generate secret files
+  ansible.builtin.copy:
+    content: "{{ lookup('password', '/dev/null chars=hexdigits length=64') }}"
+    dest: "{{ item }}"
     owner: "{{ csaf_trove_user }}"
     group: "{{ csaf_trove_group }}"
+    mode: "0640"
+    force: false
+  loop:
+    - "{{ csaf_trove_api_token_file }}"
+    - "{{ csaf_trove_webhook_secret_file }}"
+
+- name: Download server binary
+  ansible.builtin.get_url:
+    url: "https://github.com/{{ csaf_trove_github_repo }}/releases/download/{{ csaf_trove_version }}/csaf-trove-server-{{ csaf_trove_target }}"
+    dest: "{{ csaf_trove_bin_dir }}/csaf-trove-server"
+    mode: "0755"
   notify: Restart csaf-trove
 
 - name: Deploy configuration

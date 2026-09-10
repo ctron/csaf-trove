@@ -8,14 +8,16 @@ mod storage;
 
 use std::{
     collections::HashMap,
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 
-use actix_web::{App, HttpServer, web};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, web};
 use anyhow::{Context, Result};
 use clap::Parser;
+use rust_embed::Embed;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tracing_actix_web::TracingLogger;
@@ -51,8 +53,8 @@ pub struct Config {
 pub struct ServerConfig {
     /// Socket address to listen on (e.g. `0.0.0.0:8080`).
     pub listen: String,
-    /// Bearer token for authenticating POST API requests.
-    pub api_token: String,
+    /// Path to the file containing the bearer token for authenticating POST API requests.
+    pub api_token_file: Option<PathBuf>,
 }
 
 /// Data directory configuration.
@@ -60,8 +62,6 @@ pub struct ServerConfig {
 pub struct DataConfig {
     /// Root directory for repos, state, results, and metrics.
     pub dir: PathBuf,
-    /// Directory containing the pre-built WASM dashboard files.
-    pub dashboard_dir: PathBuf,
 }
 
 /// GitHub integration configuration.
@@ -69,8 +69,8 @@ pub struct DataConfig {
 pub struct GithubConfig {
     /// URL of the csaf-trove GitHub repository.
     pub repo: String,
-    /// Shared secret for verifying GitHub webhook signatures.
-    pub webhook_secret: Option<String>,
+    /// Path to the file containing the webhook secret for GitHub signature verification.
+    pub webhook_secret_file: Option<PathBuf>,
     /// Interval between polling GitHub for config changes (e.g. `5m`).
     #[serde(default = "default_poll_interval", with = "humantime_serde")]
     pub poll_interval: Duration,
@@ -109,6 +109,10 @@ pub struct AppState {
     pub sources: RwLock<HashMap<String, Source>>,
     /// In-flight and recent job statuses, keyed by domain.
     pub jobs: RwLock<HashMap<String, JobStatus>>,
+    /// Loaded API bearer token for authenticating POST requests.
+    pub api_token: Option<String>,
+    /// Loaded webhook secret for verifying GitHub signatures.
+    pub webhook_secret: Option<String>,
     /// Root data directory.
     data_dir: PathBuf,
 }
@@ -152,6 +156,45 @@ impl AppState {
     }
 }
 
+/// Pre-built WASM dashboard files embedded at compile time.
+#[derive(Embed)]
+#[folder = "../dashboard/dist/"]
+struct DashboardAssets;
+
+/// Serves embedded dashboard assets, falling back to `index.html` for SPA routing.
+async fn serve_dashboard(req: HttpRequest) -> HttpResponse {
+    let path = req.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    match DashboardAssets::get(path) {
+        Some(file) => {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            HttpResponse::Ok()
+                .content_type(mime.as_ref())
+                .body(file.data.into_owned())
+        }
+        None => match DashboardAssets::get("index.html") {
+            Some(file) => HttpResponse::Ok()
+                .content_type("text/html")
+                .body(file.data.into_owned()),
+            None => HttpResponse::NotFound().finish(),
+        },
+    }
+}
+
+/// Reads a secret from a plain text file, trimming whitespace.
+fn read_secret_file(path: &Path) -> Result<String> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read secret from {}", path.display()))?;
+    let secret = content.trim().to_string();
+    anyhow::ensure!(
+        !secret.is_empty(),
+        "Secret file is empty: {}",
+        path.display()
+    );
+    Ok(secret)
+}
+
 async fn load_sources_from_dir(dir: &Path) -> Result<HashMap<String, Source>> {
     let mut sources = HashMap::new();
 
@@ -190,18 +233,33 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let config_str = std::fs::read_to_string(&cli.config)
+    let config_str = fs::read_to_string(&cli.config)
         .with_context(|| format!("Failed to read config from {}", cli.config.display()))?;
     let config: Config = toml::from_str(&config_str).context("Failed to parse config")?;
 
     let listen = config.server.listen.clone();
-    let dashboard_dir = config.data.dashboard_dir.clone();
     let data_dir = config.data.dir.clone();
 
     let storage = Storage::new(&data_dir).context("Failed to initialize storage")?;
 
-    std::fs::create_dir_all(data_dir.join("work"))?;
-    std::fs::create_dir_all(data_dir.join("sources"))?;
+    fs::create_dir_all(data_dir.join("work"))?;
+    fs::create_dir_all(data_dir.join("sources"))?;
+
+    let api_token = config
+        .server
+        .api_token_file
+        .as_ref()
+        .map(|path| read_secret_file(path))
+        .transpose()
+        .context("Failed to read API token")?;
+
+    let webhook_secret = config
+        .github
+        .webhook_secret_file
+        .as_ref()
+        .map(|path| read_secret_file(path))
+        .transpose()
+        .context("Failed to read webhook secret")?;
 
     let sources = load_sources_from_dir(&data_dir.join("sources"))
         .await
@@ -213,6 +271,8 @@ async fn main() -> Result<()> {
         storage,
         sources: RwLock::new(sources),
         jobs: RwLock::new(HashMap::new()),
+        api_token,
+        webhook_secret,
         data_dir,
     });
 
@@ -223,27 +283,18 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting server on {listen}");
 
-    let index_path = dashboard_dir.join("index.html");
     anyhow::ensure!(
-        index_path.exists(),
-        "Dashboard index.html not found at {}",
-        index_path.display()
+        DashboardAssets::get("index.html").is_some(),
+        "Dashboard assets not embedded. Build the dashboard first: cd dashboard && trunk build"
     );
 
     let server_state = state.clone();
     HttpServer::new(move || {
-        let index_file = actix_files::NamedFile::open(dashboard_dir.join("index.html"))
-            .unwrap_or_else(|_| std::process::abort());
-
         App::new()
             .wrap(TracingLogger::default())
             .app_data(web::Data::from(server_state.clone()))
             .service(web::scope("/api").configure(api::config))
-            .service(
-                actix_files::Files::new("/", &dashboard_dir)
-                    .index_file("index.html")
-                    .default_handler(index_file),
-            )
+            .default_service(web::route().to(serve_dashboard))
     })
     .bind(&listen)?
     .run()

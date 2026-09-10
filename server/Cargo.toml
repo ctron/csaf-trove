@@ -4,7 +4,6 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-actix-files = "0.7"
 actix-web = "4"
 anyhow = "1"
 chrono = { workspace = true }
@@ -15,7 +14,9 @@ hex = "0.4"
 hmac = "0.13"
 humantime = "2"
 humantime-serde = "1"
+mime_guess = "2"
 parking_lot = "0.12"
+rust-embed = "8"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.11"
