@@ -20,7 +20,10 @@ use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
-use tokio::{sync::RwLock, task::spawn_blocking};
+use tokio::{
+    sync::{Notify, RwLock},
+    task::spawn_blocking,
+};
 use tracing_actix_web::TracingLogger;
 
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
@@ -118,6 +121,8 @@ pub struct AppState {
     pub webhook_secret: Option<String>,
     /// Root data directory.
     data_dir: PathBuf,
+    /// Wakes the sync loop when source configuration changes.
+    pub sources_changed: Notify,
 }
 
 impl AppState {
@@ -127,12 +132,19 @@ impl AppState {
     }
 
     /// Reloads provider sources from the sources directory on disk.
+    ///
+    /// Notifies the sync loop if the set of source domains changed.
     pub async fn reload_sources(&self) {
         match load_sources_from_dir(&self.data_dir.join("sources")).await {
             Ok(sources) => {
                 let mut current = self.sources.write().await;
+                let changed = current.len() != sources.len()
+                    || current.keys().any(|k| !sources.contains_key(k));
                 *current = sources;
                 tracing::info!("Reloaded {} sources", current.len());
+                if changed {
+                    self.sources_changed.notify_one();
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to reload sources: {e}");
@@ -275,6 +287,7 @@ async fn main() -> Result<()> {
         api_token,
         webhook_secret,
         data_dir,
+        sources_changed: Notify::new(),
     });
 
     let scheduler_state = state.clone();
