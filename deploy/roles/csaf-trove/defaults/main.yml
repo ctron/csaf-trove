@@ -3,7 +3,7 @@
 csaf_trove_github_repo: "ctron/csaf-trove"
 
 # Release version tag to deploy (e.g. "v0.1.0").
-csaf_trove_version: "v0.1.0-alpha.1"
+csaf_trove_version: "v0.1.0-alpha.2"
 
 # Target architecture for the server binary.
 # Must match a CI build target: x86_64-unknown-linux-gnu or aarch64-unknown-linux-gnu.
