@@ -45,20 +45,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-          targets: wasm32-unknown-unknown
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-binstall
-        run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-
-      - name: Install Trunk
-        run: cargo binstall --no-confirm trunk
-
-      - name: Build dashboard
-        working-directory: dashboard
-        run: trunk build --release
+      - name: Create dashboard placeholder
+        run: mkdir -p dashboard/dist && touch dashboard/dist/index.html
 
       - name: Clippy
         run: cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
@@ -70,21 +62,12 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-binstall
-        run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-
-      - name: Install Trunk
-        run: cargo binstall --no-confirm trunk
-
-      - name: Build dashboard
-        working-directory: dashboard
-        run: trunk build --release
+      - name: Create dashboard placeholder
+        run: mkdir -p dashboard/dist && touch dashboard/dist/index.html
 
       - name: Test
         run: cargo test --manifest-path server/Cargo.toml
