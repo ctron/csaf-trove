@@ -1,10 +1,13 @@
 use leptos::prelude::*;
-use leptos_router::components::{Route, Router, Routes};
-use leptos_router::path;
+use leptos_router::{
+    components::{Route, Router, Routes},
+    path,
+};
 
-use crate::pages::home::HomePage;
-use crate::pages::provider::ProviderPage;
-use crate::pages::sync_status::SyncStatusPage;
+use crate::{
+    components::theme_toggle::ThemeToggle,
+    pages::{home::HomePage, provider::ProviderPage, sync_status::SyncStatusPage},
+};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -16,6 +19,7 @@ pub fn App() -> impl IntoView {
                     <nav>
                         <a href="/">"Providers"</a>
                         <a href="/sync">"Sync Status"</a>
+                        <ThemeToggle />
                     </nav>
                 </div>
             </header>
