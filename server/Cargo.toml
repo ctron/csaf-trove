@@ -10,7 +10,7 @@ anyhow = "1"
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 csaf-walker = { version = "0.18", default-features = false, features = ["csaf", "crypto-openssl"] }
-git2 = "0.21"
+git2 = { version = "0.21", features = ["https"] }
 hex = "0.4"
 hmac = "0.13"
 humantime = "2"

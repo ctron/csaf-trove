@@ -177,8 +177,8 @@ impl AppState {
 
         match spawn_blocking(move || config_sync::sync(&data_dir, &repo_url)).await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!("Config sync failed: {e}"),
-            Err(e) => tracing::error!("Config sync task failed: {e}"),
+            Ok(Err(e)) => tracing::error!("Config sync failed: {e:#}"),
+            Err(e) => tracing::error!("Config sync task failed: {e:#}"),
         }
 
         self.reload_sources().await;
@@ -269,8 +269,8 @@ async fn main() -> Result<()> {
         let sync_url = config.github.repo.clone();
         match spawn_blocking(move || config_sync::sync(&sync_dir, &sync_url)).await {
             Ok(Ok(())) => tracing::info!("Initial config sync complete"),
-            Ok(Err(e)) => tracing::warn!("Initial config sync failed: {e}"),
-            Err(e) => tracing::warn!("Config sync task failed: {e}"),
+            Ok(Err(e)) => tracing::warn!("Initial config sync failed: {e:#}"),
+            Err(e) => tracing::warn!("Config sync task failed: {e:#}"),
         }
     }
 
