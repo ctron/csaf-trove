@@ -1,0 +1,37 @@
+---
+# GitHub repository for downloading release artifacts.
+csaf_trove_github_repo: "changeme/csaf-trove"
+
+# Release version tag to deploy (e.g. "v0.1.0").
+csaf_trove_version: "v0.1.0"
+
+# Target architecture for the server binary.
+# Must match a CI build target: x86_64-unknown-linux-gnu or aarch64-unknown-linux-gnu.
+csaf_trove_target: "{{ 'aarch64-unknown-linux-gnu' if ansible_architecture == 'aarch64' else 'x86_64-unknown-linux-gnu' }}"
+
+# System user and group running the service.
+csaf_trove_user: "csaf-trove"
+csaf_trove_group: "csaf-trove"
+
+# Installation paths.
+csaf_trove_bin_dir: "/usr/local/bin"
+csaf_trove_config_dir: "/etc/csaf-trove"
+csaf_trove_data_dir: "/var/lib/csaf-trove"
+csaf_trove_dashboard_dir: "/var/lib/csaf-trove/dashboard"
+
+# Server configuration.
+csaf_trove_listen: "127.0.0.1:8080"
+csaf_trove_api_token: "changeme"
+
+# GitHub integration.
+csaf_trove_github_source_repo: "https://github.com/changeme/csaf-trove.git"
+csaf_trove_webhook_secret: ""
+
+# Scheduler configuration (humantime durations).
+csaf_trove_poll_interval: "5m"
+csaf_trove_sync_interval: "1d"
+csaf_trove_max_concurrent: 5
+
+# Optional: Caddy reverse proxy.
+csaf_trove_caddy_enabled: false
+csaf_trove_domain: "csaf-trove.example.com"

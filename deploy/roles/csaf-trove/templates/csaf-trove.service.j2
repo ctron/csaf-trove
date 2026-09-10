@@ -1,0 +1,31 @@
+[Unit]
+Description=csaf-trove CSAF provider explorer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ csaf_trove_user }}
+Group={{ csaf_trove_group }}
+ExecStart={{ csaf_trove_bin_dir }}/csaf-trove-server --config {{ csaf_trove_config_dir }}/config.toml
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths={{ csaf_trove_data_dir }}
+MemoryDenyWriteExecute=true
+LockPersonality=true
+
+# Environment
+Environment=RUST_LOG=info,csaf_trove_server=debug
+
+[Install]
+WantedBy=multi-user.target

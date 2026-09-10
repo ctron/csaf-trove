@@ -1,0 +1,58 @@
+name: Check Source
+
+on:
+  pull_request:
+    paths:
+      - 'sources/**'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install csaf-cli
+        run: cargo install csaf-cli
+
+      - name: Identify changed sources
+        id: changes
+        run: |
+          git diff --name-only ${{ github.event.pull_request.base.sha }} -- sources/ \
+            | tee changed_sources.txt
+
+      - name: Validate each source
+        id: validate
+        run: |
+          RESULTS=""
+          EXIT_CODE=0
+          for src in $(cat changed_sources.txt); do
+            domain=$(grep '^domain' "$src" | sed 's/.*= *"\(.*\)"/\1/')
+            echo "## Checking $domain"
+            if csaf discover "$domain" 2>&1 | tee "/tmp/discover-${domain}.txt"; then
+              RESULTS="${RESULTS}\n| ${domain} | :white_check_mark: Valid |"
+            else
+              RESULTS="${RESULTS}\n| ${domain} | :x: Invalid |"
+              EXIT_CODE=1
+            fi
+          done
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$RESULTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          exit $EXIT_CODE
+
+      - name: Post PR comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = `${{ steps.validate.outputs.results }}`;
+            const body = `## CSAF Source Validation\n\n| Domain | Status |\n|--------|--------|\n${results}\n`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

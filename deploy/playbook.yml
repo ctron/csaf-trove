@@ -1,0 +1,6 @@
+---
+- name: Deploy csaf-trove
+  hosts: all
+  become: true
+  roles:
+    - csaf-trove

@@ -1,0 +1,93 @@
+---
+- name: Create service group
+  ansible.builtin.group:
+    name: "{{ csaf_trove_group }}"
+    system: true
+
+- name: Create service user
+  ansible.builtin.user:
+    name: "{{ csaf_trove_user }}"
+    group: "{{ csaf_trove_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ csaf_trove_data_dir }}"
+    create_home: false
+
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ csaf_trove_user }}"
+    group: "{{ csaf_trove_group }}"
+    mode: "0750"
+  loop:
+    - "{{ csaf_trove_config_dir }}"
+    - "{{ csaf_trove_data_dir }}"
+    - "{{ csaf_trove_data_dir }}/repos"
+    - "{{ csaf_trove_data_dir }}/state"
+    - "{{ csaf_trove_data_dir }}/results"
+    - "{{ csaf_trove_data_dir }}/metrics"
+    - "{{ csaf_trove_data_dir }}/work"
+    - "{{ csaf_trove_data_dir }}/sources"
+    - "{{ csaf_trove_dashboard_dir }}"
+
+- name: Download server binary
+  ansible.builtin.unarchive:
+    src: "https://github.com/{{ csaf_trove_github_repo }}/releases/download/{{ csaf_trove_version }}/csaf-trove-server-{{ csaf_trove_target }}.tar.gz"
+    dest: "{{ csaf_trove_bin_dir }}"
+    remote_src: true
+    mode: "0755"
+  notify: Restart csaf-trove
+
+- name: Download dashboard
+  ansible.builtin.unarchive:
+    src: "https://github.com/{{ csaf_trove_github_repo }}/releases/download/{{ csaf_trove_version }}/csaf-trove-dashboard.tar.gz"
+    dest: "{{ csaf_trove_dashboard_dir }}"
+    remote_src: true
+    owner: "{{ csaf_trove_user }}"
+    group: "{{ csaf_trove_group }}"
+  notify: Restart csaf-trove
+
+- name: Deploy configuration
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: "{{ csaf_trove_config_dir }}/config.toml"
+    owner: "{{ csaf_trove_user }}"
+    group: "{{ csaf_trove_group }}"
+    mode: "0640"
+  notify: Restart csaf-trove
+
+- name: Deploy systemd service
+  ansible.builtin.template:
+    src: csaf-trove.service.j2
+    dest: /etc/systemd/system/csaf-trove.service
+    mode: "0644"
+  notify: Restart csaf-trove
+
+- name: Enable and start service
+  ansible.builtin.systemd:
+    name: csaf-trove
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Set up Caddy reverse proxy
+  when: csaf_trove_caddy_enabled
+  block:
+    - name: Install Caddy
+      ansible.builtin.apt:
+        name: caddy
+        state: present
+
+    - name: Deploy Caddyfile
+      ansible.builtin.template:
+        src: Caddyfile.j2
+        dest: /etc/caddy/Caddyfile
+        mode: "0644"
+      notify: Reload caddy
+
+    - name: Enable Caddy
+      ansible.builtin.systemd:
+        name: caddy
+        enabled: true
+        state: started

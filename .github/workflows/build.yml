@@ -1,0 +1,88 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-server:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        run: cargo install cross
+
+      - name: Build server
+        run: cross build --release --target ${{ matrix.target }} --manifest-path server/Cargo.toml
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: csaf-trove-server-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/csaf-trove-server
+
+  build-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Trunk
+        run: cargo install trunk
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: trunk build --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: csaf-trove-dashboard
+          path: dashboard/dist/
+
+  release:
+    needs: [build-server, build-dashboard]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Package
+        run: |
+          cd artifacts
+          for dir in csaf-trove-server-*; do
+            target="${dir#csaf-trove-server-}"
+            chmod +x "$dir/csaf-trove-server"
+            tar czf "csaf-trove-server-${target}.tar.gz" -C "$dir" csaf-trove-server
+          done
+          tar czf csaf-trove-dashboard.tar.gz -C csaf-trove-dashboard .
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.tar.gz

@@ -1,0 +1,18 @@
+[server]
+listen = "{{ csaf_trove_listen }}"
+api_token = "{{ csaf_trove_api_token }}"
+
+[data]
+dir = "{{ csaf_trove_data_dir }}"
+dashboard_dir = "{{ csaf_trove_dashboard_dir }}"
+
+[github]
+repo = "{{ csaf_trove_github_source_repo }}"
+{% if csaf_trove_webhook_secret %}
+webhook_secret = "{{ csaf_trove_webhook_secret }}"
+{% endif %}
+poll_interval = "{{ csaf_trove_poll_interval }}"
+
+[scheduler]
+sync_interval = "{{ csaf_trove_sync_interval }}"
+max_concurrent = {{ csaf_trove_max_concurrent }}

@@ -1,0 +1,12 @@
+---
+- name: Restart csaf-trove
+  ansible.builtin.systemd:
+    name: csaf-trove
+    state: restarted
+    daemon_reload: true
+
+- name: Reload caddy
+  ansible.builtin.systemd:
+    name: caddy
+    state: reloaded
+  when: csaf_trove_caddy_enabled
