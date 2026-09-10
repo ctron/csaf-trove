@@ -7,7 +7,7 @@ csaf_trove_version: "v0.1.0-alpha.1"
 
 # Target architecture for the server binary.
 # Must match a CI build target: x86_64-unknown-linux-gnu or aarch64-unknown-linux-gnu.
-csaf_trove_target: "{{ 'aarch64-unknown-linux-gnu' if ansible_architecture == 'aarch64' else 'x86_64-unknown-linux-gnu' }}"
+csaf_trove_target: "{{ 'aarch64-unknown-linux-gnu' if ansible_facts['architecture'] == 'aarch64' else 'x86_64-unknown-linux-gnu' }}"
 
 # System user and group running the service.
 csaf_trove_user: "csaf-trove"
@@ -39,4 +39,4 @@ csaf_trove_max_concurrent: 5
 csaf_trove_caddy_enabled: true
 
 # Domain for Caddy TLS. Defaults to the inventory hostname; override as needed.
-csaf_trove_domain: "{{ ansible_fqdn | default(inventory_hostname) }}"
+csaf_trove_domain: "{{ inventory_hostname }}"
