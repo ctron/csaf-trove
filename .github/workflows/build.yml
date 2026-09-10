@@ -97,3 +97,4 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: artifacts/csaf-trove-server-*
+          prerelease: ${{ contains(github.ref_name, '-') }}
