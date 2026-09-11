@@ -135,15 +135,15 @@ fn setup_worktree(repo_path: &std::path::Path, worktree_dir: &PathBuf) -> Result
     }
     std::fs::create_dir_all(worktree_dir)?;
 
+    let repo_str = repo_path.to_str().context("non-UTF8 repo path")?;
     let bare = git2::Repository::open_bare(repo_path)?;
     if bare.head().is_ok() {
-        git2::Repository::clone(
-            repo_path.to_str().context("non-UTF8 repo path")?,
-            worktree_dir,
-        )
-        .context("Failed to clone bare repo to worktree")?;
+        git2::Repository::clone(repo_str, worktree_dir)
+            .context("Failed to clone bare repo to worktree")?;
     } else {
-        git2::Repository::init(worktree_dir).context("Failed to init worktree")?;
+        let repo = git2::Repository::init(worktree_dir).context("Failed to init worktree")?;
+        repo.remote("origin", repo_str)
+            .context("Failed to add origin remote to worktree")?;
     }
 
     Ok(())

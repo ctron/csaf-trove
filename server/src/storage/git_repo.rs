@@ -62,7 +62,9 @@ pub fn log(repo_path: &Path, max_entries: usize) -> Result<Vec<CommitInfo>> {
     Ok(entries)
 }
 
-/// Stages all changes in the worktree and commits. Returns `false` if nothing changed.
+/// Stages all changes in the worktree and commits, then pushes back to the bare repo.
+///
+/// Returns `false` if nothing changed.
 pub fn commit_all(repo_path: &Path, worktree_path: &Path, message: &str) -> Result<bool> {
     let repo = Repository::open(worktree_path)?;
     let mut index = repo.index()?;
@@ -87,5 +89,26 @@ pub fn commit_all(repo_path: &Path, worktree_path: &Path, message: &str) -> Resu
     let parents: Vec<&git2::Commit> = parent.as_ref().map(|p| vec![p]).unwrap_or_default();
     repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)?;
 
+    push_to_bare(&repo)?;
+
     Ok(true)
+}
+
+/// Pushes the worktree commit back to the bare repo via its `origin` remote.
+fn push_to_bare(worktree_repo: &Repository) -> Result<()> {
+    let head = worktree_repo
+        .head()
+        .context("worktree has no HEAD after commit")?;
+    let branch = head
+        .shorthand()
+        .context("HEAD branch name is not valid UTF-8")?;
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+
+    let mut remote = worktree_repo
+        .find_remote("origin")
+        .context("worktree has no origin remote")?;
+    remote
+        .push(&[&refspec], None)
+        .context("failed to push worktree commit to bare repo")?;
+    Ok(())
 }
