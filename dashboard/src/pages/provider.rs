@@ -192,11 +192,11 @@ fn DocumentsTable(domain: String) -> impl IntoView {
 
                         <div class="pagination">
                             <button
-                                disabled=move || offset.get() == 0
+                                disabled={move || offset.get() == 0}
                                 on:click=move |_| set_offset.set(offset.get().saturating_sub(limit))
                             >"Previous"</button>
                             <button
-                                disabled=move || offset.get() + limit >= total
+                                disabled={move || offset.get() + limit >= total}
                                 on:click=move |_| set_offset.set(offset.get() + limit)
                             >"Next"</button>
                         </div>
