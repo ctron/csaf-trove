@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
 use crate::models::{
-    DocumentValidation, DocumentVersionInfo, HistoricalDocument, encode_path_segment,
+    DocumentValidation, DocumentVersionInfo, HistoricalDocument, RevisionEntry, encode_path_segment,
 };
 
 /// Compares dotted-numeric test IDs (e.g. `6.1.27.5`) segment by segment.
@@ -218,60 +218,28 @@ fn HistoricalDocumentView(doc: HistoricalDocument) -> impl IntoView {
             ". Validation results are only available for the current version."
         </p>
 
-        <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 mb-6">
-            <div class="bg-surface border border-border rounded-lg p-4">
-                <h3 class="text-sm text-muted mb-2">"Title"</h3>
-                <div class="text-3xl font-semibold">{doc.title.clone()}</div>
-            </div>
-            {doc.category.clone().map(|c| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Category"</h3>
-                    <div class="text-3xl font-semibold">{c}</div>
-                </div>
-            })}
-            {doc.publisher_name.clone().map(|p| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Publisher"</h3>
-                    <div class="text-3xl font-semibold">{p}</div>
-                </div>
-            })}
-            {doc.aggregate_severity.clone().map(|s| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Severity"</h3>
-                    <div class="text-3xl font-semibold">{s}</div>
-                </div>
-            })}
-            {doc.status.clone().map(|s| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Status"</h3>
-                    <div class="text-3xl font-semibold">{s}</div>
-                </div>
-            })}
-            {doc.revision.clone().map(|r| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Revision"</h3>
-                    <div class="text-3xl font-semibold">{r}</div>
-                </div>
-            })}
-            {doc.initial_release_date.clone().map(|d| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Initial Release"</h3>
-                    <div class="text-3xl font-semibold">{d}</div>
-                </div>
-            })}
-            {doc.current_release_date.clone().map(|d| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Current Release"</h3>
-                    <div class="text-3xl font-semibold">{d}</div>
-                </div>
-            })}
-            {doc.csaf_version.clone().map(|v| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"CSAF Version"</h3>
-                    <div class="text-3xl font-semibold">{v}</div>
-                </div>
-            })}
-        </div>
+        <h3>"Document"</h3>
+        <table class="mb-6">
+            <tbody>
+                <MetadataRow label="Title" value=Some(doc.title.clone()) />
+                <MetadataRow label="Category" value=doc.category.clone() />
+                <MetadataRow label="Publisher" value=doc.publisher_name.clone() />
+                <MetadataRow label="Severity" value=doc.aggregate_severity.clone() />
+                <MetadataRow label="CSAF Version" value=doc.csaf_version.clone() />
+            </tbody>
+        </table>
+
+        <h3>"Tracking"</h3>
+        <table class="mb-6">
+            <tbody>
+                <MetadataRow label="Status" value=doc.status.clone() />
+                <MetadataRow label="Version" value=doc.revision.clone() />
+                <MetadataRow label="Initial Release" value=doc.initial_release_date.clone() />
+                <MetadataRow label="Current Release" value=doc.current_release_date.clone() />
+            </tbody>
+        </table>
+
+        <RevisionHistoryTable entries=doc.revision_history />
     }
 }
 
@@ -292,84 +260,48 @@ fn DocumentDetailView(doc: DocumentValidation) -> impl IntoView {
         "Missing"
     };
 
-    let tracking_id = doc.tracking_id.clone();
-    let title = doc.title.clone();
     let sig_error = doc.signature_error.clone();
-    let category = doc.category.clone();
-    let publisher_name = doc.publisher_name.clone();
-    let initial_release_date = doc.initial_release_date.clone();
-    let current_release_date = doc.current_release_date.clone();
-    let status = doc.status.clone();
-    let revision = doc.revision.clone();
-    let aggregate_severity = doc.aggregate_severity.clone();
-    let csaf_version = doc.csaf_version.clone();
+    let url_href = doc.url.clone();
+    let url_label = doc.url.clone();
 
     view! {
-        <h2>{tracking_id}</h2>
+        <h2>{doc.tracking_id.clone()}</h2>
 
-        <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 mb-6">
-            <div class="bg-surface border border-border rounded-lg p-4">
-                <h3 class="text-sm text-muted mb-2">"Title"</h3>
-                <div class="text-3xl font-semibold">{title}</div>
-            </div>
-            {category.map(|c| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Category"</h3>
-                    <div class="text-3xl font-semibold">{c}</div>
-                </div>
-            })}
-            {publisher_name.map(|p| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Publisher"</h3>
-                    <div class="text-3xl font-semibold">{p}</div>
-                </div>
-            })}
-            {aggregate_severity.map(|s| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Severity"</h3>
-                    <div class="text-3xl font-semibold">{s}</div>
-                </div>
-            })}
-            {status.map(|s| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Status"</h3>
-                    <div class="text-3xl font-semibold">{s}</div>
-                </div>
-            })}
-            {revision.map(|r| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Revision"</h3>
-                    <div class="text-3xl font-semibold">{r}</div>
-                </div>
-            })}
-            {initial_release_date.map(|d| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Initial Release"</h3>
-                    <div class="text-3xl font-semibold">{d}</div>
-                </div>
-            })}
-            {current_release_date.map(|d| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"Current Release"</h3>
-                    <div class="text-3xl font-semibold">{d}</div>
-                </div>
-            })}
-            {csaf_version.map(|v| view! {
-                <div class="bg-surface border border-border rounded-lg p-4">
-                    <h3 class="text-sm text-muted mb-2">"CSAF Version"</h3>
-                    <div class="text-3xl font-semibold">{v}</div>
-                </div>
-            })}
-            <div class="bg-surface border border-border rounded-lg p-4">
-                <h3 class="text-sm text-muted mb-2">"Signature"</h3>
-                <div class="text-3xl font-semibold">
-                    <span class={sig_class}>{sig_label}</span>
-                    {sig_error.map(|e| view! {
-                        <p class="text-sm text-danger mt-1">{e}</p>
-                    })}
-                </div>
-            </div>
-        </div>
+        <h3>"Document"</h3>
+        <table class="mb-6">
+            <tbody>
+                <MetadataRow label="Title" value=Some(doc.title.clone()) />
+                <MetadataRow label="Category" value=doc.category.clone() />
+                <MetadataRow label="Publisher" value=doc.publisher_name.clone() />
+                <MetadataRow label="Severity" value=doc.aggregate_severity.clone() />
+                <MetadataRow label="CSAF Version" value=doc.csaf_version.clone() />
+                <tr>
+                    <td class="text-xs font-semibold uppercase text-muted w-48">"URL"</td>
+                    <td><a href={url_href} target="_blank">{url_label}</a></td>
+                </tr>
+                <tr>
+                    <td class="text-xs font-semibold uppercase text-muted w-48">"Signature"</td>
+                    <td>
+                        <span class={sig_class}>{sig_label}</span>
+                        {sig_error.map(|e| view! {
+                            <span class="text-sm text-danger ml-2">{e}</span>
+                        })}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>"Tracking"</h3>
+        <table class="mb-6">
+            <tbody>
+                <MetadataRow label="Status" value=doc.status.clone() />
+                <MetadataRow label="Version" value=doc.revision.clone() />
+                <MetadataRow label="Initial Release" value=doc.initial_release_date.clone() />
+                <MetadataRow label="Current Release" value=doc.current_release_date.clone() />
+            </tbody>
+        </table>
+
+        <RevisionHistoryTable entries=doc.revision_history />
 
         <ProfileSection title="Basic" detail=doc.profiles.basic />
         <ProfileSection title="Extended" detail=doc.profiles.extended />
@@ -439,4 +371,45 @@ fn ProfileSection(
             .into_any()
         }
     }
+}
+
+#[component]
+fn MetadataRow(label: &'static str, value: Option<String>) -> impl IntoView {
+    value.map(|v| {
+        view! {
+            <tr>
+                <td class="text-xs font-semibold uppercase text-muted w-48">{label}</td>
+                <td>{v}</td>
+            </tr>
+        }
+    })
+}
+
+#[component]
+fn RevisionHistoryTable(entries: Vec<RevisionEntry>) -> impl IntoView {
+    if entries.is_empty() {
+        return view! { <div /> }.into_any();
+    }
+    view! {
+        <h3>"Revision History"</h3>
+        <table class="mb-6">
+            <thead>
+                <tr>
+                    <th>"Version"</th>
+                    <th>"Date"</th>
+                    <th>"Summary"</th>
+                </tr>
+            </thead>
+            <tbody>
+                {entries.into_iter().map(|r| view! {
+                    <tr>
+                        <td>{r.number}</td>
+                        <td>{r.date}</td>
+                        <td>{r.summary}</td>
+                    </tr>
+                }).collect::<Vec<_>>()}
+            </tbody>
+        </table>
+    }
+    .into_any()
 }

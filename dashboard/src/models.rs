@@ -97,6 +97,19 @@ pub struct DocumentValidation {
     pub aggregate_severity: Option<String>,
     #[serde(default)]
     pub csaf_version: Option<String>,
+    #[serde(default)]
+    pub revision_history: Vec<RevisionEntry>,
+}
+
+/// A single entry in the CSAF revision history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevisionEntry {
+    /// Revision version number.
+    pub number: String,
+    /// Date of this revision.
+    pub date: String,
+    /// Short description of the changes.
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +171,8 @@ pub struct HistoricalDocument {
     pub aggregate_severity: Option<String>,
     #[serde(default)]
     pub csaf_version: Option<String>,
+    #[serde(default)]
+    pub revision_history: Vec<RevisionEntry>,
     pub commit_id: String,
     pub timestamp: i64,
 }

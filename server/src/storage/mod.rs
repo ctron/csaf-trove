@@ -11,7 +11,7 @@ use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
         DocumentValidation, DocumentVersionInfo, HistoricalDocument, PaginatedDocuments,
-        ProviderSummary,
+        ProviderSummary, RevisionEntry,
     },
     source::sanitize_domain,
     state::SyncState,
@@ -162,6 +162,11 @@ impl Storage {
         documents::save_documents(&self.results_dir, domain, docs)
     }
 
+    /// Builds a provider summary from all documents in the database.
+    pub fn build_summary_from_db(&self, domain: &str) -> Result<ProviderSummary> {
+        documents::build_summary_from_db(&self.results_dir, domain)
+    }
+
     /// Loads paginated document validation results for a provider.
     pub fn load_documents_paginated(
         &self,
@@ -248,6 +253,29 @@ fn extract_metadata_from_json(
         Some("2.0".to_string())
     };
 
+    let revision_history = tracking
+        .get("revision_history")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let number = entry.get("number").and_then(|v| {
+                        v.as_str()
+                            .map(String::from)
+                            .or_else(|| v.as_i64().map(|n| n.to_string()))
+                    })?;
+                    let date = entry.get("date")?.as_str()?.to_string();
+                    let summary = entry.get("summary")?.as_str()?.to_string();
+                    Some(RevisionEntry {
+                        number,
+                        date,
+                        summary,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(HistoricalDocument {
         tracking_id,
         title,
@@ -282,6 +310,7 @@ fn extract_metadata_from_json(
             .and_then(|v| v.as_str())
             .map(String::from),
         csaf_version,
+        revision_history,
         commit_id: commit_id.to_string(),
         timestamp,
     })

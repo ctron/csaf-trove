@@ -6,7 +6,8 @@ use rusqlite::Connection;
 use crate::models::{
     result::{
         DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
-        PaginatedDocuments,
+        FailingTest, PaginatedDocuments, ProfileResults, ProfileSummary, ProviderSummary,
+        RevisionEntry,
     },
     source::sanitize_domain,
 };
@@ -61,8 +62,16 @@ fn create_tables(conn: &Connection) -> Result<()> {
             message TEXT NOT NULL,
             severity TEXT NOT NULL DEFAULT 'error'
         );
+        CREATE TABLE IF NOT EXISTS revision_history (
+            id INTEGER PRIMARY KEY,
+            document_id INTEGER NOT NULL REFERENCES documents(id),
+            version TEXT NOT NULL,
+            date TEXT NOT NULL,
+            summary TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_documents_tracking_id ON documents(tracking_id);
-        CREATE INDEX IF NOT EXISTS idx_check_failures_document_id ON check_failures(document_id);",
+        CREATE INDEX IF NOT EXISTS idx_check_failures_document_id ON check_failures(document_id);
+        CREATE INDEX IF NOT EXISTS idx_revision_history_document_id ON revision_history(document_id);",
     )?;
     migrate_add_metadata_columns(conn)?;
     migrate_add_severity_columns(conn)?;
@@ -134,6 +143,11 @@ pub fn save_documents(
             SELECT id FROM documents WHERE tracking_id = ?1
         )",
     )?;
+    let mut del_rev_stmt = conn.prepare(
+        "DELETE FROM revision_history WHERE document_id IN (
+            SELECT id FROM documents WHERE tracking_id = ?1
+        )",
+    )?;
     let mut del_doc_stmt = conn.prepare("DELETE FROM documents WHERE tracking_id = ?1")?;
 
     let mut doc_stmt = conn.prepare(
@@ -156,10 +170,16 @@ pub fn save_documents(
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
 
+    let mut rev_stmt = conn.prepare(
+        "INSERT INTO revision_history (document_id, version, date, summary)
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+
     let tx = conn.unchecked_transaction()?;
 
     for doc in documents {
         del_fail_stmt.execute(rusqlite::params![doc.tracking_id])?;
+        del_rev_stmt.execute(rusqlite::params![doc.tracking_id])?;
         del_doc_stmt.execute(rusqlite::params![doc.tracking_id])?;
         let (bp, bec, bwc, bic) = profile_to_cols(doc.profiles.basic.as_ref());
         let (ep, eec, ewc, eic) = profile_to_cols(doc.profiles.extended.as_ref());
@@ -207,6 +227,10 @@ pub fn save_documents(
                     ])?;
                 }
             }
+        }
+
+        for r in &doc.revision_history {
+            rev_stmt.execute(rusqlite::params![doc_id, r.number, r.date, r.summary])?;
         }
     }
 
@@ -407,6 +431,33 @@ fn load_failures_for_docs(
             .push((profile, test_id, message, severity));
     }
 
+    let mut rev_stmt = conn.prepare(&format!(
+        "SELECT document_id, version, date, summary
+         FROM revision_history
+         WHERE document_id IN ({placeholders})
+         ORDER BY document_id, id"
+    ))?;
+
+    let rev_rows = rev_stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+
+    let mut revisions: std::collections::HashMap<i64, Vec<RevisionEntry>> =
+        std::collections::HashMap::new();
+    for row in rev_rows {
+        let (doc_id, number, date, summary) = row?;
+        revisions.entry(doc_id).or_default().push(RevisionEntry {
+            number,
+            date,
+            summary,
+        });
+    }
+
     let items = doc_rows
         .iter()
         .map(|doc| {
@@ -451,6 +502,7 @@ fn load_failures_for_docs(
                 revision: doc.revision.clone(),
                 aggregate_severity: doc.aggregate_severity.clone(),
                 csaf_version: doc.csaf_version.clone(),
+                revision_history: revisions.get(&doc.id).cloned().unwrap_or_default(),
             }
         })
         .collect();
@@ -517,5 +569,112 @@ fn status_where_clause(filter: Option<&str>) -> String {
              AND signature_error IS NULL"
             .to_string(),
         _ => String::new(),
+    }
+}
+
+/// Computes a `ProviderSummary` from all documents in the database.
+pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<ProviderSummary> {
+    let db_path = results_dir
+        .join(sanitize_domain(domain))
+        .join("documents.db");
+    if !db_path.exists() {
+        return Ok(ProviderSummary {
+            provider: domain.to_string(),
+            publisher_name: None,
+            validated_at: chrono::Utc::now(),
+            document_count: 0,
+            profiles: ProfileResults {
+                basic: None,
+                extended: None,
+                full: None,
+            },
+            top_failing_tests: vec![],
+        });
+    }
+    let conn = Connection::open(db_path)?;
+
+    let (total, basic, extended, full) = conn.query_row(
+        "SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN basic_passed = 1 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN basic_passed = 0 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN extended_passed = 1 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN extended_passed = 0 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN full_passed = 1 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END)
+         FROM documents",
+        [],
+        |row| {
+            let total: u64 = row.get(0)?;
+            let bv: Option<u64> = row.get(1)?;
+            let bi: Option<u64> = row.get(2)?;
+            let ev: Option<u64> = row.get(3)?;
+            let ei: Option<u64> = row.get(4)?;
+            let fv: Option<u64> = row.get(5)?;
+            let fi: Option<u64> = row.get(6)?;
+            Ok((
+                total,
+                build_profile_from_counts(bv.unwrap_or(0), bi.unwrap_or(0)),
+                build_profile_from_counts(ev.unwrap_or(0), ei.unwrap_or(0)),
+                build_profile_from_counts(fv.unwrap_or(0), fi.unwrap_or(0)),
+            ))
+        },
+    )?;
+
+    let mut fail_stmt = conn.prepare(
+        "SELECT test_id, COUNT(*) AS cnt, severity
+         FROM check_failures
+         GROUP BY test_id, severity
+         ORDER BY cnt DESC
+         LIMIT 10",
+    )?;
+    let top_failing_tests: Vec<FailingTest> = fail_stmt
+        .query_map([], |row| {
+            Ok(FailingTest {
+                test_id: row.get(0)?,
+                count: row.get(1)?,
+                severity: row.get(2)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+
+    let publisher_name: Option<String> = conn
+        .query_row(
+            "SELECT publisher_name FROM documents
+             WHERE publisher_name IS NOT NULL
+             GROUP BY publisher_name
+             ORDER BY COUNT(*) DESC
+             LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+
+    Ok(ProviderSummary {
+        provider: domain.to_string(),
+        publisher_name,
+        validated_at: chrono::Utc::now(),
+        document_count: total,
+        profiles: ProfileResults {
+            basic: Some(basic),
+            extended: Some(extended),
+            full: Some(full),
+        },
+        top_failing_tests,
+    })
+}
+
+/// Builds a `ProfileSummary` from valid and invalid counts.
+fn build_profile_from_counts(valid: u64, invalid: u64) -> ProfileSummary {
+    let total = valid + invalid;
+    let pass_rate = if total > 0 {
+        valid as f64 / total as f64
+    } else {
+        0.0
+    };
+    ProfileSummary {
+        valid,
+        invalid,
+        pass_rate,
     }
 }

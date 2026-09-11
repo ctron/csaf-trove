@@ -89,6 +89,9 @@ pub struct DocumentValidation {
     /// CSAF specification version (e.g. `2.0`, `2.1`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub csaf_version: Option<String>,
+    /// Revision history entries from the CSAF tracking section.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revision_history: Vec<RevisionEntry>,
 }
 
 /// Per-profile failure information for a single document.
@@ -126,6 +129,17 @@ pub struct DocumentCheckFailure {
     pub message: String,
     /// Severity level derived from the test section (`error`, `warning`, or `info`).
     pub severity: String,
+}
+
+/// A single entry in the CSAF revision history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevisionEntry {
+    /// Revision version number.
+    pub number: String,
+    /// Date of this revision.
+    pub date: String,
+    /// Short description of the changes.
+    pub summary: String,
 }
 
 /// A version of a document from the git history.
@@ -172,6 +186,9 @@ pub struct HistoricalDocument {
     /// CSAF specification version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub csaf_version: Option<String>,
+    /// Revision history entries from the CSAF tracking section.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub revision_history: Vec<RevisionEntry>,
     /// Commit SHA this version is from.
     pub commit_id: String,
     /// Commit timestamp as Unix seconds.

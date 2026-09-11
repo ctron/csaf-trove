@@ -26,6 +26,7 @@ use crate::{
         result::{
             DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
             DocumentValidation, FailingTest, ProfileResults, ProfileSummary, ProviderSummary,
+            RevisionEntry,
         },
         source::Source,
     },
@@ -67,6 +68,8 @@ struct DocumentResult {
     aggregate_severity: Option<String>,
     /// CSAF specification version.
     csaf_version: Option<String>,
+    /// Revision history entries.
+    revision_history: Vec<RevisionEntry>,
 }
 
 /// Loads OpenPGP public keys from the provider metadata in the worktree.
@@ -199,6 +202,7 @@ pub async fn validate_provider(
                             revision: meta.revision,
                             aggregate_severity: meta.aggregate_severity,
                             csaf_version: meta.csaf_version,
+                            revision_history: meta.revision_history,
                         });
                         state.increment_job_validated(&domain).await;
                     }
@@ -228,6 +232,7 @@ pub async fn validate_provider(
                             revision: None,
                             aggregate_severity: None,
                             csaf_version: None,
+                            revision_history: vec![],
                         });
                         state.increment_job_validated(&domain).await;
                     }
@@ -252,8 +257,7 @@ pub async fn validate_provider(
     let documents = build_document_results(&results);
     let total_documents = state.storage.save_documents(domain, &documents)?;
 
-    let mut summary = build_summary(domain, &results);
-    summary.document_count = total_documents;
+    let summary = state.storage.build_summary_from_db(domain)?;
     state.storage.save_summary(domain, &summary).await?;
 
     tracing::info!(
@@ -286,6 +290,7 @@ fn build_document_results(results: &[DocumentResult]) -> Vec<DocumentValidation>
             revision: doc.revision.clone(),
             aggregate_severity: doc.aggregate_severity.clone(),
             csaf_version: doc.csaf_version.clone(),
+            revision_history: doc.revision_history.clone(),
         })
         .collect()
 }
@@ -422,6 +427,7 @@ struct DocumentMetadata {
     revision: Option<String>,
     aggregate_severity: Option<String>,
     csaf_version: Option<String>,
+    revision_history: Vec<RevisionEntry>,
 }
 
 /// Extracts metadata fields from a parsed CSAF document.
@@ -440,6 +446,17 @@ fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
                 .as_ref()
                 .map(|s| s.text.to_string()),
             csaf_version: Some("2.0".to_string()),
+            revision_history: doc
+                .document
+                .tracking
+                .revision_history
+                .iter()
+                .map(|r| RevisionEntry {
+                    number: r.number.to_string(),
+                    date: r.date.clone(),
+                    summary: r.summary.to_string(),
+                })
+                .collect(),
         },
         Csaf::V2_1(doc) => DocumentMetadata {
             category: Some(doc.document.category.to_string()),
@@ -454,6 +471,17 @@ fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
                 .as_ref()
                 .map(|s| s.text.to_string()),
             csaf_version: Some("2.1".to_string()),
+            revision_history: doc
+                .document
+                .tracking
+                .revision_history
+                .iter()
+                .map(|r| RevisionEntry {
+                    number: r.number.to_string(),
+                    date: r.date.clone(),
+                    summary: r.summary.to_string(),
+                })
+                .collect(),
         },
     }
 }
