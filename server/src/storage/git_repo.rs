@@ -95,6 +95,9 @@ pub fn commit_all(repo_path: &Path, worktree_path: &Path, message: &str) -> Resu
 }
 
 /// Pushes the worktree commit back to the bare repo via its `origin` remote.
+///
+/// After pushing, ensures the bare repo's HEAD points to the pushed branch
+/// so that subsequent clones see the full history.
 fn push_to_bare(worktree_repo: &Repository) -> Result<()> {
     let head = worktree_repo
         .head()
@@ -110,6 +113,19 @@ fn push_to_bare(worktree_repo: &Repository) -> Result<()> {
     remote
         .push(&[&refspec], None)
         .context("failed to push worktree commit to bare repo")?;
+
+    if let Ok(url) = remote.url().map(String::from) {
+        let bare_path = std::path::Path::new(&url);
+        if bare_path.exists()
+            && let Ok(bare) = Repository::open_bare(bare_path)
+        {
+            let target_ref = format!("refs/heads/{branch}");
+            if bare.head().is_err() {
+                bare.set_head(&target_ref).ok();
+            }
+        }
+    }
+
     Ok(())
 }
 

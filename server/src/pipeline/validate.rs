@@ -25,8 +25,7 @@ use crate::{
     models::{
         result::{
             DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
-            DocumentValidation, FailingTest, ProfileResults, ProfileSummary, ProviderSummary,
-            RevisionEntry,
+            DocumentValidation, RevisionEntry,
         },
         source::Source,
     },
@@ -357,66 +356,6 @@ fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<Docum
     }
 }
 
-fn build_summary(domain: &str, results: &[DocumentResult]) -> ProviderSummary {
-    let document_count = results.len() as u64;
-
-    let basic = build_profile_summary(results, "basic");
-    let extended = build_profile_summary(results, "extended");
-    let full = build_profile_summary(results, "full");
-
-    let mut test_counts: HashMap<String, (u64, String)> = HashMap::new();
-    for doc in results {
-        for errors in doc.failures.values() {
-            for error in errors {
-                test_counts
-                    .entry(error.id.to_string())
-                    .or_insert((0, "error".to_string()))
-                    .0 += 1;
-            }
-        }
-        for warns in doc.warnings.values() {
-            for warning in warns {
-                test_counts
-                    .entry(warning.id.to_string())
-                    .or_insert((0, "warning".to_string()))
-                    .0 += 1;
-            }
-        }
-        for infs in doc.infos.values() {
-            for info in infs {
-                test_counts
-                    .entry(info.id.to_string())
-                    .or_insert((0, "info".to_string()))
-                    .0 += 1;
-            }
-        }
-    }
-
-    let mut top_failing: Vec<_> = test_counts.into_iter().collect();
-    top_failing.sort_by_key(|a| std::cmp::Reverse(a.1.0));
-    top_failing.truncate(10);
-
-    ProviderSummary {
-        provider: domain.to_string(),
-        publisher_name: None,
-        validated_at: chrono::Utc::now(),
-        document_count,
-        profiles: ProfileResults {
-            basic: Some(basic),
-            extended: Some(extended),
-            full: Some(full),
-        },
-        top_failing_tests: top_failing
-            .into_iter()
-            .map(|(test_id, (count, severity))| FailingTest {
-                test_id,
-                count,
-                severity,
-            })
-            .collect(),
-    }
-}
-
 /// Extracted CSAF document metadata.
 struct DocumentMetadata {
     category: Option<String>,
@@ -483,31 +422,5 @@ fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
                 })
                 .collect(),
         },
-    }
-}
-
-fn build_profile_summary(results: &[DocumentResult], profile: &str) -> ProfileSummary {
-    let mut valid = 0u64;
-    let mut invalid = 0u64;
-
-    for doc in results {
-        if doc.failures.contains_key(profile) {
-            invalid += 1;
-        } else if doc.successes.iter().any(|s| s == profile) {
-            valid += 1;
-        }
-    }
-
-    let total = valid + invalid;
-    let pass_rate = if total > 0 {
-        valid as f64 / total as f64
-    } else {
-        0.0
-    };
-
-    ProfileSummary {
-        valid,
-        invalid,
-        pass_rate,
     }
 }

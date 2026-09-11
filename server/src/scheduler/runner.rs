@@ -129,6 +129,10 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     Ok(())
 }
 
+/// Clones the bare repo into a fresh worktree directory.
+///
+/// If the bare repo's HEAD doesn't resolve (e.g. branch name mismatch),
+/// falls back to the first available branch before cloning.
 fn setup_worktree(repo_path: &std::path::Path, worktree_dir: &PathBuf) -> Result<()> {
     if worktree_dir.exists() {
         std::fs::remove_dir_all(worktree_dir)?;
@@ -137,6 +141,20 @@ fn setup_worktree(repo_path: &std::path::Path, worktree_dir: &PathBuf) -> Result
 
     let repo_str = repo_path.to_str().context("non-UTF8 repo path")?;
     let bare = git2::Repository::open_bare(repo_path)?;
+
+    let head_ok = bare.head().is_ok();
+    if !head_ok && let Ok(branches) = bare.branches(Some(git2::BranchType::Local)) {
+        for branch in branches.flatten() {
+            if let Some(name) = branch.0.name().ok().flatten() {
+                let target_ref = format!("refs/heads/{name}");
+                if bare.set_head(&target_ref).is_ok() {
+                    tracing::info!("Fixed bare repo HEAD → {target_ref}");
+                    break;
+                }
+            }
+        }
+    }
+
     if bare.head().is_ok() {
         git2::Repository::clone(repo_str, worktree_dir)
             .context("Failed to clone bare repo to worktree")?;
