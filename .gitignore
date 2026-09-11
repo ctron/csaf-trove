@@ -1,4 +1,7 @@
 /target
 **/target
 dashboard/dist/
-.claude/
+/.claude/
+/.serena/
+/.idea/
+/.mcp.json
