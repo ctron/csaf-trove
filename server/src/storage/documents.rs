@@ -3,14 +3,17 @@ use std::path::Path;
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::models::result::{
-    DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
-    PaginatedDocuments,
+use crate::models::{
+    result::{
+        DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
+        PaginatedDocuments,
+    },
+    source::sanitize_domain,
 };
 
 /// Opens (or creates) the SQLite database for a provider's document results.
 fn open_db(results_dir: &Path, domain: &str) -> Result<Connection> {
-    let dir = results_dir.join(domain);
+    let dir = results_dir.join(sanitize_domain(domain));
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("documents.db");
     let conn = Connection::open(path)?;
@@ -122,7 +125,9 @@ pub fn load_documents_paginated(
     limit: u64,
     status_filter: Option<&str>,
 ) -> Result<Option<PaginatedDocuments>> {
-    let db_path = results_dir.join(domain).join("documents.db");
+    let db_path = results_dir
+        .join(sanitize_domain(domain))
+        .join("documents.db");
     if !db_path.exists() {
         return Ok(None);
     }
@@ -181,7 +186,9 @@ pub fn load_document(
     domain: &str,
     tracking_id: &str,
 ) -> Result<Option<DocumentValidation>> {
-    let db_path = results_dir.join(domain).join("documents.db");
+    let db_path = results_dir
+        .join(sanitize_domain(domain))
+        .join("documents.db");
     if !db_path.exists() {
         return Ok(None);
     }

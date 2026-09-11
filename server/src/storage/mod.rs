@@ -10,6 +10,7 @@ use anyhow::Result;
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{DocumentValidation, PaginatedDocuments, ProviderSummary},
+    source::sanitize_domain,
     state::SyncState,
 };
 
@@ -43,23 +44,26 @@ impl Storage {
 
     /// Returns the path to the bare git repo for a provider.
     pub fn repo_path(&self, domain: &str) -> PathBuf {
-        self.repos_dir.join(format!("{domain}.git"))
+        let key = sanitize_domain(domain);
+        self.repos_dir.join(format!("{key}.git"))
     }
 
     /// Returns `true` if any on-disk data exists for the given provider.
     pub fn has_provider_data(&self, domain: &str) -> bool {
+        let key = sanitize_domain(domain);
         self.repo_path(domain).exists()
-            || self.state_dir.join(domain).exists()
-            || self.results_dir.join(domain).exists()
-            || self.metrics_dir.join(format!("{domain}.json")).exists()
+            || self.state_dir.join(&key).exists()
+            || self.results_dir.join(&key).exists()
+            || self.metrics_dir.join(format!("{key}.json")).exists()
     }
 
     /// Deletes all on-disk data for a provider: repo, state, results, and metrics.
     pub async fn delete_provider(&self, domain: &str) -> Result<()> {
+        let key = sanitize_domain(domain);
         let dirs = [
             self.repo_path(domain),
-            self.state_dir.join(domain),
-            self.results_dir.join(domain),
+            self.state_dir.join(&key),
+            self.results_dir.join(&key),
         ];
 
         for path in &dirs {
@@ -68,7 +72,7 @@ impl Storage {
             }
         }
 
-        let metrics_path = self.metrics_dir.join(format!("{domain}.json"));
+        let metrics_path = self.metrics_dir.join(format!("{key}.json"));
         if metrics_path.exists() {
             tokio::fs::remove_file(&metrics_path).await?;
         }
@@ -131,7 +135,8 @@ impl Storage {
 
     /// Loads the metrics time series for a provider.
     pub async fn load_metrics(&self, domain: &str) -> Result<MetricsTimeSeries> {
-        let path = self.metrics_dir.join(format!("{domain}.json"));
+        let key = sanitize_domain(domain);
+        let path = self.metrics_dir.join(format!("{key}.json"));
         if path.exists() {
             let data = tokio::fs::read_to_string(&path).await?;
             Ok(serde_json::from_str(&data)?)
@@ -142,7 +147,8 @@ impl Storage {
 
     /// Persists the metrics time series for a provider.
     pub async fn save_metrics(&self, domain: &str, metrics: &MetricsTimeSeries) -> Result<()> {
-        let path = self.metrics_dir.join(format!("{domain}.json"));
+        let key = sanitize_domain(domain);
+        let path = self.metrics_dir.join(format!("{key}.json"));
         let data = serde_json::to_string_pretty(metrics)?;
         tokio::fs::write(&path, data).await?;
         Ok(())

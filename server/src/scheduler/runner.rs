@@ -6,7 +6,7 @@ use chrono::Utc;
 use crate::{
     AppState,
     models::{
-        source::Source,
+        source::{Source, sanitize_domain},
         state::{JobPhase, JobStatus},
     },
     storage::git_repo,
@@ -92,7 +92,7 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
 async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
     let repo_path = state.storage.repo_path(domain);
-    let worktree_dir = state.work_dir().join(domain);
+    let worktree_dir = state.work_dir().join(sanitize_domain(domain));
 
     git_repo::init_bare(&repo_path)?;
 

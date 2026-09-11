@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::models::result::ProviderSummary;
+use crate::models::{result::ProviderSummary, source::sanitize_domain};
 
 /// Reads all provider summaries from the results directory, sorted by domain.
 pub async fn list_summaries(results_dir: &Path) -> Result<Vec<ProviderSummary>> {
@@ -33,7 +33,9 @@ pub async fn list_summaries(results_dir: &Path) -> Result<Vec<ProviderSummary>> 
 
 /// Loads a single provider's summary from disk, if it exists.
 pub async fn load_summary(results_dir: &Path, domain: &str) -> Result<Option<ProviderSummary>> {
-    let path = results_dir.join(domain).join("summary.json");
+    let path = results_dir
+        .join(sanitize_domain(domain))
+        .join("summary.json");
     if !path.exists() {
         return Ok(None);
     }
@@ -47,7 +49,7 @@ pub async fn save_summary(
     domain: &str,
     summary: &ProviderSummary,
 ) -> Result<()> {
-    let dir = results_dir.join(domain);
+    let dir = results_dir.join(sanitize_domain(domain));
     tokio::fs::create_dir_all(&dir).await?;
     let path = dir.join("summary.json");
     let data = serde_json::to_string_pretty(summary)?;
