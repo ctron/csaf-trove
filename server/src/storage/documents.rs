@@ -32,10 +32,16 @@ fn create_tables(conn: &Connection) -> Result<()> {
             url TEXT NOT NULL,
             basic_passed INTEGER,
             basic_error_count INTEGER,
+            basic_warning_count INTEGER,
+            basic_info_count INTEGER,
             extended_passed INTEGER,
             extended_error_count INTEGER,
+            extended_warning_count INTEGER,
+            extended_info_count INTEGER,
             full_passed INTEGER,
             full_error_count INTEGER,
+            full_warning_count INTEGER,
+            full_info_count INTEGER,
             signature_present INTEGER NOT NULL,
             signature_error TEXT,
             category TEXT,
@@ -52,12 +58,14 @@ fn create_tables(conn: &Connection) -> Result<()> {
             document_id INTEGER NOT NULL REFERENCES documents(id),
             profile TEXT NOT NULL,
             test_id TEXT NOT NULL,
-            message TEXT NOT NULL
+            message TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'error'
         );
         CREATE INDEX IF NOT EXISTS idx_documents_tracking_id ON documents(tracking_id);
         CREATE INDEX IF NOT EXISTS idx_check_failures_document_id ON check_failures(document_id);",
     )?;
     migrate_add_metadata_columns(conn)?;
+    migrate_add_severity_columns(conn)?;
     Ok(())
 }
 
@@ -84,6 +92,35 @@ fn migrate_add_metadata_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Adds severity-related columns to existing tables (idempotent).
+fn migrate_add_severity_columns(conn: &Connection) -> Result<()> {
+    let doc_columns = [
+        "basic_warning_count",
+        "basic_info_count",
+        "extended_warning_count",
+        "extended_info_count",
+        "full_warning_count",
+        "full_info_count",
+    ];
+    for col in &doc_columns {
+        let sql = format!("ALTER TABLE documents ADD COLUMN {col} INTEGER");
+        match conn.execute_batch(&sql) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("duplicate column") => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let sql = "ALTER TABLE check_failures ADD COLUMN severity TEXT NOT NULL DEFAULT 'error'";
+    match conn.execute_batch(sql) {
+        Ok(()) => {}
+        Err(e) if e.to_string().contains("duplicate column") => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    Ok(())
+}
+
 /// Upserts document validation results for a provider, preserving documents not in the batch.
 pub fn save_documents(
     results_dir: &Path,
@@ -102,20 +139,21 @@ pub fn save_documents(
     let mut doc_stmt = conn.prepare(
         "INSERT INTO documents (
             tracking_id, title, url,
-            basic_passed, basic_error_count,
-            extended_passed, extended_error_count,
-            full_passed, full_error_count,
+            basic_passed, basic_error_count, basic_warning_count, basic_info_count,
+            extended_passed, extended_error_count, extended_warning_count, extended_info_count,
+            full_passed, full_error_count, full_warning_count, full_info_count,
             signature_present, signature_error,
             category, publisher_name,
             initial_release_date, current_release_date,
             status, revision, aggregate_severity, csaf_version
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                  ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                  ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
+                  ?22, ?23, ?24, ?25)",
     )?;
 
     let mut fail_stmt = conn.prepare(
-        "INSERT INTO check_failures (document_id, profile, test_id, message)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO check_failures (document_id, profile, test_id, message, severity)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
 
     let tx = conn.unchecked_transaction()?;
@@ -123,9 +161,9 @@ pub fn save_documents(
     for doc in documents {
         del_fail_stmt.execute(rusqlite::params![doc.tracking_id])?;
         del_doc_stmt.execute(rusqlite::params![doc.tracking_id])?;
-        let (bp, bec) = profile_to_cols(doc.profiles.basic.as_ref());
-        let (ep, eec) = profile_to_cols(doc.profiles.extended.as_ref());
-        let (fp, fec) = profile_to_cols(doc.profiles.full.as_ref());
+        let (bp, bec, bwc, bic) = profile_to_cols(doc.profiles.basic.as_ref());
+        let (ep, eec, ewc, eic) = profile_to_cols(doc.profiles.extended.as_ref());
+        let (fp, fec, fwc, fic) = profile_to_cols(doc.profiles.full.as_ref());
 
         doc_stmt.execute(rusqlite::params![
             doc.tracking_id,
@@ -133,10 +171,16 @@ pub fn save_documents(
             doc.url,
             bp,
             bec,
+            bwc,
+            bic,
             ep,
             eec,
+            ewc,
+            eic,
             fp,
             fec,
+            fwc,
+            fic,
             doc.signature_present as i32,
             doc.signature_error,
             doc.category,
@@ -158,7 +202,9 @@ pub fn save_documents(
         ] {
             if let Some(d) = detail {
                 for f in &d.failing_tests {
-                    fail_stmt.execute(rusqlite::params![doc_id, profile, f.test_id, f.message])?;
+                    fail_stmt.execute(rusqlite::params![
+                        doc_id, profile, f.test_id, f.message, f.severity
+                    ])?;
                 }
             }
         }
@@ -197,9 +243,9 @@ pub fn load_documents_paginated(
 
     let mut stmt = conn.prepare(&format!(
         "SELECT id, tracking_id, title, url,
-                basic_passed, basic_error_count,
-                extended_passed, extended_error_count,
-                full_passed, full_error_count,
+                basic_passed, basic_error_count, basic_warning_count, basic_info_count,
+                extended_passed, extended_error_count, extended_warning_count, extended_info_count,
+                full_passed, full_error_count, full_warning_count, full_info_count,
                 signature_present, signature_error,
                 category, publisher_name,
                 initial_release_date, current_release_date,
@@ -238,9 +284,9 @@ pub fn load_document(
 
     let row = conn.query_row(
         "SELECT id, tracking_id, title, url,
-                basic_passed, basic_error_count,
-                extended_passed, extended_error_count,
-                full_passed, full_error_count,
+                basic_passed, basic_error_count, basic_warning_count, basic_info_count,
+                extended_passed, extended_error_count, extended_warning_count, extended_info_count,
+                full_passed, full_error_count, full_warning_count, full_info_count,
                 signature_present, signature_error,
                 category, publisher_name,
                 initial_release_date, current_release_date,
@@ -268,10 +314,16 @@ struct DocumentRow {
     url: String,
     basic_passed: Option<i32>,
     basic_error_count: Option<i64>,
+    basic_warning_count: Option<i64>,
+    basic_info_count: Option<i64>,
     extended_passed: Option<i32>,
     extended_error_count: Option<i64>,
+    extended_warning_count: Option<i64>,
+    extended_info_count: Option<i64>,
     full_passed: Option<i32>,
     full_error_count: Option<i64>,
+    full_warning_count: Option<i64>,
+    full_info_count: Option<i64>,
     signature_present: bool,
     signature_error: Option<String>,
     category: Option<String>,
@@ -293,20 +345,26 @@ fn map_document_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRow> {
         url: row.get(3)?,
         basic_passed: row.get(4)?,
         basic_error_count: row.get(5)?,
-        extended_passed: row.get(6)?,
-        extended_error_count: row.get(7)?,
-        full_passed: row.get(8)?,
-        full_error_count: row.get(9)?,
-        signature_present: row.get::<_, i32>(10)? != 0,
-        signature_error: row.get(11)?,
-        category: row.get(12)?,
-        publisher_name: row.get(13)?,
-        initial_release_date: row.get(14)?,
-        current_release_date: row.get(15)?,
-        status: row.get(16)?,
-        revision: row.get(17)?,
-        aggregate_severity: row.get(18)?,
-        csaf_version: row.get(19)?,
+        basic_warning_count: row.get(6)?,
+        basic_info_count: row.get(7)?,
+        extended_passed: row.get(8)?,
+        extended_error_count: row.get(9)?,
+        extended_warning_count: row.get(10)?,
+        extended_info_count: row.get(11)?,
+        full_passed: row.get(12)?,
+        full_error_count: row.get(13)?,
+        full_warning_count: row.get(14)?,
+        full_info_count: row.get(15)?,
+        signature_present: row.get::<_, i32>(16)? != 0,
+        signature_error: row.get(17)?,
+        category: row.get(18)?,
+        publisher_name: row.get(19)?,
+        initial_release_date: row.get(20)?,
+        current_release_date: row.get(21)?,
+        status: row.get(22)?,
+        revision: row.get(23)?,
+        aggregate_severity: row.get(24)?,
+        csaf_version: row.get(25)?,
     })
 }
 
@@ -323,7 +381,7 @@ fn load_failures_for_docs(
     let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
     let mut stmt = conn.prepare(&format!(
-        "SELECT document_id, profile, test_id, message
+        "SELECT document_id, profile, test_id, message, severity
          FROM check_failures
          WHERE document_id IN ({placeholders})
          ORDER BY document_id, id"
@@ -335,17 +393,18 @@ fn load_failures_for_docs(
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
         ))
     })?;
 
-    let mut failures: std::collections::HashMap<i64, Vec<(String, String, String)>> =
+    let mut failures: std::collections::HashMap<i64, Vec<(String, String, String, String)>> =
         std::collections::HashMap::new();
     for row in rows {
-        let (doc_id, profile, test_id, message) = row?;
+        let (doc_id, profile, test_id, message, severity) = row?;
         failures
             .entry(doc_id)
             .or_default()
-            .push((profile, test_id, message));
+            .push((profile, test_id, message, severity));
     }
 
     let items = doc_rows
@@ -360,18 +419,24 @@ fn load_failures_for_docs(
                     basic: cols_to_profile(
                         doc.basic_passed,
                         doc.basic_error_count,
+                        doc.basic_warning_count,
+                        doc.basic_info_count,
                         doc_failures,
                         "basic",
                     ),
                     extended: cols_to_profile(
                         doc.extended_passed,
                         doc.extended_error_count,
+                        doc.extended_warning_count,
+                        doc.extended_info_count,
                         doc_failures,
                         "extended",
                     ),
                     full: cols_to_profile(
                         doc.full_passed,
                         doc.full_error_count,
+                        doc.full_warning_count,
+                        doc.full_info_count,
                         doc_failures,
                         "full",
                     ),
@@ -394,10 +459,17 @@ fn load_failures_for_docs(
 }
 
 /// Converts a `DocumentProfileDetail` into column values for the documents table.
-fn profile_to_cols(detail: Option<&DocumentProfileDetail>) -> (Option<i32>, Option<i64>) {
+fn profile_to_cols(
+    detail: Option<&DocumentProfileDetail>,
+) -> (Option<i32>, Option<i64>, Option<i64>, Option<i64>) {
     match detail {
-        Some(d) => (Some(d.passed as i32), Some(d.error_count as i64)),
-        None => (None, None),
+        Some(d) => (
+            Some(d.passed as i32),
+            Some(d.error_count as i64),
+            Some(d.warning_count as i64),
+            Some(d.info_count as i64),
+        ),
+        None => (None, None, None, None),
     }
 }
 
@@ -405,17 +477,20 @@ fn profile_to_cols(detail: Option<&DocumentProfileDetail>) -> (Option<i32>, Opti
 fn cols_to_profile(
     passed: Option<i32>,
     error_count: Option<i64>,
-    failures: Option<&Vec<(String, String, String)>>,
+    warning_count: Option<i64>,
+    info_count: Option<i64>,
+    failures: Option<&Vec<(String, String, String, String)>>,
     profile: &str,
 ) -> Option<DocumentProfileDetail> {
     let passed_val = passed?;
     let failing_tests = failures
         .map(|fs| {
             fs.iter()
-                .filter(|(p, _, _)| p == profile)
-                .map(|(_, test_id, message)| DocumentCheckFailure {
+                .filter(|(p, _, _, _)| p == profile)
+                .map(|(_, test_id, message, severity)| DocumentCheckFailure {
                     test_id: test_id.clone(),
                     message: message.clone(),
+                    severity: severity.clone(),
                 })
                 .collect()
         })
@@ -424,6 +499,8 @@ fn cols_to_profile(
     Some(DocumentProfileDetail {
         passed: passed_val != 0,
         error_count: error_count.unwrap_or(0) as u64,
+        warning_count: warning_count.unwrap_or(0) as u64,
+        info_count: info_count.unwrap_or(0) as u64,
         failing_tests,
     })
 }

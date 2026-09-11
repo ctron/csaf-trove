@@ -39,8 +39,12 @@ struct DocumentResult {
     title: String,
     /// Discovery URL.
     url: String,
-    /// Profile name → check errors.
+    /// Profile name → mandatory check errors.
     failures: HashMap<String, Vec<CheckError>>,
+    /// Profile name → optional/recommended check warnings.
+    warnings: HashMap<String, Vec<CheckError>>,
+    /// Profile name → informational check notes.
+    infos: HashMap<String, Vec<CheckError>>,
     /// Profile names that passed.
     successes: Vec<String>,
     /// Signature/digest error message, if any.
@@ -161,6 +165,16 @@ pub async fn validate_provider(
                             .into_iter()
                             .map(|(k, v)| (k.to_string(), v))
                             .collect();
+                        let warnings: HashMap<String, Vec<CheckError>> = verified
+                            .warnings
+                            .into_iter()
+                            .map(|(k, v)| (k.to_string(), v))
+                            .collect();
+                        let infos: HashMap<String, Vec<CheckError>> = verified
+                            .infos
+                            .into_iter()
+                            .map(|(k, v)| (k.to_string(), v))
+                            .collect();
                         let successes: Vec<String> = verified
                             .successes
                             .into_iter()
@@ -172,6 +186,8 @@ pub async fn validate_provider(
                             title,
                             url,
                             failures,
+                            warnings,
+                            infos,
                             successes,
                             signature_error,
                             signature_present,
@@ -199,6 +215,8 @@ pub async fn validate_provider(
                             title: format!("Parse error: {e}"),
                             url,
                             failures: HashMap::new(),
+                            warnings: HashMap::new(),
+                            infos: HashMap::new(),
                             successes: vec![],
                             signature_error: Some(format!("Document error: {e}")),
                             signature_present: false,
@@ -274,22 +292,59 @@ fn build_document_results(results: &[DocumentResult]) -> Vec<DocumentValidation>
 
 /// Builds per-profile detail for a single document.
 fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<DocumentProfileDetail> {
-    if let Some(errors) = doc.failures.get(profile) {
-        Some(DocumentProfileDetail {
-            passed: false,
-            error_count: errors.len() as u64,
-            failing_tests: errors
-                .iter()
-                .map(|e| DocumentCheckFailure {
+    let errors = doc.failures.get(profile);
+    let warnings = doc.warnings.get(profile);
+    let infos = doc.infos.get(profile);
+    let has_issues = errors.is_some() || warnings.is_some() || infos.is_some();
+
+    if has_issues {
+        let mut failing_tests = Vec::new();
+
+        if let Some(errs) = errors {
+            for e in errs {
+                failing_tests.push(DocumentCheckFailure {
                     test_id: e.id.to_string(),
                     message: e.message.to_string(),
-                })
-                .collect(),
+                    severity: "error".to_string(),
+                });
+            }
+        }
+        if let Some(warns) = warnings {
+            for w in warns {
+                failing_tests.push(DocumentCheckFailure {
+                    test_id: w.id.to_string(),
+                    message: w.message.to_string(),
+                    severity: "warning".to_string(),
+                });
+            }
+        }
+        if let Some(infs) = infos {
+            for i in infs {
+                failing_tests.push(DocumentCheckFailure {
+                    test_id: i.id.to_string(),
+                    message: i.message.to_string(),
+                    severity: "info".to_string(),
+                });
+            }
+        }
+
+        let error_count = errors.map_or(0, |e| e.len() as u64);
+        let warning_count = warnings.map_or(0, |w| w.len() as u64);
+        let info_count = infos.map_or(0, |i| i.len() as u64);
+
+        Some(DocumentProfileDetail {
+            passed: false,
+            error_count,
+            warning_count,
+            info_count,
+            failing_tests,
         })
     } else if doc.successes.iter().any(|s| s == profile) {
         Some(DocumentProfileDetail {
             passed: true,
             error_count: 0,
+            warning_count: 0,
+            info_count: 0,
             failing_tests: vec![],
         })
     } else {
@@ -304,17 +359,36 @@ fn build_summary(domain: &str, results: &[DocumentResult]) -> ProviderSummary {
     let extended = build_profile_summary(results, "extended");
     let full = build_profile_summary(results, "full");
 
-    let mut test_counts: HashMap<String, u64> = HashMap::new();
+    let mut test_counts: HashMap<String, (u64, String)> = HashMap::new();
     for doc in results {
         for errors in doc.failures.values() {
             for error in errors {
-                *test_counts.entry(error.id.to_string()).or_default() += 1;
+                test_counts
+                    .entry(error.id.to_string())
+                    .or_insert((0, "error".to_string()))
+                    .0 += 1;
+            }
+        }
+        for warns in doc.warnings.values() {
+            for warning in warns {
+                test_counts
+                    .entry(warning.id.to_string())
+                    .or_insert((0, "warning".to_string()))
+                    .0 += 1;
+            }
+        }
+        for infs in doc.infos.values() {
+            for info in infs {
+                test_counts
+                    .entry(info.id.to_string())
+                    .or_insert((0, "info".to_string()))
+                    .0 += 1;
             }
         }
     }
 
     let mut top_failing: Vec<_> = test_counts.into_iter().collect();
-    top_failing.sort_by_key(|a| std::cmp::Reverse(a.1));
+    top_failing.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     top_failing.truncate(10);
 
     ProviderSummary {
@@ -329,10 +403,10 @@ fn build_summary(domain: &str, results: &[DocumentResult]) -> ProviderSummary {
         },
         top_failing_tests: top_failing
             .into_iter()
-            .map(|(test_id, count)| FailingTest {
+            .map(|(test_id, (count, severity))| FailingTest {
                 test_id,
                 count,
-                severity: "error".to_string(),
+                severity,
             })
             .collect(),
     }

@@ -385,15 +385,17 @@ fn ProfileSection(
     match detail {
         None => view! { <div /> }.into_any(),
         Some(d) => {
-            let badge_class = if d.passed {
-                "badge badge-success"
+            let (badge_class, badge_label) = if d.passed {
+                ("badge badge-success", "Pass".to_string())
+            } else if d.error_count > 0 {
+                ("badge badge-danger", format!("{} errors", d.error_count))
+            } else if d.warning_count > 0 {
+                (
+                    "badge badge-warning",
+                    format!("{} warnings", d.warning_count),
+                )
             } else {
-                "badge badge-danger"
-            };
-            let badge_label = if d.passed {
-                "Pass".to_string()
-            } else {
-                format!("{} errors", d.error_count)
+                ("badge badge-info", format!("{} info", d.info_count))
             };
 
             view! {
@@ -407,14 +409,23 @@ fn ProfileSection(
                         <table>
                             <thead>
                                 <tr>
+                                    <th>"Severity"</th>
                                     <th>"Test ID"</th>
                                     <th>"Message"</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {tests.into_iter().map(|f| {
+                                    let sev_class = match f.severity.as_str() {
+                                        "error" => "badge badge-danger",
+                                        "warning" => "badge badge-warning",
+                                        "info" => "badge badge-info",
+                                        _ => "badge",
+                                    };
+                                    let sev_label = f.severity.clone();
                                     view! {
                                         <tr>
+                                            <td><span class={sev_class}>{sev_label}</span></td>
                                             <td>{f.test_id}</td>
                                             <td>{f.message}</td>
                                         </tr>

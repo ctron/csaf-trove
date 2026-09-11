@@ -19,5 +19,5 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 
 [patch.crates-io]
-csaf-walker = { git = "https://github.com/scm-rs/csaf-walker", branch = "feature/csaf_validation_2" }
-walker-common = { git = "https://github.com/scm-rs/csaf-walker", branch = "feature/csaf_validation_2" }
+csaf-walker = { git = "https://github.com/ctron/csaf-walker.git", branch = "feature/csaf_validation_2" }
+walker-common = { git = "https://github.com/ctron/csaf-walker.git", branch = "feature/csaf_validation_2" }

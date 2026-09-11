@@ -92,6 +92,10 @@
     @apply bg-danger-subtle text-danger;
 }
 
+.badge-info {
+    @apply bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300;
+}
+
 .btn {
     @apply px-3 py-1.5 rounded-md border border-border text-sm cursor-pointer font-medium bg-surface text-muted hover:text-foreground;
 }

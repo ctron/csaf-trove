@@ -1716,7 +1716,7 @@ dependencies = [
 [[package]]
 name = "csaf-walker"
 version = "0.18.0"
-source = "git+https://github.com/scm-rs/csaf-walker?branch=feature%2Fcsaf_validation_2#8b5f6697c6b737953ae7f7ec44e15816c0bf2309"
+source = "git+https://github.com/ctron/csaf-walker.git?branch=feature%2Fcsaf_validation_2#aedd66d528cc44d0dc5a1701d8eec2aedd7bc10c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6498,7 +6498,7 @@ dependencies = [
 [[package]]
 name = "walker-common"
 version = "0.18.0"
-source = "git+https://github.com/scm-rs/csaf-walker?branch=feature%2Fcsaf_validation_2#8b5f6697c6b737953ae7f7ec44e15816c0bf2309"
+source = "git+https://github.com/ctron/csaf-walker.git?branch=feature%2Fcsaf_validation_2#aedd66d528cc44d0dc5a1701d8eec2aedd7bc10c"
 dependencies = [
  "anyhow",
  "async-trait",

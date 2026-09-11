@@ -110,6 +110,8 @@ pub struct DocumentProfileResults {
 pub struct DocumentProfileDetail {
     pub passed: bool,
     pub error_count: u64,
+    pub warning_count: u64,
+    pub info_count: u64,
     pub failing_tests: Vec<DocumentCheckFailure>,
 }
 
@@ -117,6 +119,7 @@ pub struct DocumentProfileDetail {
 pub struct DocumentCheckFailure {
     pub test_id: String,
     pub message: String,
+    pub severity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

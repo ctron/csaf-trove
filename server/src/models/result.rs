@@ -107,8 +107,12 @@ pub struct DocumentProfileResults {
 pub struct DocumentProfileDetail {
     /// Whether this profile passed (zero failures).
     pub passed: bool,
-    /// Total number of check errors for this profile.
+    /// Number of mandatory test failures.
     pub error_count: u64,
+    /// Number of optional/recommended test failures.
+    pub warning_count: u64,
+    /// Number of informational test failures.
+    pub info_count: u64,
     /// Individual failing tests.
     pub failing_tests: Vec<DocumentCheckFailure>,
 }
@@ -120,6 +124,8 @@ pub struct DocumentCheckFailure {
     pub test_id: String,
     /// Human-readable failure description.
     pub message: String,
+    /// Severity level derived from the test section (`error`, `warning`, or `info`).
+    pub severity: String,
 }
 
 /// A version of a document from the git history.

@@ -67,12 +67,18 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
             <tbody>
                 {tests.into_iter().map(|t| {
                     let test_id = t.test_id.clone();
-                    let severity = t.severity.clone();
+                    let sev_class = match t.severity.as_str() {
+                        "error" => "badge badge-danger",
+                        "warning" => "badge badge-warning",
+                        "info" => "badge badge-info",
+                        _ => "badge",
+                    };
+                    let sev_label = t.severity.clone();
                     view! {
                         <tr>
                             <td>{test_id}</td>
                             <td>{t.count}</td>
-                            <td>{severity}</td>
+                            <td><span class={sev_class}>{sev_label}</span></td>
                         </tr>
                     }
                 }).collect::<Vec<_>>()}
@@ -216,8 +222,29 @@ fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
     match detail {
         Some(d) if d.passed => view! { <span class="badge badge-success">"Pass"</span> }.into_any(),
         Some(d) => {
-            let label = format!("{} errors", d.error_count);
-            view! { <span class="badge badge-danger">{label}</span> }.into_any()
+            let mut parts = Vec::new();
+            if d.error_count > 0 {
+                parts.push(format!("{} errors", d.error_count));
+            }
+            if d.warning_count > 0 {
+                parts.push(format!("{} warnings", d.warning_count));
+            }
+            if d.info_count > 0 {
+                parts.push(format!("{} info", d.info_count));
+            }
+            let label = if parts.is_empty() {
+                "Fail".to_string()
+            } else {
+                parts.join(", ")
+            };
+            let class = if d.error_count > 0 {
+                "badge badge-danger"
+            } else if d.warning_count > 0 {
+                "badge badge-warning"
+            } else {
+                "badge badge-info"
+            };
+            view! { <span class={class}>{label}</span> }.into_any()
         }
         None => view! { <span class="badge">"-"</span> }.into_any(),
     }
