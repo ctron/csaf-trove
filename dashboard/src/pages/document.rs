@@ -1,7 +1,31 @@
+use std::cmp::Ordering;
+
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
 use crate::models::DocumentValidation;
+
+/// Compares dotted-numeric test IDs (e.g. `6.1.27.5`) segment by segment.
+fn numeric_test_id_cmp(a: &str, b: &str) -> Ordering {
+    let mut a_parts = a.split('.');
+    let mut b_parts = b.split('.');
+    loop {
+        match (a_parts.next(), b_parts.next()) {
+            (Some(a_seg), Some(b_seg)) => {
+                let ord = match (a_seg.parse::<u64>(), b_seg.parse::<u64>()) {
+                    (Ok(an), Ok(bn)) => an.cmp(&bn),
+                    _ => a_seg.cmp(b_seg),
+                };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return Ordering::Equal,
+        }
+    }
+}
 
 async fn fetch_document(domain: String, tracking_id: String) -> Result<DocumentValidation, String> {
     let resp =
@@ -166,6 +190,8 @@ fn ProfileSection(
                 {if d.failing_tests.is_empty() {
                     view! { <div /> }.into_any()
                 } else {
+                    let mut tests = d.failing_tests;
+                    tests.sort_by(|a, b| numeric_test_id_cmp(&a.test_id, &b.test_id));
                     view! {
                         <table>
                             <thead>
@@ -175,7 +201,7 @@ fn ProfileSection(
                                 </tr>
                             </thead>
                             <tbody>
-                                {d.failing_tests.into_iter().map(|f| {
+                                {tests.into_iter().map(|f| {
                                     view! {
                                         <tr>
                                             <td>{f.test_id}</td>
