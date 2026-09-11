@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod error;
 pub mod providers;
 pub mod sync;
 pub mod webhook;

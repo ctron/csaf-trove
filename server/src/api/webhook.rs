@@ -2,6 +2,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
+use super::error::ApiError;
 use crate::AppState;
 
 /// Handles GitHub push webhook events by reloading source configs.
@@ -9,18 +10,16 @@ pub async fn github(
     req: HttpRequest,
     state: web::Data<AppState>,
     body: web::Bytes,
-) -> HttpResponse {
-    let Some(ref secret) = state.webhook_secret else {
-        return HttpResponse::Forbidden().finish();
-    };
+) -> Result<HttpResponse, ApiError> {
+    let secret = state.webhook_secret.as_ref().ok_or(ApiError::Forbidden)?;
 
     if !verify_signature(&req, &body, secret) {
-        return HttpResponse::Unauthorized().finish();
+        return Err(ApiError::Unauthorized);
     }
 
     tracing::info!("GitHub webhook received, syncing config repo");
     state.sync_and_reload_sources().await;
-    HttpResponse::Ok().json(serde_json::json!({ "status": "reloaded" }))
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "status": "reloaded" })))
 }
 
 fn verify_signature(req: &HttpRequest, body: &[u8], secret: &str) -> bool {
