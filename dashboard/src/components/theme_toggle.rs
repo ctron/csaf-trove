@@ -107,7 +107,7 @@ pub fn ThemeToggle() -> impl IntoView {
     };
 
     view! {
-        <button class="theme-toggle" on:click=toggle>
+        <button class="bg-surface text-muted border border-border rounded-md px-3 py-1 text-xs font-semibold cursor-pointer ml-auto hover:text-foreground" on:click=toggle>
             {move || theme.get().label()}
         </button>
     }

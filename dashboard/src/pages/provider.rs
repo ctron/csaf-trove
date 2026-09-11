@@ -25,10 +25,10 @@ pub fn ProviderPage() -> impl IntoView {
     view! {
         <div>
             <h2>{move || format!("Provider: {}", domain())}</h2>
-            <Suspense fallback=|| view! { <p class="loading">"Loading..."</p> }>
+            <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading..."</p> }>
                 {move || detail.get().map(|result| match result {
                     Ok(d) => view! { <ProviderDetailView detail=d /> }.into_any(),
-                    Err(e) => view! { <p class="error">{e}</p> }.into_any(),
+                    Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
                 })}
             </Suspense>
         </div>
@@ -42,22 +42,22 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let domain = summary.provider.clone();
 
     view! {
-        <div class="cards">
-            <div class="card">
-                <h3>"Documents"</h3>
-                <div class="value">{summary.document_count}</div>
+        <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 mb-6">
+            <div class="bg-surface border border-border rounded-lg p-4">
+                <h3 class="text-sm text-muted mb-2">"Documents"</h3>
+                <div class="text-3xl font-semibold">{summary.document_count}</div>
             </div>
-            <div class="card">
-                <h3>"Basic"</h3>
-                <div class="value"><ProfileBadge profile=summary.profiles.basic /></div>
+            <div class="bg-surface border border-border rounded-lg p-4">
+                <h3 class="text-sm text-muted mb-2">"Basic"</h3>
+                <div class="text-3xl font-semibold"><ProfileBadge profile=summary.profiles.basic /></div>
             </div>
-            <div class="card">
-                <h3>"Extended"</h3>
-                <div class="value"><ProfileBadge profile=summary.profiles.extended /></div>
+            <div class="bg-surface border border-border rounded-lg p-4">
+                <h3 class="text-sm text-muted mb-2">"Extended"</h3>
+                <div class="text-3xl font-semibold"><ProfileBadge profile=summary.profiles.extended /></div>
             </div>
-            <div class="card">
-                <h3>"Full"</h3>
-                <div class="value"><ProfileBadge profile=summary.profiles.full /></div>
+            <div class="bg-surface border border-border rounded-lg p-4">
+                <h3 class="text-sm text-muted mb-2">"Full"</h3>
+                <div class="text-3xl font-semibold"><ProfileBadge profile=summary.profiles.full /></div>
             </div>
         </div>
 
@@ -122,22 +122,22 @@ fn DocumentsTable(domain: String) -> impl IntoView {
 
     view! {
         <h3>"Documents"</h3>
-        <div class="filter-bar">
+        <div class="flex gap-2 mb-4">
             <button
-                class=move || if status_filter.get().is_none() { "active" } else { "" }
+                class=move || if status_filter.get().is_none() { "btn btn-active" } else { "btn" }
                 on:click=move |_| { set_status_filter.set(None); set_offset.set(0); }
             >"All"</button>
             <button
-                class=move || if status_filter.get().as_deref() == Some("failing") { "active" } else { "" }
+                class=move || if status_filter.get().as_deref() == Some("failing") { "btn btn-active" } else { "btn" }
                 on:click=move |_| { set_status_filter.set(Some("failing".into())); set_offset.set(0); }
             >"Failing"</button>
             <button
-                class=move || if status_filter.get().as_deref() == Some("passing") { "active" } else { "" }
+                class=move || if status_filter.get().as_deref() == Some("passing") { "btn btn-active" } else { "btn" }
                 on:click=move |_| { set_status_filter.set(Some("passing".into())); set_offset.set(0); }
             >"Passing"</button>
         </div>
 
-        <Suspense fallback=|| view! { <p class="loading">"Loading documents..."</p> }>
+        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading documents..."</p> }>
             {move || docs.get().map(|result| match result {
                 Ok(page) => {
                     let total = page.total;
@@ -145,7 +145,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                     let count = page.items.len() as u64;
                     let d = domain.get_value();
                     view! {
-                        <p>{move || format!("Showing {}\u{2013}{} of {total}", page_offset + 1, page_offset + count)}</p>
+                        <p class="text-sm text-muted mb-2">{move || format!("Showing {}\u{2013}{} of {total}", page_offset + 1, page_offset + count)}</p>
                         <table>
                             <thead>
                                 <tr>
@@ -163,11 +163,11 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     let tid = doc.tracking_id.clone();
                                     let title = doc.title.clone();
                                     let sig_class = if doc.signature_error.is_some() {
-                                        "badge badge-red"
+                                        "badge badge-danger"
                                     } else if doc.signature_present {
-                                        "badge badge-green"
+                                        "badge badge-success"
                                     } else {
-                                        "badge badge-yellow"
+                                        "badge badge-warning"
                                     };
                                     let sig_label = if doc.signature_error.is_some() {
                                         "Invalid"
@@ -179,7 +179,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     view! {
                                         <tr>
                                             <td><a href={href}>{tid}</a></td>
-                                            <td class="truncate">{title}</td>
+                                            <td class="truncate max-w-xs">{title}</td>
                                             <td><DocProfileBadge detail=doc.profiles.basic /></td>
                                             <td><DocProfileBadge detail=doc.profiles.extended /></td>
                                             <td><DocProfileBadge detail=doc.profiles.full /></td>
@@ -190,19 +190,21 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                             </tbody>
                         </table>
 
-                        <div class="pagination">
+                        <div class="flex gap-2 mt-4">
                             <button
+                                class="btn"
                                 disabled={move || offset.get() == 0}
                                 on:click=move |_| set_offset.set(offset.get().saturating_sub(limit))
                             >"Previous"</button>
                             <button
+                                class="btn"
                                 disabled={move || offset.get() + limit >= total}
                                 on:click=move |_| set_offset.set(offset.get() + limit)
                             >"Next"</button>
                         </div>
                     }.into_any()
                 }
-                Err(e) => view! { <p class="error">{e}</p> }.into_any(),
+                Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
             })}
         </Suspense>
     }
@@ -211,10 +213,10 @@ fn DocumentsTable(domain: String) -> impl IntoView {
 #[component]
 fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
     match detail {
-        Some(d) if d.passed => view! { <span class="badge badge-green">"Pass"</span> }.into_any(),
+        Some(d) if d.passed => view! { <span class="badge badge-success">"Pass"</span> }.into_any(),
         Some(d) => {
             let label = format!("{} errors", d.error_count);
-            view! { <span class="badge badge-red">{label}</span> }.into_any()
+            view! { <span class="badge badge-danger">{label}</span> }.into_any()
         }
         None => view! { <span class="badge">"-"</span> }.into_any(),
     }

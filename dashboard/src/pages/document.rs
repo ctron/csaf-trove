@@ -131,20 +131,20 @@ pub fn DocumentPage() -> impl IntoView {
             {move || {
                 if selected_version.get().is_some() {
                     view! {
-                        <Suspense fallback=|| view! { <p class="loading">"Loading version..."</p> }>
+                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading version..."</p> }>
                             {move || historical.get().map(|outer| match outer {
                                 Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc /> }.into_any(),
-                                Some(Err(e)) => view! { <p class="error">{e}</p> }.into_any(),
+                                Some(Err(e)) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
                                 None => view! { <span /> }.into_any(),
                             })}
                         </Suspense>
                     }.into_any()
                 } else {
                     view! {
-                        <Suspense fallback=|| view! { <p class="loading">"Loading..."</p> }>
+                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading..."</p> }>
                             {move || detail.get().map(|result| match result {
                                 Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
-                                Err(e) => view! { <p class="error">{e}</p> }.into_any(),
+                                Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
                             })}
                         </Suspense>
                     }.into_any()
@@ -161,9 +161,9 @@ fn VersionSelector(
     on_select: WriteSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
-        <div class="version-selector">
-            <label>"Version: "</label>
-            <select on:change=move |ev| {
+        <div class="mb-4">
+            <label class="text-sm text-muted mr-2">"Version: "</label>
+            <select class="bg-surface text-foreground border border-border rounded-md px-3 py-2 text-sm cursor-pointer min-w-[300px]" on:change=move |ev| {
                 use wasm_bindgen::JsCast;
                 let target = ev.target().unwrap();
                 let val = target.unchecked_ref::<web_sys::HtmlSelectElement>().value();
@@ -207,62 +207,62 @@ fn HistoricalDocumentView(doc: HistoricalDocument) -> impl IntoView {
     view! {
         <h2>{doc.tracking_id.clone()}</h2>
 
-        <p class="historical-notice">
+        <p class="bg-warning-subtle text-warning rounded-md px-4 py-2 text-sm mb-4">
             "Showing version from " {format_timestamp(doc.timestamp)}
             ". Validation results are only available for the current version."
         </p>
 
-        <div class="cards">
-            <div class="card">
-                <h3>"Title"</h3>
-                <div class="value">{doc.title.clone()}</div>
+        <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 mb-6">
+            <div class="bg-surface border border-border rounded-lg p-4">
+                <h3 class="text-sm text-muted mb-2">"Title"</h3>
+                <div class="text-3xl font-semibold">{doc.title.clone()}</div>
             </div>
             {doc.category.clone().map(|c| view! {
-                <div class="card">
-                    <h3>"Category"</h3>
-                    <div class="value">{c}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Category"</h3>
+                    <div class="text-3xl font-semibold">{c}</div>
                 </div>
             })}
             {doc.publisher_name.clone().map(|p| view! {
-                <div class="card">
-                    <h3>"Publisher"</h3>
-                    <div class="value">{p}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Publisher"</h3>
+                    <div class="text-3xl font-semibold">{p}</div>
                 </div>
             })}
             {doc.aggregate_severity.clone().map(|s| view! {
-                <div class="card">
-                    <h3>"Severity"</h3>
-                    <div class="value">{s}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Severity"</h3>
+                    <div class="text-3xl font-semibold">{s}</div>
                 </div>
             })}
             {doc.status.clone().map(|s| view! {
-                <div class="card">
-                    <h3>"Status"</h3>
-                    <div class="value">{s}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Status"</h3>
+                    <div class="text-3xl font-semibold">{s}</div>
                 </div>
             })}
             {doc.revision.clone().map(|r| view! {
-                <div class="card">
-                    <h3>"Revision"</h3>
-                    <div class="value">{r}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Revision"</h3>
+                    <div class="text-3xl font-semibold">{r}</div>
                 </div>
             })}
             {doc.initial_release_date.clone().map(|d| view! {
-                <div class="card">
-                    <h3>"Initial Release"</h3>
-                    <div class="value">{d}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Initial Release"</h3>
+                    <div class="text-3xl font-semibold">{d}</div>
                 </div>
             })}
             {doc.current_release_date.clone().map(|d| view! {
-                <div class="card">
-                    <h3>"Current Release"</h3>
-                    <div class="value">{d}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Current Release"</h3>
+                    <div class="text-3xl font-semibold">{d}</div>
                 </div>
             })}
             {doc.csaf_version.clone().map(|v| view! {
-                <div class="card">
-                    <h3>"CSAF Version"</h3>
-                    <div class="value">{v}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"CSAF Version"</h3>
+                    <div class="text-3xl font-semibold">{v}</div>
                 </div>
             })}
         </div>
@@ -272,11 +272,11 @@ fn HistoricalDocumentView(doc: HistoricalDocument) -> impl IntoView {
 #[component]
 fn DocumentDetailView(doc: DocumentValidation) -> impl IntoView {
     let sig_class = if doc.signature_error.is_some() {
-        "badge badge-red"
+        "badge badge-danger"
     } else if doc.signature_present {
-        "badge badge-green"
+        "badge badge-success"
     } else {
-        "badge badge-yellow"
+        "badge badge-warning"
     };
     let sig_label = if doc.signature_error.is_some() {
         "Invalid"
@@ -301,65 +301,65 @@ fn DocumentDetailView(doc: DocumentValidation) -> impl IntoView {
     view! {
         <h2>{tracking_id}</h2>
 
-        <div class="cards">
-            <div class="card">
-                <h3>"Title"</h3>
-                <div class="value">{title}</div>
+        <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 mb-6">
+            <div class="bg-surface border border-border rounded-lg p-4">
+                <h3 class="text-sm text-muted mb-2">"Title"</h3>
+                <div class="text-3xl font-semibold">{title}</div>
             </div>
             {category.map(|c| view! {
-                <div class="card">
-                    <h3>"Category"</h3>
-                    <div class="value">{c}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Category"</h3>
+                    <div class="text-3xl font-semibold">{c}</div>
                 </div>
             })}
             {publisher_name.map(|p| view! {
-                <div class="card">
-                    <h3>"Publisher"</h3>
-                    <div class="value">{p}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Publisher"</h3>
+                    <div class="text-3xl font-semibold">{p}</div>
                 </div>
             })}
             {aggregate_severity.map(|s| view! {
-                <div class="card">
-                    <h3>"Severity"</h3>
-                    <div class="value">{s}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Severity"</h3>
+                    <div class="text-3xl font-semibold">{s}</div>
                 </div>
             })}
             {status.map(|s| view! {
-                <div class="card">
-                    <h3>"Status"</h3>
-                    <div class="value">{s}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Status"</h3>
+                    <div class="text-3xl font-semibold">{s}</div>
                 </div>
             })}
             {revision.map(|r| view! {
-                <div class="card">
-                    <h3>"Revision"</h3>
-                    <div class="value">{r}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Revision"</h3>
+                    <div class="text-3xl font-semibold">{r}</div>
                 </div>
             })}
             {initial_release_date.map(|d| view! {
-                <div class="card">
-                    <h3>"Initial Release"</h3>
-                    <div class="value">{d}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Initial Release"</h3>
+                    <div class="text-3xl font-semibold">{d}</div>
                 </div>
             })}
             {current_release_date.map(|d| view! {
-                <div class="card">
-                    <h3>"Current Release"</h3>
-                    <div class="value">{d}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"Current Release"</h3>
+                    <div class="text-3xl font-semibold">{d}</div>
                 </div>
             })}
             {csaf_version.map(|v| view! {
-                <div class="card">
-                    <h3>"CSAF Version"</h3>
-                    <div class="value">{v}</div>
+                <div class="bg-surface border border-border rounded-lg p-4">
+                    <h3 class="text-sm text-muted mb-2">"CSAF Version"</h3>
+                    <div class="text-3xl font-semibold">{v}</div>
                 </div>
             })}
-            <div class="card">
-                <h3>"Signature"</h3>
-                <div class="value">
+            <div class="bg-surface border border-border rounded-lg p-4">
+                <h3 class="text-sm text-muted mb-2">"Signature"</h3>
+                <div class="text-3xl font-semibold">
                     <span class={sig_class}>{sig_label}</span>
                     {sig_error.map(|e| view! {
-                        <p class="error-detail">{e}</p>
+                        <p class="text-sm text-danger mt-1">{e}</p>
                     })}
                 </div>
             </div>
@@ -380,9 +380,9 @@ fn ProfileSection(
         None => view! { <div /> }.into_any(),
         Some(d) => {
             let badge_class = if d.passed {
-                "badge badge-green"
+                "badge badge-success"
             } else {
-                "badge badge-red"
+                "badge badge-danger"
             };
             let badge_label = if d.passed {
                 "Pass".to_string()

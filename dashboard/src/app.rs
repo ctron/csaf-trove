@@ -15,18 +15,18 @@ use crate::{
 pub fn App() -> impl IntoView {
     view! {
         <Router>
-            <header>
-                <div class="container">
-                    <h1>"csaf-trove"</h1>
-                    <nav>
-                        <a href="/">"Providers"</a>
-                        <a href="/sync">"Sync Status"</a>
+            <header class="border-b border-border py-4">
+                <div class="max-w-[1200px] mx-auto px-6">
+                    <h1 class="text-xl font-semibold">"csaf-trove"</h1>
+                    <nav class="flex gap-4 mt-2 items-center">
+                        <a href="/" class="text-muted text-sm px-2 py-1 rounded-md no-underline hover:text-foreground hover:bg-surface hover:no-underline">"Providers"</a>
+                        <a href="/sync" class="text-muted text-sm px-2 py-1 rounded-md no-underline hover:text-foreground hover:bg-surface hover:no-underline">"Sync Status"</a>
                         <ThemeToggle />
                     </nav>
                 </div>
             </header>
-            <main>
-                <div class="container">
+            <main class="py-6">
+                <div class="max-w-[1200px] mx-auto px-6">
                     <Routes fallback=|| view! { <p>"Page not found."</p> }>
                         <Route path=path!("/") view=HomePage />
                         <Route path=path!("/providers/:domain") view=ProviderPage />

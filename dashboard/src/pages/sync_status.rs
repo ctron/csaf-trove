@@ -125,7 +125,7 @@ pub fn SyncStatusPage() -> impl IntoView {
             {move || {
                 let map = jobs.get();
                 if map.is_empty() {
-                    view! { <p class="loading">"Waiting for data\u{2026}"</p> }.into_any()
+                    view! { <p class="text-muted text-center py-12">"Waiting for data\u{2026}"</p> }.into_any()
                 } else {
                     let mut entries: Vec<_> = map.into_iter().collect();
                     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -147,9 +147,9 @@ pub fn SyncStatusPage() -> impl IntoView {
                             <tbody>
                                 {entries.into_iter().map(|(domain, job)| {
                                     let status_class = match job.status.as_str() {
-                                        "running" => "badge badge-yellow",
-                                        "completed" => "badge badge-green",
-                                        "failed" => "badge badge-red",
+                                        "running" => "badge badge-warning",
+                                        "completed" => "badge badge-success",
+                                        "failed" => "badge badge-danger",
                                         _ => "badge",
                                     };
                                     let status = job.status.clone();

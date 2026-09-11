@@ -18,10 +18,10 @@ pub fn HomePage() -> impl IntoView {
     view! {
         <div>
             <h2>"CSAF Providers"</h2>
-            <Suspense fallback=|| view! { <p class="loading">"Loading providers..."</p> }>
+            <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading providers..."</p> }>
                 {move || providers.get().map(|result| match result {
                     Ok(list) => view! { <ProviderTable providers=list /> }.into_any(),
-                    Err(e) => view! { <p class="error">{e}</p> }.into_any(),
+                    Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
                 })}
             </Suspense>
         </div>
