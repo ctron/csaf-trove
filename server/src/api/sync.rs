@@ -1,5 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 
+use super::auth::verify_bearer_token;
 use crate::AppState;
 
 /// Returns the current job status for all providers.
@@ -40,12 +41,4 @@ pub async fn trigger(
     } else {
         HttpResponse::NotFound().finish()
     }
-}
-
-fn verify_bearer_token(req: &HttpRequest, expected: &str) -> bool {
-    req.headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|token| token == expected)
 }

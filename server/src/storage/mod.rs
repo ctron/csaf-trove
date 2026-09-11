@@ -46,6 +46,36 @@ impl Storage {
         self.repos_dir.join(format!("{domain}.git"))
     }
 
+    /// Returns `true` if any on-disk data exists for the given provider.
+    pub fn has_provider_data(&self, domain: &str) -> bool {
+        self.repo_path(domain).exists()
+            || self.state_dir.join(domain).exists()
+            || self.results_dir.join(domain).exists()
+            || self.metrics_dir.join(format!("{domain}.json")).exists()
+    }
+
+    /// Deletes all on-disk data for a provider: repo, state, results, and metrics.
+    pub async fn delete_provider(&self, domain: &str) -> Result<()> {
+        let dirs = [
+            self.repo_path(domain),
+            self.state_dir.join(domain),
+            self.results_dir.join(domain),
+        ];
+
+        for path in &dirs {
+            if path.exists() {
+                tokio::fs::remove_dir_all(path).await?;
+            }
+        }
+
+        let metrics_path = self.metrics_dir.join(format!("{domain}.json"));
+        if metrics_path.exists() {
+            tokio::fs::remove_file(&metrics_path).await?;
+        }
+
+        Ok(())
+    }
+
     /// Lists all stored provider summaries, sorted by domain.
     pub async fn list_summaries(&self) -> Result<Vec<ProviderSummary>> {
         results::list_summaries(&self.results_dir).await

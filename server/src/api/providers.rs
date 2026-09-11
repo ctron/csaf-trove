@@ -1,7 +1,8 @@
-use actix_web::{HttpResponse, web};
+use actix_web::{HttpRequest, HttpResponse, web};
 use serde::Deserialize;
 
-use crate::AppState;
+use super::auth::verify_bearer_token;
+use crate::{AppState, models::state::JobPhase};
 
 /// Returns all provider summaries as JSON.
 pub async fn list(state: web::Data<AppState>) -> HttpResponse {
@@ -73,6 +74,48 @@ pub async fn documents(
             HttpResponse::InternalServerError().finish()
         }
     }
+}
+
+/// Deletes all stored data for a provider (requires Bearer token).
+pub async fn delete(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    domain: web::Path<String>,
+) -> HttpResponse {
+    let Some(ref token) = state.api_token else {
+        return HttpResponse::Forbidden().finish();
+    };
+
+    if !verify_bearer_token(&req, token) {
+        return HttpResponse::Unauthorized().finish();
+    }
+
+    let domain = domain.into_inner();
+
+    if let Some(job) = state.get_job(&domain).await
+        && job.status == JobPhase::Running
+    {
+        return HttpResponse::Conflict()
+            .json(serde_json::json!({ "error": "sync is running for this provider" }));
+    }
+
+    let in_sources = state.sources.read().await.contains_key(&domain);
+    let has_data = state.storage.has_provider_data(&domain);
+
+    if !in_sources && !has_data {
+        return HttpResponse::NotFound().finish();
+    }
+
+    if let Err(e) = state.storage.delete_provider(&domain).await {
+        tracing::error!("Failed to delete provider data for {domain}: {e}");
+        return HttpResponse::InternalServerError().finish();
+    }
+
+    state.sources.write().await.remove(&domain);
+    state.jobs.write().await.remove(&domain);
+
+    tracing::info!("Deleted provider data for {domain}");
+    HttpResponse::NoContent().finish()
 }
 
 /// Returns a single document's validation results by tracking ID.

@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod providers;
 pub mod sync;
 pub mod webhook;
@@ -10,6 +11,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         web::scope("/providers")
             .route("", web::get().to(providers::list))
             .route("/{domain}", web::get().to(providers::detail))
+            .route("/{domain}", web::delete().to(providers::delete))
             .route("/{domain}/history", web::get().to(providers::history))
             .route("/{domain}/document", web::get().to(providers::documents))
             .route(
