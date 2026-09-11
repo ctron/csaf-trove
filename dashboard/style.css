@@ -210,3 +210,33 @@ h2 {
 .theme-toggle:hover {
     color: var(--text);
 }
+
+.version-selector {
+    margin-bottom: 16px;
+}
+
+.version-selector label {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-right: 8px;
+}
+
+.version-selector select {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    cursor: pointer;
+    min-width: 300px;
+}
+
+.historical-notice {
+    background: var(--badge-yellow-bg);
+    color: var(--yellow);
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    margin-bottom: 16px;
+}

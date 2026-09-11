@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use git2::{Repository, Signature};
+use git2::{Oid, Repository, Signature, Tree};
 use serde::Serialize;
 
 /// Summary of a single git commit.
@@ -111,4 +111,148 @@ fn push_to_bare(worktree_repo: &Repository) -> Result<()> {
         .push(&[&refspec], None)
         .context("failed to push worktree commit to bare repo")?;
     Ok(())
+}
+
+/// A version of a document as recorded in a git commit.
+#[derive(Debug, Serialize)]
+pub struct DocumentVersion {
+    /// Commit SHA where this version was recorded.
+    pub commit_id: String,
+    /// Commit timestamp as Unix seconds.
+    pub timestamp: i64,
+    /// Commit message.
+    pub message: String,
+    /// Whether this is the most recent (HEAD) version.
+    pub is_latest: bool,
+}
+
+/// Recursively searches a git tree for a blob named `filename`.
+///
+/// Returns the full path and blob OID of the first match.
+fn find_file_in_tree(
+    repo: &Repository,
+    tree: &Tree<'_>,
+    filename: &str,
+    prefix: &str,
+) -> Result<Option<(String, Oid)>> {
+    for entry in tree.iter() {
+        let name = entry.name().context("non-UTF8 tree entry name")?;
+        match entry.kind() {
+            Some(git2::ObjectType::Blob) if name == filename => {
+                let path = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                return Ok(Some((path, entry.id())));
+            }
+            Some(git2::ObjectType::Tree) => {
+                let subtree = repo.find_tree(entry.id())?;
+                let sub_prefix = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                if let Some(found) = find_file_in_tree(repo, &subtree, filename, &sub_prefix)? {
+                    return Ok(Some(found));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Looks up a blob OID at a known path within a commit's tree.
+fn blob_oid_at_path(tree: &Tree<'_>, path: &str) -> Result<Option<Oid>> {
+    match tree.get_path(std::path::Path::new(path)) {
+        Ok(entry) => Ok(Some(entry.id())),
+        Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Returns the commits where a document changed, newest first.
+pub fn document_versions(
+    repo_path: &Path,
+    tracking_id: &str,
+    max_entries: usize,
+) -> Result<Option<Vec<DocumentVersion>>> {
+    let repo = Repository::open_bare(repo_path)?;
+
+    let Ok(head) = repo.head() else {
+        return Ok(None);
+    };
+    let head_commit = head.peel_to_commit()?;
+    let head_tree = head_commit.tree()?;
+
+    let filename = format!("{tracking_id}.json");
+    let Some((file_path, _)) = find_file_in_tree(&repo, &head_tree, &filename, "")? else {
+        return Ok(None);
+    };
+
+    let mut revwalk = repo.revwalk()?;
+    revwalk.push(head.target().context("HEAD has no target")?)?;
+
+    let mut versions = Vec::new();
+    let mut prev_blob_oid: Option<Oid> = None;
+    let mut is_first = true;
+
+    for oid in revwalk {
+        let oid = oid?;
+        let commit = repo.find_commit(oid)?;
+        let tree = commit.tree()?;
+
+        let current_oid = blob_oid_at_path(&tree, &file_path)?;
+
+        let changed = match (current_oid, prev_blob_oid) {
+            (Some(cur), Some(prev)) => cur != prev,
+            (Some(_), None) => true,
+            (None, Some(_)) => {
+                prev_blob_oid = None;
+                continue;
+            }
+            (None, None) => {
+                continue;
+            }
+        };
+
+        prev_blob_oid = current_oid;
+
+        if changed {
+            versions.push(DocumentVersion {
+                commit_id: oid.to_string(),
+                timestamp: commit.time().seconds(),
+                message: commit.message().unwrap_or("").to_string(),
+                is_latest: is_first,
+            });
+            if versions.len() >= max_entries {
+                break;
+            }
+        }
+
+        is_first = false;
+    }
+
+    Ok(Some(versions))
+}
+
+/// Reads the raw content of a document blob at a specific commit.
+pub fn read_document_blob(
+    repo_path: &Path,
+    tracking_id: &str,
+    commit_id: &str,
+) -> Result<Option<(Vec<u8>, i64)>> {
+    let repo = Repository::open_bare(repo_path)?;
+    let oid = Oid::from_str(commit_id).context("invalid commit ID")?;
+    let commit = repo.find_commit(oid)?;
+    let tree = commit.tree()?;
+
+    let filename = format!("{tracking_id}.json");
+    let Some((_, blob_oid)) = find_file_in_tree(&repo, &tree, &filename, "")? else {
+        return Ok(None);
+    };
+
+    let blob = repo.find_blob(blob_oid)?;
+    Ok(Some((blob.content().to_vec(), commit.time().seconds())))
 }

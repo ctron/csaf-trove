@@ -9,7 +9,10 @@ use anyhow::Result;
 
 use crate::models::{
     metrics::MetricsTimeSeries,
-    result::{DocumentValidation, PaginatedDocuments, ProviderSummary},
+    result::{
+        DocumentValidation, DocumentVersionInfo, HistoricalDocument, PaginatedDocuments,
+        ProviderSummary,
+    },
     source::sanitize_domain,
     state::SyncState,
 };
@@ -178,4 +181,108 @@ impl Storage {
     ) -> Result<Option<DocumentValidation>> {
         documents::load_document(&self.results_dir, domain, tracking_id)
     }
+
+    /// Returns the version history for a specific document in a provider's repo.
+    pub fn document_versions(
+        &self,
+        domain: &str,
+        tracking_id: &str,
+    ) -> Result<Option<Vec<DocumentVersionInfo>>> {
+        let repo_path = self.repo_path(domain);
+        if !repo_path.exists() {
+            return Ok(None);
+        }
+        let versions = git_repo::document_versions(&repo_path, tracking_id, 50)?;
+        Ok(versions.map(|vs| {
+            vs.into_iter()
+                .map(|v| DocumentVersionInfo {
+                    commit_id: v.commit_id,
+                    timestamp: v.timestamp,
+                    message: v.message,
+                    is_latest: v.is_latest,
+                })
+                .collect()
+        }))
+    }
+
+    /// Reads a historical version of a document from git and extracts its metadata.
+    pub fn read_historical_document(
+        &self,
+        domain: &str,
+        tracking_id: &str,
+        commit_id: &str,
+    ) -> Result<Option<HistoricalDocument>> {
+        let repo_path = self.repo_path(domain);
+        if !repo_path.exists() {
+            return Ok(None);
+        }
+        let Some((blob, timestamp)) =
+            git_repo::read_document_blob(&repo_path, tracking_id, commit_id)?
+        else {
+            return Ok(None);
+        };
+        let doc = extract_metadata_from_json(&blob, commit_id, timestamp)?;
+        Ok(Some(doc))
+    }
+}
+
+/// Extracts document metadata from raw CSAF JSON via `serde_json::Value`.
+fn extract_metadata_from_json(
+    json: &[u8],
+    commit_id: &str,
+    timestamp: i64,
+) -> Result<HistoricalDocument> {
+    let val: serde_json::Value = serde_json::from_slice(json)?;
+    let doc = &val["document"];
+    let tracking = &doc["tracking"];
+
+    let tracking_id = tracking["id"].as_str().unwrap_or("").to_string();
+    let title = doc["title"].as_str().unwrap_or("").to_string();
+
+    let csaf_version = if val.get("$schema").is_some() || doc.get("csaf_version").is_some() {
+        doc.get("csaf_version")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or(Some("2.1".to_string()))
+    } else {
+        Some("2.0".to_string())
+    };
+
+    Ok(HistoricalDocument {
+        tracking_id,
+        title,
+        category: doc
+            .get("category")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        publisher_name: doc
+            .get("publisher")
+            .and_then(|p| p.get("name"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        initial_release_date: tracking
+            .get("initial_release_date")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        current_release_date: tracking
+            .get("current_release_date")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        status: tracking
+            .get("status")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        revision: tracking
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        aggregate_severity: doc
+            .get("aggregate_severity")
+            .and_then(|s| s.get("text"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        csaf_version,
+        commit_id: commit_id.to_string(),
+        timestamp,
+    })
 }

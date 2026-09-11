@@ -122,6 +122,56 @@ pub struct DocumentCheckFailure {
     pub message: String,
 }
 
+/// A version of a document from the git history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentVersionInfo {
+    /// Commit SHA where this version was recorded.
+    pub commit_id: String,
+    /// Commit timestamp as Unix seconds.
+    pub timestamp: i64,
+    /// Commit message.
+    pub message: String,
+    /// Whether this is the most recent (HEAD) version.
+    pub is_latest: bool,
+}
+
+/// Metadata extracted from a historical CSAF document blob.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalDocument {
+    /// CSAF tracking ID.
+    pub tracking_id: String,
+    /// Document title.
+    pub title: String,
+    /// Document category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Name of the document publisher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher_name: Option<String>,
+    /// Date of the initial release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_release_date: Option<String>,
+    /// Date of the current (latest) release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_release_date: Option<String>,
+    /// Document status (`draft`, `final`, `interim`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Document tracking version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// Aggregate severity text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregate_severity: Option<String>,
+    /// CSAF specification version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csaf_version: Option<String>,
+    /// Commit SHA this version is from.
+    pub commit_id: String,
+    /// Commit timestamp as Unix seconds.
+    pub timestamp: i64,
+}
+
 /// Paginated response wrapper for document validation results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaginatedDocuments {

@@ -18,6 +18,14 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .route(
                 "/{domain}/document/{tracking_id}",
                 web::get().to(providers::document_detail),
+            )
+            .route(
+                "/{domain}/document/{tracking_id}/versions",
+                web::get().to(providers::document_versions),
+            )
+            .route(
+                "/{domain}/document/{tracking_id}/versions/{commit_id}",
+                web::get().to(providers::document_version_detail),
             ),
     )
     .service(

@@ -126,3 +126,35 @@ pub struct PaginatedDocuments {
     pub offset: u64,
     pub limit: u64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentVersionInfo {
+    pub commit_id: String,
+    pub timestamp: i64,
+    pub message: String,
+    pub is_latest: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalDocument {
+    pub tracking_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub publisher_name: Option<String>,
+    #[serde(default)]
+    pub initial_release_date: Option<String>,
+    #[serde(default)]
+    pub current_release_date: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub aggregate_severity: Option<String>,
+    #[serde(default)]
+    pub csaf_version: Option<String>,
+    pub commit_id: String,
+    pub timestamp: i64,
+}

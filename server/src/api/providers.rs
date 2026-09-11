@@ -120,3 +120,29 @@ pub async fn document_detail(
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(doc))
 }
+
+/// Returns the version history for a specific document from git.
+pub async fn document_versions(
+    state: web::Data<AppState>,
+    path: web::Path<(String, String)>,
+) -> Result<HttpResponse, ApiError> {
+    let (domain, tracking_id) = path.into_inner();
+    let versions = state
+        .storage
+        .document_versions(&domain, &tracking_id)?
+        .or_not_found()?;
+    Ok(HttpResponse::Ok().json(versions))
+}
+
+/// Returns metadata from a historical version of a document.
+pub async fn document_version_detail(
+    state: web::Data<AppState>,
+    path: web::Path<(String, String, String)>,
+) -> Result<HttpResponse, ApiError> {
+    let (domain, tracking_id, commit_id) = path.into_inner();
+    let doc = state
+        .storage
+        .read_historical_document(&domain, &tracking_id, &commit_id)?
+        .or_not_found()?;
+    Ok(HttpResponse::Ok().json(doc))
+}

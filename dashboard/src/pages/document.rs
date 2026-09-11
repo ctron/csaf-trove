@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::models::DocumentValidation;
+use crate::models::{DocumentValidation, DocumentVersionInfo, HistoricalDocument};
 
 /// Compares dotted-numeric test IDs (e.g. `6.1.27.5`) segment by segment.
 fn numeric_test_id_cmp(a: &str, b: &str) -> Ordering {
@@ -39,11 +39,53 @@ async fn fetch_document(domain: String, tracking_id: String) -> Result<DocumentV
     resp.json().await.map_err(|e| e.to_string())
 }
 
+async fn fetch_versions(
+    domain: String,
+    tracking_id: String,
+) -> Result<Vec<DocumentVersionInfo>, String> {
+    let resp = gloo_net::http::Request::get(&format!(
+        "/api/providers/{domain}/document/{tracking_id}/versions"
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if resp.status() == 404 {
+        return Ok(vec![]);
+    }
+    resp.json().await.map_err(|e| e.to_string())
+}
+
+async fn fetch_historical_document(
+    domain: String,
+    tracking_id: String,
+    commit_id: String,
+) -> Result<HistoricalDocument, String> {
+    let resp = gloo_net::http::Request::get(&format!(
+        "/api/providers/{domain}/document/{tracking_id}/versions/{commit_id}"
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if resp.status() == 404 {
+        return Err("Version not found".to_string());
+    }
+    resp.json().await.map_err(|e| e.to_string())
+}
+
+/// Formats a Unix timestamp as a human-readable date string.
+fn format_timestamp(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| ts.to_string())
+}
+
 #[component]
 pub fn DocumentPage() -> impl IntoView {
     let params = use_params_map();
     let domain = move || params.read().get("domain").unwrap_or_default();
     let tracking_id = move || params.read().get("tracking_id").unwrap_or_default();
+
+    let (selected_version, set_selected_version) = signal(Option::<String>::None);
 
     let detail = LocalResource::new(move || {
         let d = domain();
@@ -51,15 +93,178 @@ pub fn DocumentPage() -> impl IntoView {
         async move { fetch_document(d, t).await }
     });
 
+    let versions = LocalResource::new(move || {
+        let d = domain();
+        let t = tracking_id();
+        async move { fetch_versions(d, t).await }
+    });
+
+    let historical = LocalResource::new(move || {
+        let d = domain();
+        let t = tracking_id();
+        let v = selected_version.get();
+        async move {
+            match v {
+                Some(commit_id) => Some(fetch_historical_document(d, t, commit_id).await),
+                None => None,
+            }
+        }
+    });
+
     view! {
         <div>
             <p><a href={move || format!("/providers/{}", domain())}>"Back to provider"</a></p>
-            <Suspense fallback=|| view! { <p class="loading">"Loading..."</p> }>
-                {move || detail.get().map(|result| match result {
-                    Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
-                    Err(e) => view! { <p class="error">{e}</p> }.into_any(),
+
+            <Suspense fallback=|| view! { <span /> }>
+                {move || versions.get().map(|result| match result {
+                    Ok(vs) if vs.len() > 1 => view! {
+                        <VersionSelector
+                            versions=vs
+                            selected=selected_version
+                            on_select=set_selected_version
+                        />
+                    }.into_any(),
+                    _ => view! { <span /> }.into_any(),
                 })}
             </Suspense>
+
+            {move || {
+                if selected_version.get().is_some() {
+                    view! {
+                        <Suspense fallback=|| view! { <p class="loading">"Loading version..."</p> }>
+                            {move || historical.get().map(|outer| match outer {
+                                Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc /> }.into_any(),
+                                Some(Err(e)) => view! { <p class="error">{e}</p> }.into_any(),
+                                None => view! { <span /> }.into_any(),
+                            })}
+                        </Suspense>
+                    }.into_any()
+                } else {
+                    view! {
+                        <Suspense fallback=|| view! { <p class="loading">"Loading..."</p> }>
+                            {move || detail.get().map(|result| match result {
+                                Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
+                                Err(e) => view! { <p class="error">{e}</p> }.into_any(),
+                            })}
+                        </Suspense>
+                    }.into_any()
+                }
+            }}
+        </div>
+    }
+}
+
+#[component]
+fn VersionSelector(
+    versions: Vec<DocumentVersionInfo>,
+    selected: ReadSignal<Option<String>>,
+    on_select: WriteSignal<Option<String>>,
+) -> impl IntoView {
+    view! {
+        <div class="version-selector">
+            <label>"Version: "</label>
+            <select on:change=move |ev| {
+                use wasm_bindgen::JsCast;
+                let target = ev.target().unwrap();
+                let val = target.unchecked_ref::<web_sys::HtmlSelectElement>().value();
+                if val == "latest" {
+                    on_select.set(None);
+                } else {
+                    on_select.set(Some(val));
+                }
+            }>
+                {versions.into_iter().map(|v| {
+                    let label = if v.is_latest {
+                        format!("{} (current)", format_timestamp(v.timestamp))
+                    } else {
+                        format_timestamp(v.timestamp)
+                    };
+                    let value = if v.is_latest {
+                        "latest".to_string()
+                    } else {
+                        v.commit_id.clone()
+                    };
+                    let value_for_closure = value.clone();
+                    let is_selected = move || {
+                        match selected.get() {
+                            None => value_for_closure == "latest",
+                            Some(ref id) => *id == value_for_closure,
+                        }
+                    };
+                    view! {
+                        <option value={value} selected=is_selected>
+                            {label}
+                        </option>
+                    }
+                }).collect::<Vec<_>>()}
+            </select>
+        </div>
+    }
+}
+
+#[component]
+fn HistoricalDocumentView(doc: HistoricalDocument) -> impl IntoView {
+    view! {
+        <h2>{doc.tracking_id.clone()}</h2>
+
+        <p class="historical-notice">
+            "Showing version from " {format_timestamp(doc.timestamp)}
+            ". Validation results are only available for the current version."
+        </p>
+
+        <div class="cards">
+            <div class="card">
+                <h3>"Title"</h3>
+                <div class="value">{doc.title.clone()}</div>
+            </div>
+            {doc.category.clone().map(|c| view! {
+                <div class="card">
+                    <h3>"Category"</h3>
+                    <div class="value">{c}</div>
+                </div>
+            })}
+            {doc.publisher_name.clone().map(|p| view! {
+                <div class="card">
+                    <h3>"Publisher"</h3>
+                    <div class="value">{p}</div>
+                </div>
+            })}
+            {doc.aggregate_severity.clone().map(|s| view! {
+                <div class="card">
+                    <h3>"Severity"</h3>
+                    <div class="value">{s}</div>
+                </div>
+            })}
+            {doc.status.clone().map(|s| view! {
+                <div class="card">
+                    <h3>"Status"</h3>
+                    <div class="value">{s}</div>
+                </div>
+            })}
+            {doc.revision.clone().map(|r| view! {
+                <div class="card">
+                    <h3>"Revision"</h3>
+                    <div class="value">{r}</div>
+                </div>
+            })}
+            {doc.initial_release_date.clone().map(|d| view! {
+                <div class="card">
+                    <h3>"Initial Release"</h3>
+                    <div class="value">{d}</div>
+                </div>
+            })}
+            {doc.current_release_date.clone().map(|d| view! {
+                <div class="card">
+                    <h3>"Current Release"</h3>
+                    <div class="value">{d}</div>
+                </div>
+            })}
+            {doc.csaf_version.clone().map(|v| view! {
+                <div class="card">
+                    <h3>"CSAF Version"</h3>
+                    <div class="value">{v}</div>
+                </div>
+            })}
         </div>
     }
 }
