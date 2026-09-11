@@ -112,15 +112,15 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         &format!("sync: {}", Utc::now().format("%Y-%m-%dT%H:%MZ")),
     )?;
 
+    state.update_job_phase(domain, "validate").await;
+    let total = crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;
+
     {
         let mut jobs = state.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
-            job.documents_total = job.documents_synced;
+            job.documents_total = total;
         }
     }
-
-    state.update_job_phase(domain, "validate").await;
-    crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;
 
     state.update_job_phase(domain, "report").await;
     crate::pipeline::report::generate_report(state, source).await?;

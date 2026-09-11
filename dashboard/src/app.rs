@@ -35,6 +35,11 @@ pub fn App() -> impl IntoView {
                     </Routes>
                 </div>
             </main>
+            <footer class="border-t border-border py-4 mt-auto">
+                <div class="max-w-[1200px] mx-auto px-6 text-xs text-muted">
+                    "csaf-trove v" {env!("CARGO_PKG_VERSION")}
+                </div>
+            </footer>
         </Router>
     }
 }

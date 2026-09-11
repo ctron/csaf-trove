@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 
 use crate::components::profile_badge::ProfileBadge;
-use crate::models::ProviderSummary;
+use crate::models::{ProviderSummary, encode_path_segment};
 
 async fn fetch_providers() -> Result<Vec<ProviderSummary>, String> {
     let resp = gloo_net::http::Request::get("/api/providers")
@@ -45,7 +45,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
             <tbody>
                 {providers.into_iter().map(|p| {
                     let domain = p.provider.clone();
-                    let href = format!("/providers/{domain}");
+                    let href = format!("/providers/{}", encode_path_segment(&domain));
                     let display_domain = domain.clone();
                     let validated_at = p.validated_at.clone();
                     view! {

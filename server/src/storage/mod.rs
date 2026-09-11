@@ -157,8 +157,8 @@ impl Storage {
         Ok(())
     }
 
-    /// Replaces all per-document validation results for a provider.
-    pub fn save_documents(&self, domain: &str, docs: &[DocumentValidation]) -> Result<()> {
+    /// Upserts per-document validation results, returning the total document count.
+    pub fn save_documents(&self, domain: &str, docs: &[DocumentValidation]) -> Result<u64> {
         documents::save_documents(&self.results_dir, domain, docs)
     }
 

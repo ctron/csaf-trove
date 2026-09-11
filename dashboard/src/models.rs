@@ -158,3 +158,10 @@ pub struct HistoricalDocument {
     pub commit_id: String,
     pub timestamp: i64,
 }
+
+/// URL-encodes a path segment so that characters like `/` and `:` are percent-escaped.
+pub fn encode_path_segment(s: &str) -> String {
+    js_sys::encode_uri_component(s)
+        .as_string()
+        .unwrap_or_default()
+}

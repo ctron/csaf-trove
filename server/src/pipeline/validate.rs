@@ -79,11 +79,13 @@ async fn load_keys(file_source: &FileSource) -> Result<Vec<PublicKey>> {
 }
 
 /// Validates all documents in the worktree against basic, extended, and full CSAF profiles.
+///
+/// Returns the total number of documents stored for this provider after the upsert.
 pub async fn validate_provider(
     state: &Arc<AppState>,
     source: &Source,
     worktree_dir: &Path,
-) -> Result<()> {
+) -> Result<u64> {
     let domain = &source.domain;
     tracing::info!("Validating documents for {domain}");
 
@@ -229,17 +231,18 @@ pub async fn validate_provider(
         .map_err(|_| anyhow::anyhow!("results Arc still shared after walk completed"))?
         .into_inner();
 
-    let summary = build_summary(domain, &results);
+    let documents = build_document_results(&results);
+    let total_documents = state.storage.save_documents(domain, &documents)?;
+
+    let mut summary = build_summary(domain, &results);
+    summary.document_count = total_documents;
     state.storage.save_summary(domain, &summary).await?;
 
-    let documents = build_document_results(&results);
-    state.storage.save_documents(domain, &documents)?;
-
     tracing::info!(
-        "Validation complete for {domain}: {} documents",
+        "Validation complete for {domain}: {total_documents} documents ({} validated)",
         results.len()
     );
-    Ok(())
+    Ok(total_documents)
 }
 
 /// Converts internal results into serializable document validation records.

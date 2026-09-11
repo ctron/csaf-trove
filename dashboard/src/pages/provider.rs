@@ -2,13 +2,16 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
 use crate::components::profile_badge::ProfileBadge;
-use crate::models::{DocumentProfileDetail, PaginatedDocuments, ProviderDetail};
+use crate::models::{
+    DocumentProfileDetail, PaginatedDocuments, ProviderDetail, encode_path_segment,
+};
 
 async fn fetch_provider(domain: String) -> Result<ProviderDetail, String> {
-    let resp = gloo_net::http::Request::get(&format!("/api/providers/{domain}"))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp =
+        gloo_net::http::Request::get(&format!("/api/providers/{}", encode_path_segment(&domain)))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
     resp.json().await.map_err(|e| e.to_string())
 }
 
@@ -42,23 +45,14 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let domain = summary.provider.clone();
 
     view! {
-        <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4 mb-6">
-            <div class="bg-surface border border-border rounded-lg p-4">
-                <h3 class="text-sm text-muted mb-2">"Documents"</h3>
-                <div class="text-3xl font-semibold">{summary.document_count}</div>
-            </div>
-            <div class="bg-surface border border-border rounded-lg p-4">
-                <h3 class="text-sm text-muted mb-2">"Basic"</h3>
-                <div class="text-3xl font-semibold"><ProfileBadge profile=summary.profiles.basic /></div>
-            </div>
-            <div class="bg-surface border border-border rounded-lg p-4">
-                <h3 class="text-sm text-muted mb-2">"Extended"</h3>
-                <div class="text-3xl font-semibold"><ProfileBadge profile=summary.profiles.extended /></div>
-            </div>
-            <div class="bg-surface border border-border rounded-lg p-4">
-                <h3 class="text-sm text-muted mb-2">"Full"</h3>
-                <div class="text-3xl font-semibold"><ProfileBadge profile=summary.profiles.full /></div>
-            </div>
+        <div class="flex items-center gap-4 text-sm text-muted mb-6">
+            <span>{summary.document_count}" documents"</span>
+            <span>"\u{00b7}"</span>
+            <span>"Basic "<ProfileBadge profile=summary.profiles.basic /></span>
+            <span>"\u{00b7}"</span>
+            <span>"Extended "<ProfileBadge profile=summary.profiles.extended /></span>
+            <span>"\u{00b7}"</span>
+            <span>"Full "<ProfileBadge profile=summary.profiles.full /></span>
         </div>
 
         <h3>"Top Failing Tests"</h3>
@@ -95,7 +89,10 @@ async fn fetch_documents(
     limit: u64,
     status: Option<String>,
 ) -> Result<PaginatedDocuments, String> {
-    let mut url = format!("/api/providers/{domain}/document?offset={offset}&limit={limit}");
+    let mut url = format!(
+        "/api/providers/{}/document?offset={offset}&limit={limit}",
+        encode_path_segment(&domain)
+    );
     if let Some(s) = &status {
         url.push_str(&format!("&status={s}"));
     }
@@ -122,19 +119,21 @@ fn DocumentsTable(domain: String) -> impl IntoView {
 
     view! {
         <h3>"Documents"</h3>
-        <div class="flex gap-2 mb-4">
-            <button
-                class=move || if status_filter.get().is_none() { "btn btn-active" } else { "btn" }
-                on:click=move |_| { set_status_filter.set(None); set_offset.set(0); }
-            >"All"</button>
-            <button
-                class=move || if status_filter.get().as_deref() == Some("failing") { "btn btn-active" } else { "btn" }
-                on:click=move |_| { set_status_filter.set(Some("failing".into())); set_offset.set(0); }
-            >"Failing"</button>
-            <button
-                class=move || if status_filter.get().as_deref() == Some("passing") { "btn btn-active" } else { "btn" }
-                on:click=move |_| { set_status_filter.set(Some("passing".into())); set_offset.set(0); }
-            >"Passing"</button>
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex gap-2">
+                <button
+                    class=move || if status_filter.get().is_none() { "btn btn-active" } else { "btn" }
+                    on:click=move |_| { set_status_filter.set(None); set_offset.set(0); }
+                >"All"</button>
+                <button
+                    class=move || if status_filter.get().as_deref() == Some("failing") { "btn btn-active" } else { "btn" }
+                    on:click=move |_| { set_status_filter.set(Some("failing".into())); set_offset.set(0); }
+                >"Failing"</button>
+                <button
+                    class=move || if status_filter.get().as_deref() == Some("passing") { "btn btn-active" } else { "btn" }
+                    on:click=move |_| { set_status_filter.set(Some("passing".into())); set_offset.set(0); }
+                >"Passing"</button>
+            </div>
         </div>
 
         <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading documents..."</p> }>
@@ -145,7 +144,21 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                     let count = page.items.len() as u64;
                     let d = domain.get_value();
                     view! {
-                        <p class="text-sm text-muted mb-2">{move || format!("Showing {}\u{2013}{} of {total}", page_offset + 1, page_offset + count)}</p>
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-sm text-muted">{move || format!("Showing {}\u{2013}{} of {total}", page_offset + 1, page_offset + count)}</p>
+                            <div class="flex gap-2">
+                                <button
+                                    class="btn"
+                                    disabled={move || offset.get() == 0}
+                                    on:click=move |_| set_offset.set(offset.get().saturating_sub(limit))
+                                >"Previous"</button>
+                                <button
+                                    class="btn"
+                                    disabled={move || offset.get() + limit >= total}
+                                    on:click=move |_| set_offset.set(offset.get() + limit)
+                                >"Next"</button>
+                            </div>
+                        </div>
                         <table>
                             <thead>
                                 <tr>
@@ -159,7 +172,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                             </thead>
                             <tbody>
                                 {page.items.into_iter().map(|doc| {
-                                    let href = format!("/providers/{}/documents/{}", d, doc.tracking_id);
+                                    let href = format!("/providers/{}/documents/{}", encode_path_segment(&d), doc.tracking_id);
                                     let tid = doc.tracking_id.clone();
                                     let title = doc.title.clone();
                                     let sig_class = if doc.signature_error.is_some() {
@@ -190,18 +203,6 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                             </tbody>
                         </table>
 
-                        <div class="flex gap-2 mt-4">
-                            <button
-                                class="btn"
-                                disabled={move || offset.get() == 0}
-                                on:click=move |_| set_offset.set(offset.get().saturating_sub(limit))
-                            >"Previous"</button>
-                            <button
-                                class="btn"
-                                disabled={move || offset.get() + limit >= total}
-                                on:click=move |_| set_offset.set(offset.get() + limit)
-                            >"Next"</button>
-                        </div>
                     }.into_any()
                 }
                 Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),

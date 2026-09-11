@@ -84,15 +84,20 @@ fn migrate_add_metadata_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Replaces all stored document results for a provider.
+/// Upserts document validation results for a provider, preserving documents not in the batch.
 pub fn save_documents(
     results_dir: &Path,
     domain: &str,
     documents: &[DocumentValidation],
-) -> Result<()> {
+) -> Result<u64> {
     let conn = open_db(results_dir, domain)?;
 
-    conn.execute_batch("DELETE FROM check_failures; DELETE FROM documents;")?;
+    let mut del_fail_stmt = conn.prepare(
+        "DELETE FROM check_failures WHERE document_id IN (
+            SELECT id FROM documents WHERE tracking_id = ?1
+        )",
+    )?;
+    let mut del_doc_stmt = conn.prepare("DELETE FROM documents WHERE tracking_id = ?1")?;
 
     let mut doc_stmt = conn.prepare(
         "INSERT INTO documents (
@@ -116,6 +121,8 @@ pub fn save_documents(
     let tx = conn.unchecked_transaction()?;
 
     for doc in documents {
+        del_fail_stmt.execute(rusqlite::params![doc.tracking_id])?;
+        del_doc_stmt.execute(rusqlite::params![doc.tracking_id])?;
         let (bp, bec) = profile_to_cols(doc.profiles.basic.as_ref());
         let (ep, eec) = profile_to_cols(doc.profiles.extended.as_ref());
         let (fp, fec) = profile_to_cols(doc.profiles.full.as_ref());
@@ -158,7 +165,10 @@ pub fn save_documents(
     }
 
     tx.commit()?;
-    Ok(())
+
+    let total: u64 = conn.query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))?;
+
+    Ok(total)
 }
 
 /// Loads a paginated, optionally filtered list of document validation results.

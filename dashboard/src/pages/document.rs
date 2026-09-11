@@ -3,7 +3,9 @@ use std::cmp::Ordering;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::models::{DocumentValidation, DocumentVersionInfo, HistoricalDocument};
+use crate::models::{
+    DocumentValidation, DocumentVersionInfo, HistoricalDocument, encode_path_segment,
+};
 
 /// Compares dotted-numeric test IDs (e.g. `6.1.27.5`) segment by segment.
 fn numeric_test_id_cmp(a: &str, b: &str) -> Ordering {
@@ -28,11 +30,13 @@ fn numeric_test_id_cmp(a: &str, b: &str) -> Ordering {
 }
 
 async fn fetch_document(domain: String, tracking_id: String) -> Result<DocumentValidation, String> {
-    let resp =
-        gloo_net::http::Request::get(&format!("/api/providers/{domain}/document/{tracking_id}"))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+    let resp = gloo_net::http::Request::get(&format!(
+        "/api/providers/{}/document/{tracking_id}",
+        encode_path_segment(&domain)
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
     if resp.status() == 404 {
         return Err("Document not found".to_string());
     }
@@ -44,7 +48,8 @@ async fn fetch_versions(
     tracking_id: String,
 ) -> Result<Vec<DocumentVersionInfo>, String> {
     let resp = gloo_net::http::Request::get(&format!(
-        "/api/providers/{domain}/document/{tracking_id}/versions"
+        "/api/providers/{}/document/{tracking_id}/versions",
+        encode_path_segment(&domain)
     ))
     .send()
     .await
@@ -61,7 +66,8 @@ async fn fetch_historical_document(
     commit_id: String,
 ) -> Result<HistoricalDocument, String> {
     let resp = gloo_net::http::Request::get(&format!(
-        "/api/providers/{domain}/document/{tracking_id}/versions/{commit_id}"
+        "/api/providers/{}/document/{tracking_id}/versions/{commit_id}",
+        encode_path_segment(&domain)
     ))
     .send()
     .await
@@ -113,7 +119,7 @@ pub fn DocumentPage() -> impl IntoView {
 
     view! {
         <div>
-            <p><a href={move || format!("/providers/{}", domain())}>"Back to provider"</a></p>
+            <p><a href={move || format!("/providers/{}", encode_path_segment(&domain()))}>"Back to provider"</a></p>
 
             <Suspense fallback=|| view! { <span /> }>
                 {move || versions.get().map(|result| match result {
