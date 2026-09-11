@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
 use tokio::{
-    sync::{Notify, RwLock},
+    sync::{Notify, RwLock, watch},
     task::spawn_blocking,
 };
 use tracing_actix_web::TracingLogger;
@@ -123,6 +123,8 @@ pub struct AppState {
     data_dir: PathBuf,
     /// Wakes the sync loop when source configuration changes.
     pub sources_changed: Notify,
+    /// Notifies WebSocket clients when job status changes.
+    pub job_notify: watch::Sender<()>,
 }
 
 impl AppState {
@@ -155,6 +157,7 @@ impl AppState {
     /// Inserts or replaces the job status for a provider.
     pub async fn update_job(&self, domain: &str, status: JobStatus) {
         self.jobs.write().await.insert(domain.to_string(), status);
+        self.job_notify.send(()).ok();
     }
 
     /// Returns the current job status for a provider, if any.
@@ -168,6 +171,8 @@ impl AppState {
         if let Some(job) = jobs.get_mut(domain) {
             job.phase = Some(phase.to_string());
         }
+        drop(jobs);
+        self.job_notify.send(()).ok();
     }
 
     /// Increments the synced document count for a running job.
@@ -176,6 +181,8 @@ impl AppState {
         if let Some(job) = jobs.get_mut(domain) {
             job.documents_synced += 1;
         }
+        drop(jobs);
+        self.job_notify.send(()).ok();
     }
 
     /// Increments the validated document count for a running job.
@@ -184,6 +191,8 @@ impl AppState {
         if let Some(job) = jobs.get_mut(domain) {
             job.documents_validated += 1;
         }
+        drop(jobs);
+        self.job_notify.send(()).ok();
     }
 
     /// Syncs the config repo from GitHub and reloads provider sources.
@@ -295,6 +304,8 @@ async fn main() -> Result<()> {
         .unwrap_or_default();
     tracing::info!("Loaded {} sources", sources.len());
 
+    let (job_notify, _) = watch::channel(());
+
     let state = Arc::new(AppState {
         config,
         storage,
@@ -304,6 +315,7 @@ async fn main() -> Result<()> {
         webhook_secret,
         data_dir,
         sources_changed: Notify::new(),
+        job_notify,
     });
 
     if let Ok(sync_states) = state.storage.list_sync_states().await {

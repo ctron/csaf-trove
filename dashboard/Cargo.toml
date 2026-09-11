@@ -8,9 +8,18 @@ chrono = { workspace = true }
 console_error_panic_hook = "0.1"
 gloo-net = "0.7"
 gloo-timers = { version = "0.3", features = ["futures"] }
+js-sys = "0.3"
 leptos = { version = "0.8", features = ["csr"] }
 leptos_router = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
+wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Storage"] }
+web-sys = { version = "0.3", features = [
+    "CloseEvent",
+    "Location",
+    "MessageEvent",
+    "Storage",
+    "WebSocket",
+    "Window",
+] }

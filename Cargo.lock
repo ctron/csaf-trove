@@ -198,6 +198,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "actix-ws"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12d4f2fbee3ef7a22fa6cb0e416b962237a167ed0419f22d4e451da2d7f082f8"
+dependencies = [
+ "actix-codec",
+ "actix-http",
+ "actix-web",
+ "bytestring",
+ "futures-core",
+ "tokio",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1658,10 +1672,12 @@ dependencies = [
  "console_error_panic_hook",
  "gloo-net 0.7.0",
  "gloo-timers",
+ "js-sys",
  "leptos",
  "leptos_router",
  "serde",
  "serde_json",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]
@@ -1672,6 +1688,7 @@ version = "0.1.0-alpha.6"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
+ "actix-ws",
  "anyhow",
  "chrono",
  "clap",

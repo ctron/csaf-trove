@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 actix-web = "4"
 actix-web-static-files = { version = "4", features = ["static-files-03"] }
+actix-ws = "0.3"
 anyhow = "1"
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }
