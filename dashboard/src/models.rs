@@ -69,6 +69,8 @@ pub struct JobStatus {
     pub documents_validated: u64,
     pub documents_total: u64,
     pub error: Option<String>,
+    /// Elapsed seconds (running) or total seconds (completed/failed).
+    pub duration_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

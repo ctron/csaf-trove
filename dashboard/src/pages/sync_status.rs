@@ -12,9 +12,41 @@ async fn fetch_sync_status() -> Result<HashMap<String, JobStatus>, String> {
     resp.json().await.map_err(|e| e.to_string())
 }
 
+/// Formats a duration in seconds as a human-readable string.
+fn format_duration(seconds: Option<f64>) -> String {
+    match seconds {
+        None => "-".to_string(),
+        Some(s) => {
+            let total = s as u64;
+            let hours = total / 3600;
+            let minutes = (total % 3600) / 60;
+            let secs = total % 60;
+            if hours > 0 {
+                format!("{hours}h {minutes}m {secs}s")
+            } else if minutes > 0 {
+                format!("{minutes}m {secs}s")
+            } else {
+                format!("{secs}s")
+            }
+        }
+    }
+}
+
 #[component]
 pub fn SyncStatusPage() -> impl IntoView {
-    let jobs = LocalResource::new(fetch_sync_status);
+    let trigger = RwSignal::new(0u32);
+
+    let jobs = LocalResource::new(move || {
+        trigger.get();
+        fetch_sync_status()
+    });
+
+    wasm_bindgen_futures::spawn_local(async move {
+        loop {
+            gloo_timers::future::sleep(std::time::Duration::from_secs(5)).await;
+            trigger.update(|n| *n += 1);
+        }
+    });
 
     view! {
         <div>
@@ -43,6 +75,7 @@ fn JobTable(jobs: HashMap<String, JobStatus>) -> impl IntoView {
                     <th>"Phase"</th>
                     <th>"Synced"</th>
                     <th>"Validated"</th>
+                    <th>"Duration"</th>
                     <th>"Started"</th>
                     <th>"Error"</th>
                 </tr>
@@ -57,6 +90,7 @@ fn JobTable(jobs: HashMap<String, JobStatus>) -> impl IntoView {
                     };
                     let status = job.status.clone();
                     let phase = job.phase.clone().unwrap_or_else(|| "-".to_string());
+                    let duration = format_duration(job.duration_seconds);
                     let started = job.started_at.clone();
                     let error = job.error.clone().unwrap_or_default();
                     view! {
@@ -66,6 +100,7 @@ fn JobTable(jobs: HashMap<String, JobStatus>) -> impl IntoView {
                             <td>{phase}</td>
                             <td>{job.documents_synced}</td>
                             <td>{job.documents_validated}</td>
+                            <td>{duration}</td>
                             <td>{started}</td>
                             <td>{error}</td>
                         </tr>

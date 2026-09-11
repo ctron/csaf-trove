@@ -12,6 +12,9 @@ pub struct SyncState {
     pub since_token: Option<DateTime<Utc>>,
     /// Number of documents fetched during the last sync.
     pub documents_synced: u64,
+    /// Number of documents validated during the last run.
+    #[serde(default)]
+    pub documents_validated: u64,
     /// Total number of documents known for this provider.
     pub documents_total: u64,
 }
@@ -24,6 +27,7 @@ impl SyncState {
             last_sync: None,
             since_token: None,
             documents_synced: 0,
+            documents_validated: 0,
             documents_total: 0,
         }
     }

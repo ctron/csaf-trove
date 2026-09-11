@@ -46,7 +46,8 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
             job.status = JobPhase::Completed;
             job.completed_at = Some(Utc::now());
             job.phase = None;
-            state.update_job(domain, job).await;
+            state.update_job(domain, job.clone()).await;
+            persist_job_counts(state, domain, &job).await;
             tracing::info!("Pipeline for {domain} completed");
         }
         Err(e) => {
@@ -71,6 +72,23 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
     result
 }
 
+/// Saves the final document counts from a completed job into the persisted sync state.
+async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus) {
+    match state.storage.load_sync_state(domain).await {
+        Ok(mut sync_state) => {
+            sync_state.documents_synced = job.documents_synced;
+            sync_state.documents_validated = job.documents_validated;
+            sync_state.documents_total = job.documents_total;
+            if let Err(e) = state.storage.save_sync_state(&sync_state).await {
+                tracing::warn!("Failed to persist job counts for {domain}: {e}");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load sync state for {domain}: {e}");
+        }
+    }
+}
+
 async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
     let repo_path = state.storage.repo_path(domain);
@@ -93,6 +111,13 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         &worktree_dir,
         &format!("sync: {}", Utc::now().format("%Y-%m-%dT%H:%MZ")),
     )?;
+
+    {
+        let mut jobs = state.jobs.write().await;
+        if let Some(job) = jobs.get_mut(domain) {
+            job.documents_total = job.documents_synced;
+        }
+    }
 
     state.update_job_phase(domain, "validate").await;
     crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;

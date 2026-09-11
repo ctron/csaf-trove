@@ -88,6 +88,9 @@ pub async fn validate_provider(
         ("full".into(), Box::new(CsafValidation::new("full"))),
     ];
 
+    let state_for_closure = state.clone();
+    let domain_for_closure = domain.to_string();
+
     let verifier = VerifyingVisitor::with_checks(
         move |result: Result<
             VerifiedAdvisory<RetrievedAdvisory, String>,
@@ -96,6 +99,8 @@ pub async fn validate_provider(
             let results = results_ref.clone();
             let keys = keys.clone();
             let opts = validation_options.clone();
+            let state = state_for_closure.clone();
+            let domain = domain_for_closure.clone();
             async move {
                 match result {
                     Ok(verified) => {
@@ -152,6 +157,7 @@ pub async fn validate_provider(
                             signature_error,
                             signature_present,
                         });
+                        state.increment_job_validated(&domain).await;
                     }
                     Err(e) => {
                         let url = e.url().to_string();
@@ -170,6 +176,7 @@ pub async fn validate_provider(
                             signature_error: Some(format!("Document error: {e}")),
                             signature_present: false,
                         });
+                        state.increment_job_validated(&domain).await;
                     }
                 }
                 Ok::<_, anyhow::Error>(())

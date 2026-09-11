@@ -170,6 +170,22 @@ impl AppState {
         }
     }
 
+    /// Increments the synced document count for a running job.
+    pub async fn increment_job_synced(&self, domain: &str) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.get_mut(domain) {
+            job.documents_synced += 1;
+        }
+    }
+
+    /// Increments the validated document count for a running job.
+    pub async fn increment_job_validated(&self, domain: &str) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.get_mut(domain) {
+            job.documents_validated += 1;
+        }
+    }
+
     /// Syncs the config repo from GitHub and reloads provider sources.
     pub async fn sync_and_reload_sources(&self) {
         let data_dir = self.data_dir.clone();
@@ -289,6 +305,28 @@ async fn main() -> Result<()> {
         data_dir,
         sources_changed: Notify::new(),
     });
+
+    if let Ok(sync_states) = state.storage.list_sync_states().await {
+        let mut jobs = state.jobs.write().await;
+        for ss in sync_states {
+            if let Some(last_sync) = ss.last_sync {
+                jobs.insert(
+                    ss.domain.clone(),
+                    models::state::JobStatus {
+                        status: models::state::JobPhase::Completed,
+                        started_at: last_sync,
+                        completed_at: Some(last_sync),
+                        phase: None,
+                        documents_synced: ss.documents_synced,
+                        documents_validated: ss.documents_validated,
+                        documents_total: ss.documents_total,
+                        error: None,
+                    },
+                );
+            }
+        }
+        tracing::info!("Restored {} job statuses from persisted state", jobs.len());
+    }
 
     let scheduler_state = state.clone();
     tokio::spawn(async move {

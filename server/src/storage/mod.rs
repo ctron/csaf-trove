@@ -114,6 +114,11 @@ impl Storage {
         state::load_sync_state(&self.state_dir, domain).await
     }
 
+    /// Lists all persisted sync states.
+    pub async fn list_sync_states(&self) -> Result<Vec<SyncState>> {
+        state::list_sync_states(&self.state_dir).await
+    }
+
     /// Persists the sync state for a provider.
     pub async fn save_sync_state(&self, state: &SyncState) -> Result<()> {
         state::save_sync_state(&self.state_dir, state).await

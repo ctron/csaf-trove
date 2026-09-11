@@ -1,12 +1,52 @@
+use std::collections::HashMap;
+
 use actix_web::{HttpRequest, HttpResponse, web};
+use chrono::Utc;
+use serde::Serialize;
 
 use super::{auth::verify_bearer_token, error::ApiError};
-use crate::AppState;
+use crate::{
+    AppState,
+    models::state::{JobPhase, JobStatus},
+};
 
-/// Returns the current job status for all providers.
+/// API response wrapper that adds computed duration to a job status.
+#[derive(Serialize)]
+struct SyncStatusEntry {
+    /// The underlying job status fields.
+    #[serde(flatten)]
+    job: JobStatus,
+    /// Elapsed seconds (running) or total seconds (completed/failed).
+    duration_seconds: Option<f64>,
+}
+
+/// Returns the current job status for all providers with computed durations.
 pub async fn status(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {
     let jobs = state.jobs.read().await;
-    Ok(HttpResponse::Ok().json(&*jobs))
+    let now = Utc::now();
+
+    let entries: HashMap<String, SyncStatusEntry> = jobs
+        .iter()
+        .map(|(domain, job)| {
+            let duration_seconds = match job.status {
+                JobPhase::Running | JobPhase::Pending => {
+                    Some((now - job.started_at).num_milliseconds() as f64 / 1000.0)
+                }
+                JobPhase::Completed | JobPhase::Failed => job
+                    .completed_at
+                    .map(|end| (end - job.started_at).num_milliseconds() as f64 / 1000.0),
+            };
+            (
+                domain.clone(),
+                SyncStatusEntry {
+                    job: job.clone(),
+                    duration_seconds,
+                },
+            )
+        })
+        .collect();
+
+    Ok(HttpResponse::Ok().json(&entries))
 }
 
 /// Triggers a manual sync for a single provider (requires Bearer token).

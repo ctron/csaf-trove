@@ -1657,10 +1657,12 @@ dependencies = [
  "chrono",
  "console_error_panic_hook",
  "gloo-net 0.7.0",
+ "gloo-timers",
  "leptos",
  "leptos_router",
  "serde",
  "serde_json",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
