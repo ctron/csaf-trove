@@ -81,6 +81,22 @@ pub struct DocumentValidation {
     pub profiles: DocumentProfileResults,
     pub signature_error: Option<String>,
     pub signature_present: bool,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub publisher_name: Option<String>,
+    #[serde(default)]
+    pub initial_release_date: Option<String>,
+    #[serde(default)]
+    pub current_release_date: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub aggregate_severity: Option<String>,
+    #[serde(default)]
+    pub csaf_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

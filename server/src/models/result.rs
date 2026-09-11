@@ -65,6 +65,30 @@ pub struct DocumentValidation {
     pub signature_error: Option<String>,
     /// Whether a signature file was present for this document.
     pub signature_present: bool,
+    /// Document category (e.g. `csaf_security_advisory`, `csaf_vex`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Name of the document publisher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher_name: Option<String>,
+    /// Date of the initial release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_release_date: Option<String>,
+    /// Date of the current (latest) release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_release_date: Option<String>,
+    /// Document status (`draft`, `final`, `interim`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Document tracking version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// Aggregate severity text (e.g. `critical`, `important`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregate_severity: Option<String>,
+    /// CSAF specification version (e.g. `2.0`, `2.1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csaf_version: Option<String>,
 }
 
 /// Per-profile failure information for a single document.

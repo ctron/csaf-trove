@@ -22,7 +22,7 @@ fn open_db(results_dir: &Path, domain: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Creates the schema if it does not already exist.
+/// Creates the schema if it does not already exist and migrates older schemas.
 fn create_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS documents (
@@ -37,7 +37,15 @@ fn create_tables(conn: &Connection) -> Result<()> {
             full_passed INTEGER,
             full_error_count INTEGER,
             signature_present INTEGER NOT NULL,
-            signature_error TEXT
+            signature_error TEXT,
+            category TEXT,
+            publisher_name TEXT,
+            initial_release_date TEXT,
+            current_release_date TEXT,
+            status TEXT,
+            revision TEXT,
+            aggregate_severity TEXT,
+            csaf_version TEXT
         );
         CREATE TABLE IF NOT EXISTS check_failures (
             id INTEGER PRIMARY KEY,
@@ -49,6 +57,30 @@ fn create_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_documents_tracking_id ON documents(tracking_id);
         CREATE INDEX IF NOT EXISTS idx_check_failures_document_id ON check_failures(document_id);",
     )?;
+    migrate_add_metadata_columns(conn)?;
+    Ok(())
+}
+
+/// Adds metadata columns to an existing documents table (idempotent).
+fn migrate_add_metadata_columns(conn: &Connection) -> Result<()> {
+    let columns = [
+        "category",
+        "publisher_name",
+        "initial_release_date",
+        "current_release_date",
+        "status",
+        "revision",
+        "aggregate_severity",
+        "csaf_version",
+    ];
+    for col in &columns {
+        let sql = format!("ALTER TABLE documents ADD COLUMN {col} TEXT");
+        match conn.execute_batch(&sql) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("duplicate column") => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
     Ok(())
 }
 
@@ -68,8 +100,12 @@ pub fn save_documents(
             basic_passed, basic_error_count,
             extended_passed, extended_error_count,
             full_passed, full_error_count,
-            signature_present, signature_error
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            signature_present, signature_error,
+            category, publisher_name,
+            initial_release_date, current_release_date,
+            status, revision, aggregate_severity, csaf_version
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
+                  ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
     )?;
 
     let mut fail_stmt = conn.prepare(
@@ -96,6 +132,14 @@ pub fn save_documents(
             fec,
             doc.signature_present as i32,
             doc.signature_error,
+            doc.category,
+            doc.publisher_name,
+            doc.initial_release_date,
+            doc.current_release_date,
+            doc.status,
+            doc.revision,
+            doc.aggregate_severity,
+            doc.csaf_version,
         ])?;
 
         let doc_id = tx.last_insert_rowid();
@@ -146,28 +190,16 @@ pub fn load_documents_paginated(
                 basic_passed, basic_error_count,
                 extended_passed, extended_error_count,
                 full_passed, full_error_count,
-                signature_present, signature_error
+                signature_present, signature_error,
+                category, publisher_name,
+                initial_release_date, current_release_date,
+                status, revision, aggregate_severity, csaf_version
          FROM documents {where_clause}
          ORDER BY tracking_id
          LIMIT ?1 OFFSET ?2"
     ))?;
 
-    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
-        Ok(DocumentRow {
-            id: row.get(0)?,
-            tracking_id: row.get(1)?,
-            title: row.get(2)?,
-            url: row.get(3)?,
-            basic_passed: row.get(4)?,
-            basic_error_count: row.get(5)?,
-            extended_passed: row.get(6)?,
-            extended_error_count: row.get(7)?,
-            full_passed: row.get(8)?,
-            full_error_count: row.get(9)?,
-            signature_present: row.get::<_, i32>(10)? != 0,
-            signature_error: row.get(11)?,
-        })
-    })?;
+    let rows = stmt.query_map(rusqlite::params![limit, offset], map_document_row)?;
 
     let doc_rows: Vec<DocumentRow> = rows.collect::<Result<_, _>>()?;
     let items = load_failures_for_docs(&conn, &doc_rows)?;
@@ -199,25 +231,13 @@ pub fn load_document(
                 basic_passed, basic_error_count,
                 extended_passed, extended_error_count,
                 full_passed, full_error_count,
-                signature_present, signature_error
+                signature_present, signature_error,
+                category, publisher_name,
+                initial_release_date, current_release_date,
+                status, revision, aggregate_severity, csaf_version
          FROM documents WHERE tracking_id = ?1",
         [tracking_id],
-        |row| {
-            Ok(DocumentRow {
-                id: row.get(0)?,
-                tracking_id: row.get(1)?,
-                title: row.get(2)?,
-                url: row.get(3)?,
-                basic_passed: row.get(4)?,
-                basic_error_count: row.get(5)?,
-                extended_passed: row.get(6)?,
-                extended_error_count: row.get(7)?,
-                full_passed: row.get(8)?,
-                full_error_count: row.get(9)?,
-                signature_present: row.get::<_, i32>(10)? != 0,
-                signature_error: row.get(11)?,
-            })
-        },
+        map_document_row,
     );
 
     match row {
@@ -244,6 +264,40 @@ struct DocumentRow {
     full_error_count: Option<i64>,
     signature_present: bool,
     signature_error: Option<String>,
+    category: Option<String>,
+    publisher_name: Option<String>,
+    initial_release_date: Option<String>,
+    current_release_date: Option<String>,
+    status: Option<String>,
+    revision: Option<String>,
+    aggregate_severity: Option<String>,
+    csaf_version: Option<String>,
+}
+
+/// Maps a database row into a `DocumentRow`.
+fn map_document_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRow> {
+    Ok(DocumentRow {
+        id: row.get(0)?,
+        tracking_id: row.get(1)?,
+        title: row.get(2)?,
+        url: row.get(3)?,
+        basic_passed: row.get(4)?,
+        basic_error_count: row.get(5)?,
+        extended_passed: row.get(6)?,
+        extended_error_count: row.get(7)?,
+        full_passed: row.get(8)?,
+        full_error_count: row.get(9)?,
+        signature_present: row.get::<_, i32>(10)? != 0,
+        signature_error: row.get(11)?,
+        category: row.get(12)?,
+        publisher_name: row.get(13)?,
+        initial_release_date: row.get(14)?,
+        current_release_date: row.get(15)?,
+        status: row.get(16)?,
+        revision: row.get(17)?,
+        aggregate_severity: row.get(18)?,
+        csaf_version: row.get(19)?,
+    })
 }
 
 /// Loads check failures for a batch of document rows and assembles `DocumentValidation` values.
@@ -314,6 +368,14 @@ fn load_failures_for_docs(
                 },
                 signature_error: doc.signature_error.clone(),
                 signature_present: doc.signature_present,
+                category: doc.category.clone(),
+                publisher_name: doc.publisher_name.clone(),
+                initial_release_date: doc.initial_release_date.clone(),
+                current_release_date: doc.current_release_date.clone(),
+                status: doc.status.clone(),
+                revision: doc.revision.clone(),
+                aggregate_severity: doc.aggregate_severity.clone(),
+                csaf_version: doc.csaf_version.clone(),
             }
         })
         .collect();

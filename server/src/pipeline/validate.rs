@@ -13,7 +13,7 @@ use csaf_walker::{
     retrieve::{RetrievedAdvisory, RetrievingVisitor},
     source::{FileSource, Source as CsafSource},
     verification::{
-        VerificationError, VerifiedAdvisory, VerifyingVisitor,
+        Csaf, VerificationError, VerifiedAdvisory, VerifyingVisitor,
         check::{Check, CsafValidation},
     },
     walker::Walker,
@@ -47,6 +47,22 @@ struct DocumentResult {
     signature_error: Option<String>,
     /// Whether a signature file was present.
     signature_present: bool,
+    /// Document category.
+    category: Option<String>,
+    /// Publisher name.
+    publisher_name: Option<String>,
+    /// Initial release date.
+    initial_release_date: Option<String>,
+    /// Current release date.
+    current_release_date: Option<String>,
+    /// Document status.
+    status: Option<String>,
+    /// Tracking version.
+    revision: Option<String>,
+    /// Aggregate severity text.
+    aggregate_severity: Option<String>,
+    /// CSAF specification version.
+    csaf_version: Option<String>,
 }
 
 /// Loads OpenPGP public keys from the provider metadata in the worktree.
@@ -107,6 +123,7 @@ pub async fn validate_provider(
                         let tracking_id = verified.csaf.document().tracking().id().to_string();
                         let title = verified.csaf.document().title().to_string();
                         let url = verified.advisory.discovered.url.to_string();
+                        let meta = extract_metadata(&verified.csaf);
 
                         let signature_present = verified.advisory.signature.is_some();
                         let mut sig_errors = Vec::new();
@@ -156,6 +173,14 @@ pub async fn validate_provider(
                             successes,
                             signature_error,
                             signature_present,
+                            category: meta.category,
+                            publisher_name: meta.publisher_name,
+                            initial_release_date: meta.initial_release_date,
+                            current_release_date: meta.current_release_date,
+                            status: meta.status,
+                            revision: meta.revision,
+                            aggregate_severity: meta.aggregate_severity,
+                            csaf_version: meta.csaf_version,
                         });
                         state.increment_job_validated(&domain).await;
                     }
@@ -175,6 +200,14 @@ pub async fn validate_provider(
                             successes: vec![],
                             signature_error: Some(format!("Document error: {e}")),
                             signature_present: false,
+                            category: None,
+                            publisher_name: None,
+                            initial_release_date: None,
+                            current_release_date: None,
+                            status: None,
+                            revision: None,
+                            aggregate_severity: None,
+                            csaf_version: None,
                         });
                         state.increment_job_validated(&domain).await;
                     }
@@ -224,6 +257,14 @@ fn build_document_results(results: &[DocumentResult]) -> Vec<DocumentValidation>
             },
             signature_error: doc.signature_error.clone(),
             signature_present: doc.signature_present,
+            category: doc.category.clone(),
+            publisher_name: doc.publisher_name.clone(),
+            initial_release_date: doc.initial_release_date.clone(),
+            current_release_date: doc.current_release_date.clone(),
+            status: doc.status.clone(),
+            revision: doc.revision.clone(),
+            aggregate_severity: doc.aggregate_severity.clone(),
+            csaf_version: doc.csaf_version.clone(),
         })
         .collect()
 }
@@ -291,6 +332,52 @@ fn build_summary(domain: &str, results: &[DocumentResult]) -> ProviderSummary {
                 severity: "error".to_string(),
             })
             .collect(),
+    }
+}
+
+/// Extracted CSAF document metadata.
+struct DocumentMetadata {
+    category: Option<String>,
+    publisher_name: Option<String>,
+    initial_release_date: Option<String>,
+    current_release_date: Option<String>,
+    status: Option<String>,
+    revision: Option<String>,
+    aggregate_severity: Option<String>,
+    csaf_version: Option<String>,
+}
+
+/// Extracts metadata fields from a parsed CSAF document.
+fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
+    match csaf {
+        Csaf::V2_0(doc) => DocumentMetadata {
+            category: Some(doc.document.category.to_string()),
+            publisher_name: Some(doc.document.publisher.name.to_string()),
+            initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
+            current_release_date: Some(doc.document.tracking.current_release_date.clone()),
+            status: Some(doc.document.tracking.status.to_string()),
+            revision: Some(doc.document.tracking.version.to_string()),
+            aggregate_severity: doc
+                .document
+                .aggregate_severity
+                .as_ref()
+                .map(|s| s.text.to_string()),
+            csaf_version: Some("2.0".to_string()),
+        },
+        Csaf::V2_1(doc) => DocumentMetadata {
+            category: Some(doc.document.category.to_string()),
+            publisher_name: Some(doc.document.publisher.name.to_string()),
+            initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
+            current_release_date: Some(doc.document.tracking.current_release_date.clone()),
+            status: Some(doc.document.tracking.status.to_string()),
+            revision: Some(doc.document.tracking.version.to_string()),
+            aggregate_severity: doc
+                .document
+                .aggregate_severity
+                .as_ref()
+                .map(|s| s.text.to_string()),
+            csaf_version: Some("2.1".to_string()),
+        },
     }
 }
 
