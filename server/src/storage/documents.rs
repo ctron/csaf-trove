@@ -275,7 +275,21 @@ pub fn load_documents_paginated(
             limit,
         }));
     }
-    let conn = Connection::open(db_path)?;
+    let conn = Connection::open(&db_path)?;
+
+    let table_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !table_exists {
+        return Ok(Some(PaginatedDocuments {
+            items: vec![],
+            total: 0,
+            offset,
+            limit,
+        }));
+    }
 
     let where_clause = status_where_clause(status_filter);
 
