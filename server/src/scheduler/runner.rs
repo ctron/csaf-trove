@@ -106,7 +106,10 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let repo_path = state.storage.repo_path(domain);
     let worktree_dir = state.work_dir().join(sanitize_domain(domain));
 
-    git_repo::init_bare(&repo_path)?;
+    {
+        let repo = repo_path.clone();
+        tokio::task::spawn_blocking(move || git_repo::init_bare(&repo)).await??;
+    }
 
     let sync_state = state.storage.load_sync_state(domain).await?;
     let db_count = state.storage.document_count(domain)?;
@@ -118,7 +121,12 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         );
     }
 
-    setup_worktree(&repo_path, &worktree_dir, incremental)?;
+    {
+        let repo = repo_path.clone();
+        let worktree = worktree_dir.clone();
+        tokio::task::spawn_blocking(move || setup_worktree(&repo, &worktree, incremental))
+            .await??;
+    }
 
     let sync_result = crate::pipeline::sync::sync_provider(state, source, &worktree_dir).await;
 
@@ -128,11 +136,13 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         return sync_result;
     }
 
-    git_repo::commit_all(
-        &repo_path,
-        &worktree_dir,
-        &format!("sync: {}", Utc::now().format("%Y-%m-%dT%H:%MZ")),
-    )?;
+    state.update_job_phase(domain, "commit").await;
+    {
+        let repo = repo_path.clone();
+        let worktree = worktree_dir.clone();
+        let msg = format!("sync: {}", Utc::now().format("%Y-%m-%dT%H:%MZ"));
+        tokio::task::spawn_blocking(move || git_repo::commit_all(&repo, &worktree, &msg)).await??;
+    }
 
     state.update_job_phase(domain, "validate").await;
     let total = crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;
