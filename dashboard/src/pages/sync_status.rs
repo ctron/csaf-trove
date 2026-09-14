@@ -165,8 +165,8 @@ pub fn SyncStatusPage() -> impl IntoView {
                                             <td>{phase}</td>
                                             <td>{job.documents_synced}</td>
                                             <td>{job.documents_validated}</td>
-                                            <td>{duration}</td>
-                                            <td title={started_at}>{relative}</td>
+                                            <td class="whitespace-nowrap">{duration}</td>
+                                            <td class="whitespace-nowrap" title={started_at}>{relative}</td>
                                             <td>{error}</td>
                                         </tr>
                                     }
