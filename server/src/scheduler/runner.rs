@@ -13,8 +13,20 @@ use crate::{
 };
 
 /// Runs the full pipeline (sync, validate, report) for a provider with job status tracking.
+///
+/// Acquires a per-provider lock so concurrent runs for the same domain are skipped.
 pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
+
+    let lock = {
+        let mut locks = state.pipeline_locks.write().await;
+        locks.entry(domain.to_string()).or_default().clone()
+    };
+    let Ok(_guard) = lock.try_lock() else {
+        tracing::warn!("Pipeline for {domain} already running, skipping");
+        return Ok(());
+    };
+
     tracing::info!("Starting pipeline for {domain}");
 
     let job = JobStatus {

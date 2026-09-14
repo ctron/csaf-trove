@@ -103,6 +103,8 @@ pub async fn validate_provider(
     }));
     let validation_options = Arc::new(ValidationOptions::new());
 
+    let db_count_before = state.storage.document_count(domain).unwrap_or(0);
+
     let results: Arc<Mutex<Vec<DocumentResult>>> = Arc::new(Mutex::new(Vec::new()));
     let results_ref = results.clone();
 
@@ -252,6 +254,14 @@ pub async fn validate_provider(
     let results = Arc::try_unwrap(results)
         .map_err(|_| anyhow::anyhow!("results Arc still shared after walk completed"))?
         .into_inner();
+
+    if db_count_before > 0 && (results.len() as u64) < db_count_before / 2 {
+        tracing::warn!(
+            "{domain}: validation found {} documents but database has {db_count_before}; \
+             documents not in this batch are preserved via upsert",
+            results.len()
+        );
+    }
 
     let documents = build_document_results(&results);
     let total_documents = state.storage.save_documents(domain, &documents)?;

@@ -59,9 +59,25 @@ pub async fn sync_provider(
     worktree_dir: &Path,
 ) -> Result<()> {
     let domain = &source.domain;
-    tracing::info!("Syncing documents for {domain}");
 
     let mut sync_state = state.storage.load_sync_state(domain).await?;
+
+    if sync_state.since_token.is_some() {
+        let db_count = state.storage.document_count(domain)?;
+        if db_count == 0 {
+            tracing::warn!(
+                "{domain}: document database is empty but since_token is set; \
+                 clearing token to force full sync"
+            );
+            sync_state.since_token = None;
+        }
+    }
+
+    if let Some(ref since) = sync_state.since_token {
+        tracing::info!("{domain}: starting incremental sync (since {since})");
+    } else {
+        tracing::info!("{domain}: starting full sync (no since_token)");
+    }
 
     let fetcher = Fetcher::new(FetcherOptions::default()).await?;
     let metadata = MetadataRetriever::new(domain);

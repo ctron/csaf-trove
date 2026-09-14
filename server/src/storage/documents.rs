@@ -241,6 +241,21 @@ pub fn save_documents(
     Ok(total)
 }
 
+/// Returns the number of documents stored for a provider, or 0 if the database does not exist.
+pub fn document_count(results_dir: &Path, domain: &str) -> Result<u64> {
+    let db_path = results_dir
+        .join(sanitize_domain(domain))
+        .join("documents.db");
+    if !db_path.exists() {
+        return Ok(0);
+    }
+    let conn = Connection::open(db_path)?;
+    match conn.query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0)) {
+        Ok(count) => Ok(count),
+        Err(_) => Ok(0),
+    }
+}
+
 /// Loads a paginated, optionally filtered list of document validation results.
 pub fn load_documents_paginated(
     results_dir: &Path,

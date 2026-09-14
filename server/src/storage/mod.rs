@@ -157,6 +157,11 @@ impl Storage {
         Ok(())
     }
 
+    /// Returns the number of documents stored for a provider.
+    pub fn document_count(&self, domain: &str) -> Result<u64> {
+        documents::document_count(&self.results_dir, domain)
+    }
+
     /// Upserts per-document validation results, returning the total document count.
     pub fn save_documents(&self, domain: &str, docs: &[DocumentValidation]) -> Result<u64> {
         documents::save_documents(&self.results_dir, domain, docs)

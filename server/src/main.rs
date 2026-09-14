@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use serde::Deserialize;
 use tokio::{
-    sync::{Notify, RwLock, watch},
+    sync::{Mutex, Notify, RwLock, watch},
     task::spawn_blocking,
 };
 use tracing_actix_web::TracingLogger;
@@ -121,6 +121,8 @@ pub struct AppState {
     pub webhook_secret: Option<String>,
     /// Root data directory.
     data_dir: PathBuf,
+    /// Per-provider mutex to prevent concurrent pipeline runs.
+    pub pipeline_locks: RwLock<HashMap<String, Arc<Mutex<()>>>>,
     /// Wakes the sync loop when source configuration changes.
     pub sources_changed: Notify,
     /// Notifies WebSocket clients when job status changes.
@@ -314,6 +316,7 @@ async fn main() -> Result<()> {
         api_token,
         webhook_secret,
         data_dir,
+        pipeline_locks: RwLock::new(HashMap::new()),
         sources_changed: Notify::new(),
         job_notify,
     });
