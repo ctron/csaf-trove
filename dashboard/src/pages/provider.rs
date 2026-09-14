@@ -106,6 +106,9 @@ async fn fetch_documents(
         .send()
         .await
         .map_err(|e| e.to_string())?;
+    if !resp.ok() {
+        return Err(format!("Failed to load documents ({})", resp.status()));
+    }
     resp.json().await.map_err(|e| e.to_string())
 }
 

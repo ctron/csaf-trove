@@ -268,7 +268,12 @@ pub fn load_documents_paginated(
         .join(sanitize_domain(domain))
         .join("documents.db");
     if !db_path.exists() {
-        return Ok(None);
+        return Ok(Some(PaginatedDocuments {
+            items: vec![],
+            total: 0,
+            offset,
+            limit,
+        }));
     }
     let conn = Connection::open(db_path)?;
 
