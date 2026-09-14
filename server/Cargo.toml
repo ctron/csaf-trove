@@ -4,31 +4,31 @@ version = "0.1.0-alpha.11"
 edition.workspace = true
 
 [dependencies]
-actix-web = "4"
-actix-web-static-files = { version = "4", features = ["static-files-03"] }
-actix-ws = "0.3"
-anyhow = "1"
+actix-web = { workspace = true }
+actix-web-static-files = { workspace = true }
+actix-ws = { workspace = true }
+anyhow = { workspace = true }
 chrono = { workspace = true }
-clap = { version = "4", features = ["derive"] }
-csaf-walker = { version = "0.18", default-features = false, features = ["csaf", "crypto-openssl"] }
-git2 = { version = "0.21", features = ["https"] }
-hex = "0.4"
-hmac = "0.13"
-humantime = "2"
-humantime-serde = "1"
-parking_lot = "0.12"
-rusqlite = { version = "0.35", features = ["bundled"] }
+clap = { workspace = true }
+csaf-walker = { workspace = true, features = ["csaf", "crypto-openssl"] }
+git2 = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+humantime = { workspace = true }
+humantime-serde = { workspace = true }
+parking_lot = { workspace = true }
+rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = "2"
-sha2 = "0.11"
-static-files = "0.3"
-tokio = { version = "1", features = ["full"] }
-toml = "1"
-tracing = "0.1"
-tracing-actix-web = "0.7"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-walker-common = "0.13"
+sha2 = { workspace = true }
+static-files = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-actix-web = { workspace = true }
+tracing-subscriber = { workspace = true }
+walker-common = { workspace = true }
 
 [build-dependencies]
-static-files = "0.3"
+static-files = { workspace = true }
