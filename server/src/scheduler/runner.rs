@@ -108,7 +108,17 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
 
     git_repo::init_bare(&repo_path)?;
 
-    setup_worktree(&repo_path, &worktree_dir)?;
+    let sync_state = state.storage.load_sync_state(domain).await?;
+    let db_count = state.storage.document_count(domain)?;
+    let incremental = sync_state.since_token.is_some() && db_count > 0;
+
+    if incremental {
+        tracing::info!(
+            "{domain}: incremental mode — skipping worktree checkout ({db_count} docs in DB)"
+        );
+    }
+
+    setup_worktree(&repo_path, &worktree_dir, incremental)?;
 
     let sync_result = crate::pipeline::sync::sync_provider(state, source, &worktree_dir).await;
 
@@ -141,11 +151,20 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     Ok(())
 }
 
-/// Clones the bare repo into a fresh worktree directory.
+/// Sets up a worktree directory for the sync pipeline.
+///
+/// When `incremental` is false (full sync), clones the bare repo with a full checkout
+/// so the worktree contains all documents. When `incremental` is true, fetches the repo
+/// data and populates the git index from the HEAD tree without extracting files — only
+/// documents downloaded during sync will appear in the working directory.
 ///
 /// If the bare repo's HEAD doesn't resolve (e.g. branch name mismatch),
-/// falls back to the first available branch before cloning.
-fn setup_worktree(repo_path: &std::path::Path, worktree_dir: &PathBuf) -> Result<()> {
+/// falls back to the first available branch.
+fn setup_worktree(
+    repo_path: &std::path::Path,
+    worktree_dir: &PathBuf,
+    incremental: bool,
+) -> Result<()> {
     if worktree_dir.exists() {
         std::fs::remove_dir_all(worktree_dir)?;
     }
@@ -168,13 +187,67 @@ fn setup_worktree(repo_path: &std::path::Path, worktree_dir: &PathBuf) -> Result
     }
 
     if bare.head().is_ok() {
-        git2::Repository::clone(repo_str, worktree_dir)
-            .context("Failed to clone bare repo to worktree")?;
+        if incremental {
+            setup_worktree_incremental(repo_path, repo_str, worktree_dir, &bare)?;
+        } else {
+            git2::Repository::clone(repo_str, worktree_dir)
+                .context("Failed to clone bare repo to worktree")?;
+        }
     } else {
         let repo = git2::Repository::init(worktree_dir).context("Failed to init worktree")?;
         repo.remote("origin", repo_str)
             .context("Failed to add origin remote to worktree")?;
     }
+
+    Ok(())
+}
+
+/// Fetches from the bare repo and populates the index without checking out files.
+///
+/// This leaves the working directory empty so that only documents downloaded during
+/// sync appear on disk. The git index still contains all entries from the HEAD tree,
+/// so `commit_all` produces a complete tree when it adds the new working-directory files.
+fn setup_worktree_incremental(
+    repo_path: &std::path::Path,
+    repo_str: &str,
+    worktree_dir: &PathBuf,
+    bare: &git2::Repository,
+) -> Result<()> {
+    let repo = git2::Repository::init(worktree_dir).context("Failed to init worktree")?;
+    let mut remote = repo
+        .remote("origin", repo_str)
+        .context("Failed to add origin remote")?;
+    remote
+        .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
+        .context("Failed to fetch from bare repo")?;
+
+    let head_ref = bare.head().context("bare repo has no HEAD")?;
+    let branch_name = head_ref.shorthand().unwrap_or("main");
+
+    let remote_ref = format!("refs/remotes/origin/{branch_name}");
+    let reference = repo
+        .find_reference(&remote_ref)
+        .with_context(|| format!("remote ref {remote_ref} not found after fetch"))?;
+    let commit = reference
+        .peel_to_commit()
+        .context("remote ref does not point to a commit")?;
+
+    let mut index = repo.index().context("failed to open worktree index")?;
+    index
+        .read_tree(&commit.tree()?)
+        .context("failed to populate index from HEAD tree")?;
+    index.write().context("failed to write index")?;
+
+    repo.branch(branch_name, &commit, false)
+        .context("failed to create local branch")?;
+    repo.set_head(&format!("refs/heads/{branch_name}"))
+        .context("failed to set HEAD")?;
+
+    let file_count = index.len();
+    tracing::debug!(
+        "Incremental worktree: index has {file_count} entries, working directory is empty ({})",
+        repo_path.display()
+    );
 
     Ok(())
 }
