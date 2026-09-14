@@ -245,8 +245,13 @@ pub async fn validate_provider(
     );
 
     let retriever = RetrievingVisitor::new(file_source.clone(), verifier);
+    let progress = crate::pipeline::sync::JobProgress {
+        state: state.clone(),
+        domain: domain.to_string(),
+    };
 
     Walker::new(file_source)
+        .with_progress(progress)
         .walk(retriever)
         .await
         .map_err(|e| anyhow::anyhow!("Validation walker failed for {domain}: {e}"))?;

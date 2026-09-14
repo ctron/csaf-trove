@@ -5,6 +5,7 @@ use chrono::Utc;
 use csaf_walker::{
     common::{
         fetcher::{Fetcher, FetcherOptions},
+        progress::{Progress, ProgressBar},
         retrieve::RetrievalError,
     },
     discover::DiscoveredAdvisory,
@@ -52,6 +53,36 @@ where
     }
 }
 
+/// Reports the total document count to the job status when the walker starts.
+pub(crate) struct JobProgress {
+    /// Shared application state for updating job progress.
+    pub(crate) state: Arc<AppState>,
+    /// Provider domain name.
+    pub(crate) domain: String,
+}
+
+/// No-op progress bar — individual ticks are handled by the counting visitors.
+pub(crate) struct JobProgressBar;
+
+impl ProgressBar for JobProgressBar {
+    async fn increment(&mut self, _work: usize) {}
+    async fn finish(self) {}
+    async fn set_message(&mut self, _msg: String) {}
+}
+
+impl Progress for JobProgress {
+    type Instance = JobProgressBar;
+
+    fn start(&self, work: usize) -> Self::Instance {
+        let state = self.state.clone();
+        let domain = self.domain.clone();
+        tokio::spawn(async move {
+            state.set_job_documents_total(&domain, work).await;
+        });
+        JobProgressBar
+    }
+}
+
 /// Downloads new and changed CSAF documents from a provider into the worktree.
 pub async fn sync_provider(
     state: &Arc<AppState>,
@@ -95,8 +126,13 @@ pub async fn sync_provider(
         domain: domain.to_string(),
     };
     let retriever = RetrievingVisitor::new(http_source.clone(), counting_store);
+    let progress = JobProgress {
+        state: state.clone(),
+        domain: domain.to_string(),
+    };
 
     Walker::new(http_source)
+        .with_progress(progress)
         .walk(retriever)
         .await
         .map_err(|e| anyhow::anyhow!("Walker failed for {domain}: {e}"))?;

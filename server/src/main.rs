@@ -177,6 +177,16 @@ impl AppState {
         self.job_notify.send(()).ok();
     }
 
+    /// Sets the total document count for the current phase of a running job.
+    pub async fn set_job_documents_total(&self, domain: &str, total: usize) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.get_mut(domain) {
+            job.documents_total = total as u64;
+        }
+        drop(jobs);
+        self.job_notify.send(()).ok();
+    }
+
     /// Increments the synced document count for a running job.
     pub async fn increment_job_synced(&self, domain: &str) {
         let mut jobs = self.jobs.write().await;

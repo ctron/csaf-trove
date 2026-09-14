@@ -56,6 +56,23 @@ fn format_relative_time(started_at: &str, now_ms: f64) -> String {
     format!("{} ago", parts.join(" "))
 }
 
+/// Formats the progress column based on the current phase and document counts.
+fn format_progress(job: &JobStatus) -> String {
+    let current = match job.phase.as_deref() {
+        Some("sync") => job.documents_synced,
+        Some("validate") => job.documents_validated,
+        _ => job.documents_total,
+    };
+
+    if job.documents_total > 0 {
+        format!("{current} / {}", job.documents_total)
+    } else if current > 0 {
+        format!("{current}")
+    } else {
+        "-".to_string()
+    }
+}
+
 /// Builds the WebSocket URL from the current page origin.
 fn ws_url() -> Option<String> {
     let origin = web_sys::window()?.location().origin().ok()?;
@@ -137,8 +154,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     <th>"Provider"</th>
                                     <th>"Status"</th>
                                     <th>"Phase"</th>
-                                    <th>"Synced"</th>
-                                    <th>"Validated"</th>
+                                    <th>"Progress"</th>
                                     <th>"Duration"</th>
                                     <th>"Started"</th>
                                     <th>"Error"</th>
@@ -154,6 +170,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     };
                                     let status = job.status.clone();
                                     let phase = job.phase.clone().unwrap_or_else(|| "-".to_string());
+                                    let progress = format_progress(&job);
                                     let duration = format_duration(job.duration_seconds);
                                     let started_at = job.started_at.clone();
                                     let relative = format_relative_time(&started_at, now_ms.get());
@@ -163,8 +180,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                             <td>{domain}</td>
                                             <td><span class={status_class}>{status}</span></td>
                                             <td>{phase}</td>
-                                            <td>{job.documents_synced}</td>
-                                            <td>{job.documents_validated}</td>
+                                            <td class="whitespace-nowrap">{progress}</td>
                                             <td class="whitespace-nowrap">{duration}</td>
                                             <td class="whitespace-nowrap" title={started_at}>{relative}</td>
                                             <td>{error}</td>
