@@ -1143,6 +1143,7 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "parking_lot",
+ "percent-encoding",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1154,6 +1155,7 @@ dependencies = [
  "tracing",
  "tracing-actix-web",
  "tracing-subscriber",
+ "url",
  "walker-common",
 ]
 
