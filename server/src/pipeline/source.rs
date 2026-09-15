@@ -97,6 +97,14 @@ impl TroveFileSource {
             .to_file_path()
             .map_err(|()| anyhow!("Failed to convert to path: {:?}", context.url()))?;
 
+        if !path.exists() {
+            tracing::debug!(
+                "Distribution directory does not exist, skipping: {}",
+                path.display()
+            );
+            return Ok(rx);
+        }
+
         tokio::task::spawn_blocking(move || {
             for entry in WalkDir::new(path).into_iter().filter_entry(|entry| {
                 !entry.file_type().is_file()
