@@ -123,7 +123,7 @@ pub fn DocumentPage() -> impl IntoView {
 
             <Suspense fallback=|| view! { <span /> }>
                 {move || versions.get().map(|result| match result {
-                    Ok(vs) if vs.len() > 1 => view! {
+                    Ok(vs) => view! {
                         <VersionSelector
                             versions=vs
                             selected=selected_version
