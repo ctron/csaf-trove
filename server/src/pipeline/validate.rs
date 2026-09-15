@@ -176,19 +176,19 @@ pub async fn validate_provider(
                         };
 
                         let failures: HashMap<String, Vec<CheckError>> = verified
-                            .failures
+                            .errors
                             .into_iter()
-                            .map(|(k, v)| (k.to_string(), v))
+                            .map(|(k, v)| (k.to_string(), v.items))
                             .collect();
                         let warnings: HashMap<String, Vec<CheckError>> = verified
                             .warnings
                             .into_iter()
-                            .map(|(k, v)| (k.to_string(), v))
+                            .map(|(k, v)| (k.to_string(), v.items))
                             .collect();
                         let infos: HashMap<String, Vec<CheckError>> = verified
                             .infos
                             .into_iter()
-                            .map(|(k, v)| (k.to_string(), v))
+                            .map(|(k, v)| (k.to_string(), v.items))
                             .collect();
                         let successes: Vec<String> = verified
                             .successes
