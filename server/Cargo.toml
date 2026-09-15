@@ -10,6 +10,7 @@ actix-ws = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+csaf-rs = { workspace = true }
 csaf-walker = { workspace = true, features = ["csaf", "crypto-openssl"] }
 git2 = { workspace = true }
 hex = { workspace = true }

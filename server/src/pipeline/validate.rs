@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
+use csaf::csaf_traits::DocumentReferenceTrait;
 use csaf_walker::{
     check::CheckError,
     common::{
@@ -141,9 +142,13 @@ pub async fn validate_provider(
                     Ok(verified) => {
                         let tracking_id = verified.csaf.document().tracking().id().to_string();
                         let title = verified.csaf.document().title().to_string();
-                        let url =
-                            reconstruct_original_url(&verified.advisory.discovered.url, &worktree);
                         let meta = extract_metadata(&verified.csaf);
+                        let url = meta.canonical_url.clone().unwrap_or_else(|| {
+                            reconstruct_original_url(
+                                &verified.advisory.discovered.url,
+                                &worktree,
+                            )
+                        });
 
                         let signature_present = verified.advisory.signature.is_some();
                         let mut sig_errors = Vec::new();
@@ -415,6 +420,8 @@ fn try_reconstruct_url(file_url: &url::Url, worktree_dir: &Path) -> Option<Strin
 
 /// Extracted CSAF document metadata.
 struct DocumentMetadata {
+    /// Self-referencing URL from `document.references` (category `self`).
+    canonical_url: Option<String>,
     category: Option<String>,
     publisher_name: Option<String>,
     initial_release_date: Option<String>,
@@ -426,10 +433,18 @@ struct DocumentMetadata {
     revision_history: Vec<RevisionEntry>,
 }
 
+/// Finds the self-referencing URL from a list of CSAF document references.
+fn find_canonical_url(refs: Option<&Vec<impl DocumentReferenceTrait>>) -> Option<String> {
+    refs?.iter()
+        .find(|r| r.get_category().to_string() == "self")
+        .map(|r| r.get_url().to_string())
+}
+
 /// Extracts metadata fields from a parsed CSAF document.
 fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
     match csaf {
         Csaf::V2_0(doc) => DocumentMetadata {
+            canonical_url: find_canonical_url(doc.document.references.as_deref()),
             category: Some(doc.document.category.to_string()),
             publisher_name: Some(doc.document.publisher.name.to_string()),
             initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
@@ -455,6 +470,7 @@ fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
                 .collect(),
         },
         Csaf::V2_1(doc) => DocumentMetadata {
+            canonical_url: find_canonical_url(doc.document.references.as_deref()),
             category: Some(doc.document.category.to_string()),
             publisher_name: Some(doc.document.publisher.name.to_string()),
             initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),

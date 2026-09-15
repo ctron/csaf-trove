@@ -16,6 +16,7 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 console_error_panic_hook = "0.1"
+csaf-rs = "0.5"
 csaf-walker = { version = "0.18.0", default-features = false }
 git2 = { version = "0.21", features = ["https"] }
 gloo-net = "0.7"
