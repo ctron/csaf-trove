@@ -203,7 +203,10 @@ impl Storage {
         if !repo_path.exists() {
             return Ok(None);
         }
-        let versions = git_repo::document_versions(&repo_path, tracking_id, 50)?;
+        let Some(url) = documents::document_url(&self.results_dir, domain, tracking_id)? else {
+            return Ok(None);
+        };
+        let versions = git_repo::document_versions(&repo_path, &url, 50)?;
         Ok(versions.map(|vs| {
             vs.into_iter()
                 .map(|v| DocumentVersionInfo {
@@ -227,8 +230,10 @@ impl Storage {
         if !repo_path.exists() {
             return Ok(None);
         }
-        let Some((blob, timestamp)) =
-            git_repo::read_document_blob(&repo_path, tracking_id, commit_id)?
+        let Some(url) = documents::document_url(&self.results_dir, domain, tracking_id)? else {
+            return Ok(None);
+        };
+        let Some((blob, timestamp)) = git_repo::read_document_blob(&repo_path, &url, commit_id)?
         else {
             return Ok(None);
         };

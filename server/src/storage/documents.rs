@@ -326,6 +326,26 @@ pub fn load_documents_paginated(
     }))
 }
 
+/// Returns the URL for a document by tracking ID.
+pub fn document_url(results_dir: &Path, domain: &str, tracking_id: &str) -> Result<Option<String>> {
+    let db_path = results_dir
+        .join(sanitize_domain(domain))
+        .join("documents.db");
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let conn = Connection::open(db_path)?;
+    match conn.query_row(
+        "SELECT url FROM documents WHERE tracking_id = ?1",
+        [tracking_id],
+        |row| row.get(0),
+    ) {
+        Ok(url) => Ok(Some(url)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Loads a single document by tracking ID with all its check failures.
 pub fn load_document(
     results_dir: &Path,

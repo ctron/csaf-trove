@@ -178,10 +178,59 @@ fn blob_oid_at_path(tree: &Tree<'_>, path: &str) -> Result<Option<Oid>> {
     }
 }
 
+/// Extracts the filename from a URL (last path segment, ignoring query params).
+fn url_filename(url: &str) -> String {
+    let path = url.split('?').next().unwrap_or(url);
+    path.rsplit('/').next().unwrap_or(url).to_string()
+}
+
+/// Resolves a document URL to its full path within the git tree.
+///
+/// The tree stores files under percent-encoded distribution URL directories.
+/// Decodes each top-level directory name and checks if the document URL starts
+/// with it, then computes the remaining relative path.
+fn resolve_document_path(tree: &Tree<'_>, url: &str) -> Result<Option<String>> {
+    for entry in tree.iter() {
+        if entry.kind() != Some(git2::ObjectType::Tree) {
+            continue;
+        }
+        let name = entry.name().context("non-UTF8 tree entry name")?;
+        let Ok(decoded) = percent_encoding::percent_decode_str(name).decode_utf8() else {
+            continue;
+        };
+        let dist_url = decoded.trim_end_matches('/');
+        if let Some(relative) = url.strip_prefix(dist_url) {
+            let relative = relative.trim_start_matches('/');
+            if !relative.is_empty() {
+                return Ok(Some(format!("{name}/{relative}")));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Finds the git-tree path and blob OID for a document given its URL.
+///
+/// Tries URL-based path resolution first (matching the percent-encoded
+/// distribution URL directory), then falls back to recursive filename search.
+fn find_document_path(
+    repo: &Repository,
+    tree: &Tree<'_>,
+    url: &str,
+) -> Result<Option<(String, Oid)>> {
+    if let Some(path) = resolve_document_path(tree, url)?
+        && let Some(oid) = blob_oid_at_path(tree, &path)?
+    {
+        return Ok(Some((path, oid)));
+    }
+    let filename = url_filename(url);
+    find_file_in_tree(repo, tree, &filename, "")
+}
+
 /// Returns the commits where a document changed, newest first.
 pub fn document_versions(
     repo_path: &Path,
-    tracking_id: &str,
+    url: &str,
     max_entries: usize,
 ) -> Result<Option<Vec<DocumentVersion>>> {
     let repo = Repository::open_bare(repo_path)?;
@@ -192,8 +241,7 @@ pub fn document_versions(
     let head_commit = head.peel_to_commit()?;
     let head_tree = head_commit.tree()?;
 
-    let filename = format!("{tracking_id}.json");
-    let Some((file_path, _)) = find_file_in_tree(&repo, &head_tree, &filename, "")? else {
+    let Some((file_path, _)) = find_document_path(&repo, &head_tree, url)? else {
         return Ok(None);
     };
 
@@ -246,7 +294,7 @@ pub fn document_versions(
 /// Reads the raw content of a document blob at a specific commit.
 pub fn read_document_blob(
     repo_path: &Path,
-    tracking_id: &str,
+    url: &str,
     commit_id: &str,
 ) -> Result<Option<(Vec<u8>, i64)>> {
     let repo = Repository::open_bare(repo_path)?;
@@ -254,8 +302,7 @@ pub fn read_document_blob(
     let commit = repo.find_commit(oid)?;
     let tree = commit.tree()?;
 
-    let filename = format!("{tracking_id}.json");
-    let Some((_, blob_oid)) = find_file_in_tree(&repo, &tree, &filename, "")? else {
+    let Some((_, blob_oid)) = find_document_path(&repo, &tree, url)? else {
         return Ok(None);
     };
 
