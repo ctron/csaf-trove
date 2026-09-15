@@ -84,7 +84,8 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
     result
 }
 
-/// Saves the final document counts from a completed job into the persisted sync state.
+/// Saves the final document counts from a completed job into the persisted sync state
+/// and records the sync run in the database.
 async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus) {
     match state.storage.load_sync_state(domain).await {
         Ok(mut sync_state) => {
@@ -98,6 +99,14 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
         Err(e) => {
             tracing::warn!("Failed to load sync state for {domain}: {e}");
         }
+    }
+
+    let now = Utc::now();
+    if let Err(e) = state
+        .storage
+        .save_sync_run(domain, &now, job.documents_synced)
+    {
+        tracing::warn!("Failed to save sync run for {domain}: {e}");
     }
 }
 

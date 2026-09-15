@@ -75,6 +75,19 @@ fn create_tables(conn: &Connection) -> Result<()> {
     )?;
     migrate_add_metadata_columns(conn)?;
     migrate_add_severity_columns(conn)?;
+    migrate_add_sync_runs(conn)?;
+    Ok(())
+}
+
+/// Creates the sync_runs history table (idempotent).
+fn migrate_add_sync_runs(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            documents_changed INTEGER NOT NULL
+        )",
+    )?;
     Ok(())
 }
 
@@ -716,6 +729,76 @@ pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<Provide
         },
         top_failing_tests,
     })
+}
+
+/// Records a completed sync run with the number of documents that changed.
+pub fn save_sync_run(
+    results_dir: &Path,
+    domain: &str,
+    timestamp: &chrono::DateTime<chrono::Utc>,
+    documents_changed: u64,
+) -> Result<()> {
+    let conn = open_db(results_dir, domain)?;
+    conn.execute(
+        "INSERT INTO sync_runs (timestamp, documents_changed) VALUES (?1, ?2)",
+        rusqlite::params![timestamp.to_rfc3339(), documents_changed],
+    )?;
+    Ok(())
+}
+
+/// Loads the most recent sync runs for a provider.
+pub fn load_sync_runs(
+    results_dir: &Path,
+    domain: &str,
+    max_entries: usize,
+) -> Result<Vec<csaf_trove_common::CommitInfo>> {
+    let db_path = results_dir
+        .join(sanitize_domain(domain))
+        .join("documents.db");
+    if !db_path.exists() {
+        return Ok(vec![]);
+    }
+    let conn = Connection::open(db_path)?;
+
+    let table_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_runs')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !table_exists {
+        return Ok(vec![]);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, timestamp, documents_changed
+         FROM sync_runs
+         ORDER BY id DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([max_entries], |row| {
+        let id: i64 = row.get(0)?;
+        let ts_str: String = row.get(1)?;
+        let docs: u64 = row.get(2)?;
+        Ok((id, ts_str, docs))
+    })?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        let (id, ts_str, docs) = row?;
+        let timestamp = chrono::DateTime::parse_from_rfc3339(&ts_str)
+            .map(|dt| {
+                time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+            })
+            .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+        entries.push(csaf_trove_common::CommitInfo {
+            id: id.to_string(),
+            message: String::new(),
+            timestamp,
+            files_changed: docs as usize,
+        });
+    }
+    Ok(entries)
 }
 
 /// Builds a `ProfileSummary` from valid and invalid counts.

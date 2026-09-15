@@ -62,11 +62,7 @@ pub async fn history(
     domain: web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
     let domain = domain.into_inner();
-    let history = state
-        .storage
-        .provider_history(&domain)
-        .await?
-        .or_not_found()?;
+    let history = state.storage.provider_history(&domain)?.or_not_found()?;
     Ok(HttpResponse::Ok().json(history))
 }
 

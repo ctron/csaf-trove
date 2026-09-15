@@ -1,10 +1,8 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use csaf_trove_common::CommitInfo;
 use git2::{Oid, Repository, Signature, Tree};
 use serde::Serialize;
-use time::OffsetDateTime;
 
 /// Opens an existing bare repo or initializes a new one.
 pub fn init_bare(path: &Path) -> Result<Repository> {
@@ -13,43 +11,6 @@ pub fn init_bare(path: &Path) -> Result<Repository> {
     } else {
         Repository::init_bare(path).context("Failed to init bare repo")
     }
-}
-
-/// Returns the most recent commits from a bare repo.
-pub fn log(repo_path: &Path, max_entries: usize) -> Result<Vec<CommitInfo>> {
-    let repo = Repository::open_bare(repo_path)?;
-
-    let Ok(head) = repo.head() else {
-        return Ok(Vec::new());
-    };
-
-    let mut revwalk = repo.revwalk()?;
-    revwalk.push(head.target().context("HEAD has no target")?)?;
-
-    let mut entries = Vec::new();
-    for oid in revwalk.take(max_entries) {
-        let oid = oid?;
-        let commit = repo.find_commit(oid)?;
-
-        let files_changed = if let Some(parent) = commit.parents().next() {
-            let diff =
-                repo.diff_tree_to_tree(Some(&parent.tree()?), Some(&commit.tree()?), None)?;
-            diff.stats()?.files_changed()
-        } else {
-            let diff = repo.diff_tree_to_tree(None, Some(&commit.tree()?), None)?;
-            diff.stats()?.files_changed()
-        };
-
-        entries.push(CommitInfo {
-            id: oid.to_string(),
-            message: commit.message().unwrap_or("").to_string(),
-            timestamp: OffsetDateTime::from_unix_timestamp(commit.time().seconds())
-                .unwrap_or(OffsetDateTime::UNIX_EPOCH),
-            files_changed,
-        });
-    }
-
-    Ok(entries)
 }
 
 /// Stages all changes in the worktree and commits, then pushes back to the bare repo.

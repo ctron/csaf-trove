@@ -91,7 +91,7 @@ impl Storage {
     pub async fn provider_detail(&self, domain: &str) -> Result<Option<ProviderDetail>> {
         let summary = results::load_summary(&self.results_dir, domain).await?;
         let metrics = self.load_metrics(domain).await.ok();
-        let history = self.provider_history(domain).await?.unwrap_or_default();
+        let history = self.provider_history(domain)?.unwrap_or_default();
 
         let Some(summary) = summary else {
             return Ok(None);
@@ -104,17 +104,26 @@ impl Storage {
         }))
     }
 
-    /// Returns recent git commit history for a provider's document repo.
-    pub async fn provider_history(
+    /// Returns recent sync run history for a provider from the database.
+    pub fn provider_history(
         &self,
         domain: &str,
     ) -> Result<Option<Vec<csaf_trove_common::CommitInfo>>> {
-        let repo_path = self.repo_path(domain);
-        if !repo_path.exists() {
+        let runs = documents::load_sync_runs(&self.results_dir, domain, 50)?;
+        if runs.is_empty() {
             return Ok(None);
         }
-        let history = git_repo::log(&repo_path, 50)?;
-        Ok(Some(history))
+        Ok(Some(runs))
+    }
+
+    /// Records a completed sync run with the number of documents changed.
+    pub fn save_sync_run(
+        &self,
+        domain: &str,
+        timestamp: &chrono::DateTime<chrono::Utc>,
+        documents_changed: u64,
+    ) -> Result<()> {
+        documents::save_sync_run(&self.results_dir, domain, timestamp, documents_changed)
     }
 
     /// Loads the sync state for a provider, creating a default if absent.
