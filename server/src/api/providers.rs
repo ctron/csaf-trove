@@ -5,11 +5,40 @@ use super::{
     auth::verify_bearer_token,
     error::{ApiError, OptionExt},
 };
-use crate::{AppState, models::state::JobPhase};
+use crate::{
+    AppState,
+    models::{
+        result::{ProfileResults, ProviderSummary},
+        state::JobPhase,
+    },
+};
 
-/// Returns all provider summaries as JSON.
+/// Returns all provider summaries as JSON, including placeholders for sources awaiting first sync.
 pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {
-    let providers = state.storage.list_summaries().await?;
+    let mut providers = state.storage.list_summaries().await?;
+
+    let sources = state.sources.read().await;
+    let known: std::collections::HashSet<String> =
+        providers.iter().map(|p| p.provider.clone()).collect();
+
+    for (domain, source) in sources.iter() {
+        if source.enabled && !known.contains(domain) {
+            providers.push(ProviderSummary {
+                provider: domain.clone(),
+                publisher_name: None,
+                validated_at: chrono::Utc::now(),
+                document_count: 0,
+                profiles: ProfileResults {
+                    basic: None,
+                    extended: None,
+                    full: None,
+                },
+                top_failing_tests: vec![],
+            });
+        }
+    }
+
+    providers.sort_by(|a, b| a.provider.cmp(&b.provider));
     Ok(HttpResponse::Ok().json(providers))
 }
 
