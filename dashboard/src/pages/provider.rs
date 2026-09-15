@@ -40,6 +40,7 @@ pub fn ProviderPage() -> impl IntoView {
 
 #[component]
 fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
+    let history = detail.history;
     let summary = detail.summary;
     let tests = summary.top_failing_tests;
     let domain = summary.provider.clone();
@@ -84,6 +85,43 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                 }).collect::<Vec<_>>()}
             </tbody>
         </table>
+
+        {if !history.is_empty() {
+            Some(view! {
+                <h3>"Sync History"</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>"Date"</th>
+                            <th>"Documents Changed"</th>
+                            <th>"Message"</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {history.into_iter().map(|commit| {
+                            let ts = commit.timestamp;
+                            let date = format!(
+                                "{:04}-{:02}-{:02} {:02}:{:02}",
+                                ts.year(),
+                                u8::from(ts.month()),
+                                ts.day(),
+                                ts.hour(),
+                                ts.minute(),
+                            );
+                            view! {
+                                <tr>
+                                    <td>{date}</td>
+                                    <td>{commit.files_changed}</td>
+                                    <td class="truncate max-w-xs">{commit.message}</td>
+                                </tr>
+                            }
+                        }).collect::<Vec<_>>()}
+                    </tbody>
+                </table>
+            })
+        } else {
+            None
+        }}
 
         <DocumentsTable domain=domain />
     }

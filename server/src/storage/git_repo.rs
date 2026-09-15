@@ -1,21 +1,10 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use csaf_trove_common::CommitInfo;
 use git2::{Oid, Repository, Signature, Tree};
 use serde::Serialize;
-
-/// Summary of a single git commit.
-#[derive(Debug, Serialize)]
-pub struct CommitInfo {
-    /// Full commit SHA.
-    pub id: String,
-    /// Commit message.
-    pub message: String,
-    /// Commit timestamp as Unix seconds.
-    pub timestamp: i64,
-    /// Number of files changed in this commit.
-    pub files_changed: usize,
-}
+use time::OffsetDateTime;
 
 /// Opens an existing bare repo or initializes a new one.
 pub fn init_bare(path: &Path) -> Result<Repository> {
@@ -54,7 +43,8 @@ pub fn log(repo_path: &Path, max_entries: usize) -> Result<Vec<CommitInfo>> {
         entries.push(CommitInfo {
             id: oid.to_string(),
             message: commit.message().unwrap_or("").to_string(),
-            timestamp: commit.time().seconds(),
+            timestamp: OffsetDateTime::from_unix_timestamp(commit.time().seconds())
+                .unwrap_or(OffsetDateTime::UNIX_EPOCH),
             files_changed,
         });
     }

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "common",
     "server",
     "dashboard",
 ]
@@ -17,6 +18,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 console_error_panic_hook = "0.1"
 csaf-rs = "0.5"
+csaf-trove-common = { path = "common" }
 csaf-walker = { version = "0.18.0", default-features = false }
 git2 = { version = "0.21", features = ["https"] }
 gloo-net = "0.7"
@@ -37,6 +39,7 @@ sha2 = "0.11"
 static-files = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+time = { version = "0.3", features = ["serde", "serde-well-known"] }
 toml = "1"
 tracing = "0.1"
 tracing-actix-web = "0.7"

@@ -1109,11 +1109,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "csaf-trove-common"
+version = "0.1.0-alpha.11"
+dependencies = [
+ "serde",
+ "time",
+]
+
+[[package]]
 name = "csaf-trove-dashboard"
 version = "0.1.0-alpha.11"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
+ "csaf-trove-common",
  "gloo-net 0.7.0",
  "gloo-timers 0.4.0",
  "js-sys",
@@ -1121,6 +1130,7 @@ dependencies = [
  "leptos_router",
  "serde",
  "serde_json",
+ "time",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -1137,6 +1147,7 @@ dependencies = [
  "chrono",
  "clap",
  "csaf-rs",
+ "csaf-trove-common",
  "csaf-walker",
  "git2",
  "hex",
@@ -1151,6 +1162,7 @@ dependencies = [
  "sha2 0.11.0",
  "static-files 0.3.1",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "toml",
  "tracing",

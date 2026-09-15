@@ -1,4 +1,19 @@
+use super::metrics::MetricsTimeSeries;
+use csaf_trove_common::CommitInfo;
 use serde::{Deserialize, Serialize};
+
+/// Combined detail view for a provider including summary, metrics, and sync history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDetail {
+    /// Validation summary.
+    pub summary: ProviderSummary,
+    /// Historical metrics time series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<MetricsTimeSeries>,
+    /// Recent sync history from git commits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<CommitInfo>,
+}
 
 /// Validation summary for a single CSAF provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -35,6 +35,8 @@ pub struct FailingTest {
 pub struct ProviderDetail {
     pub summary: ProviderSummary,
     pub metrics: Option<MetricsTimeSeries>,
+    #[serde(default)]
+    pub history: Vec<csaf_trove_common::CommitInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

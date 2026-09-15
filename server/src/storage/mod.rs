@@ -5,17 +5,16 @@ pub mod state;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
         DocumentValidation, DocumentVersionInfo, HistoricalDocument, PaginatedDocuments,
-        ProviderSummary, RevisionEntry,
+        ProviderDetail, ProviderSummary, RevisionEntry,
     },
     source::sanitize_domain,
     state::SyncState,
 };
+use anyhow::Result;
 
 /// Manages on-disk persistence for repos, state, results, and metrics.
 pub struct Storage {
@@ -88,26 +87,28 @@ impl Storage {
         results::list_summaries(&self.results_dir).await
     }
 
-    /// Returns the combined summary and metrics for a provider.
-    pub async fn provider_detail(&self, domain: &str) -> Result<Option<serde_json::Value>> {
+    /// Returns the combined summary, metrics, and history for a provider.
+    pub async fn provider_detail(&self, domain: &str) -> Result<Option<ProviderDetail>> {
         let summary = results::load_summary(&self.results_dir, domain).await?;
         let metrics = self.load_metrics(domain).await.ok();
+        let history = self.provider_history(domain).await?.unwrap_or_default();
 
         let Some(summary) = summary else {
             return Ok(None);
         };
 
-        Ok(Some(serde_json::json!({
-            "summary": summary,
-            "metrics": metrics,
-        })))
+        Ok(Some(ProviderDetail {
+            summary,
+            metrics,
+            history,
+        }))
     }
 
     /// Returns recent git commit history for a provider's document repo.
     pub async fn provider_history(
         &self,
         domain: &str,
-    ) -> Result<Option<Vec<git_repo::CommitInfo>>> {
+    ) -> Result<Option<Vec<csaf_trove_common::CommitInfo>>> {
         let repo_path = self.repo_path(domain);
         if !repo_path.exists() {
             return Ok(None);

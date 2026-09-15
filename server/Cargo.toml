@@ -11,6 +11,7 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 csaf-rs = { workspace = true }
+csaf-trove-common = { workspace = true }
 csaf-walker = { workspace = true, features = ["csaf", "crypto-openssl"] }
 git2 = { workspace = true }
 hex = { workspace = true }
@@ -25,6 +26,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 static-files = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

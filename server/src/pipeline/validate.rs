@@ -144,10 +144,7 @@ pub async fn validate_provider(
                         let title = verified.csaf.document().title().to_string();
                         let meta = extract_metadata(&verified.csaf);
                         let url = meta.canonical_url.clone().unwrap_or_else(|| {
-                            reconstruct_original_url(
-                                &verified.advisory.discovered.url,
-                                &worktree,
-                            )
+                            reconstruct_original_url(&verified.advisory.discovered.url, &worktree)
                         });
 
                         let signature_present = verified.advisory.signature.is_some();
@@ -435,7 +432,8 @@ struct DocumentMetadata {
 
 /// Finds the self-referencing URL from a list of CSAF document references.
 fn find_canonical_url(refs: Option<&Vec<impl DocumentReferenceTrait>>) -> Option<String> {
-    refs?.iter()
+    refs?
+        .iter()
         .find(|r| r.get_category().to_string() == "self")
         .map(|r| r.get_url().to_string())
 }

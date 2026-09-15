@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 chrono = { workspace = true }
 console_error_panic_hook = { workspace = true }
+csaf-trove-common = { workspace = true }
 gloo-net = { workspace = true }
 gloo-timers = { workspace = true }
 js-sys = { workspace = true }
@@ -13,6 +14,7 @@ leptos = { workspace = true }
 leptos_router = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+time = { workspace = true }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 
