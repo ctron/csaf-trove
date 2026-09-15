@@ -5,7 +5,6 @@ use std::{
 };
 
 use anyhow::Result;
-use csaf::csaf_traits::DocumentReferenceTrait;
 use csaf_walker::{
     check::CheckError,
     common::{
@@ -16,7 +15,7 @@ use csaf_walker::{
         },
     },
     retrieve::{RetrievedAdvisory, RetrievingVisitor},
-    source::{FileSource, Source as CsafSource},
+    source::Source as CsafSource,
     verification::{
         Csaf, VerificationError, VerifiedAdvisory, VerifyingVisitor,
         check::{Check, CsafValidation},
@@ -25,6 +24,7 @@ use csaf_walker::{
 };
 use parking_lot::Mutex;
 
+use super::source::TroveFileSource;
 use crate::{
     AppState,
     models::{
@@ -77,7 +77,7 @@ struct DocumentResult {
 }
 
 /// Loads OpenPGP public keys from the provider metadata in the worktree.
-async fn load_keys(file_source: &FileSource) -> Result<Vec<PublicKey>> {
+async fn load_keys(file_source: &TroveFileSource) -> Result<Vec<PublicKey>> {
     let metadata = file_source.load_metadata().await?;
     let mut keys = Vec::with_capacity(metadata.public_openpgp_keys.len());
     for key in &metadata.public_openpgp_keys {
@@ -100,7 +100,7 @@ pub async fn validate_provider(
     let domain = &source.domain;
     tracing::info!("Validating documents for {domain}");
 
-    let file_source = FileSource::new(worktree_dir, None)?;
+    let file_source = TroveFileSource::new(worktree_dir)?;
     let canonical_worktree = Arc::new(
         std::fs::canonicalize(worktree_dir).unwrap_or_else(|_| worktree_dir.to_path_buf()),
     );
@@ -143,9 +143,8 @@ pub async fn validate_provider(
                         let tracking_id = verified.csaf.document().tracking().id().to_string();
                         let title = verified.csaf.document().title().to_string();
                         let meta = extract_metadata(&verified.csaf);
-                        let url = meta.canonical_url.clone().unwrap_or_else(|| {
-                            reconstruct_original_url(&verified.advisory.discovered.url, &worktree)
-                        });
+                        let url =
+                            reconstruct_original_url(&verified.advisory.discovered.url, &worktree);
 
                         let signature_present = verified.advisory.signature.is_some();
                         let mut sig_errors = Vec::new();
@@ -391,34 +390,34 @@ fn reconstruct_original_url(file_url: &url::Url, worktree_dir: &Path) -> String 
     try_reconstruct_url(file_url, worktree_dir).unwrap_or_else(|| file_url.to_string())
 }
 
-/// Attempts to reverse the percent-encoded directory structure back to the original URL.
+/// Reconstructs the original HTTPS URL from a `file://` URL in the worktree.
+///
+/// The worktree stores files as `<domain>/<url_path>`. The first path component
+/// after the worktree root is the domain name; the rest is the URL path.
 fn try_reconstruct_url(file_url: &url::Url, worktree_dir: &Path) -> Option<String> {
     let path = file_url.to_file_path().ok()?;
     let relative = path.strip_prefix(worktree_dir).ok()?;
 
     let mut components = relative.components();
-    let dist_component = components.next()?;
-    let dist_encoded = dist_component.as_os_str().to_str()?;
+    let domain = components.next()?.as_os_str().to_str()?;
 
-    let dist_url = percent_encoding::percent_decode_str(dist_encoded)
-        .decode_utf8()
-        .ok()?;
-
-    let remaining: PathBuf = components.collect();
-    let relative_path = remaining.to_str()?;
-
-    if relative_path.is_empty() {
+    if domain == "metadata" {
         return None;
     }
 
-    let dist_url = dist_url.trim_end_matches('/');
-    Some(format!("{dist_url}/{relative_path}"))
+    let remaining: PathBuf = components.collect();
+    let url_path = remaining.to_str()?;
+
+    if url_path.is_empty() {
+        return None;
+    }
+
+    Some(format!("https://{domain}/{url_path}"))
 }
 
 /// Extracted CSAF document metadata.
 struct DocumentMetadata {
-    /// Self-referencing URL from `document.references` (category `self`).
-    canonical_url: Option<String>,
+    /// Document category.
     category: Option<String>,
     publisher_name: Option<String>,
     initial_release_date: Option<String>,
@@ -430,19 +429,10 @@ struct DocumentMetadata {
     revision_history: Vec<RevisionEntry>,
 }
 
-/// Finds the self-referencing URL from a list of CSAF document references.
-fn find_canonical_url(refs: Option<&Vec<impl DocumentReferenceTrait>>) -> Option<String> {
-    refs?
-        .iter()
-        .find(|r| r.get_category().to_string() == "self")
-        .map(|r| r.get_url().to_string())
-}
-
 /// Extracts metadata fields from a parsed CSAF document.
 fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
     match csaf {
         Csaf::V2_0(doc) => DocumentMetadata {
-            canonical_url: find_canonical_url(doc.document.references.as_deref()),
             category: Some(doc.document.category.to_string()),
             publisher_name: Some(doc.document.publisher.name.to_string()),
             initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
@@ -468,7 +458,6 @@ fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
                 .collect(),
         },
         Csaf::V2_1(doc) => DocumentMetadata {
-            canonical_url: find_canonical_url(doc.document.references.as_deref()),
             category: Some(doc.document.category.to_string()),
             publisher_name: Some(doc.document.publisher.name.to_string()),
             initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
@@ -504,22 +493,29 @@ mod tests {
     #[test]
     fn reconstructs_https_url_from_file_url() {
         let worktree = PathBuf::from("/tmp/work/provider");
-        let encoded_dir = "https%3A%2F%2Fwww%2Eredhat%2Ecom%2F%2Ewell%2Dknown%2Fcsaf%2F";
-        let file_path = format!("/tmp/work/provider/{encoded_dir}/2024/cve-2024-1234.json");
-        let file_url = url::Url::from_file_path(&file_path).unwrap();
+        let file_path = "/tmp/work/provider/security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let file_url = url::Url::from_file_path(file_path).unwrap();
 
         let result = try_reconstruct_url(&file_url, &worktree);
         assert_eq!(
             result,
-            Some("https://www.redhat.com/.well-known/csaf/2024/cve-2024-1234.json".to_string())
+            Some("https://security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json".to_string())
         );
+    }
+
+    #[test]
+    fn skips_metadata_directory() {
+        let worktree = PathBuf::from("/tmp/work/provider");
+        let file_path = "/tmp/work/provider/metadata/provider-metadata.json";
+        let file_url = url::Url::from_file_path(file_path).unwrap();
+
+        assert_eq!(try_reconstruct_url(&file_url, &worktree), None);
     }
 
     #[test]
     fn falls_back_on_wrong_prefix() {
         let worktree = PathBuf::from("/tmp/other");
-        let file_url =
-            url::Url::from_file_path("/tmp/work/https%3A%2F%2Fexample%2Ecom%2F/doc.json").unwrap();
+        let file_url = url::Url::from_file_path("/tmp/work/example.com/doc.json").unwrap();
 
         assert_eq!(try_reconstruct_url(&file_url, &worktree), None);
     }
@@ -533,11 +529,10 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_on_empty_relative_path() {
+    fn falls_back_on_domain_only() {
         let worktree = PathBuf::from("/tmp/work");
-        let encoded_dir = "https%3A%2F%2Fexample%2Ecom%2F";
-        let file_path = format!("/tmp/work/{encoded_dir}");
-        let file_url = url::Url::from_file_path(&file_path).unwrap();
+        let file_path = "/tmp/work/example.com";
+        let file_url = url::Url::from_file_path(file_path).unwrap();
 
         assert_eq!(try_reconstruct_url(&file_url, &worktree), None);
     }

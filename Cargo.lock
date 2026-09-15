@@ -1144,6 +1144,7 @@ dependencies = [
  "actix-web-static-files",
  "actix-ws",
  "anyhow",
+ "bytes",
  "chrono",
  "clap",
  "csaf-rs",
@@ -1155,7 +1156,6 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "parking_lot",
- "percent-encoding",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1169,6 +1169,7 @@ dependencies = [
  "tracing-actix-web",
  "tracing-subscriber",
  "url",
+ "walkdir",
  "walker-common",
 ]
 

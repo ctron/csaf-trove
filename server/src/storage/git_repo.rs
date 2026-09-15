@@ -132,43 +132,6 @@ pub struct DocumentVersion {
     pub is_latest: bool,
 }
 
-/// Recursively searches a git tree for a blob named `filename`.
-///
-/// Returns the full path and blob OID of the first match.
-fn find_file_in_tree(
-    repo: &Repository,
-    tree: &Tree<'_>,
-    filename: &str,
-    prefix: &str,
-) -> Result<Option<(String, Oid)>> {
-    for entry in tree.iter() {
-        let name = entry.name().context("non-UTF8 tree entry name")?;
-        match entry.kind() {
-            Some(git2::ObjectType::Blob) if name == filename => {
-                let path = if prefix.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{prefix}/{name}")
-                };
-                return Ok(Some((path, entry.id())));
-            }
-            Some(git2::ObjectType::Tree) => {
-                let subtree = repo.find_tree(entry.id())?;
-                let sub_prefix = if prefix.is_empty() {
-                    name.to_string()
-                } else {
-                    format!("{prefix}/{name}")
-                };
-                if let Some(found) = find_file_in_tree(repo, &subtree, filename, &sub_prefix)? {
-                    return Ok(Some(found));
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(None)
-}
-
 /// Looks up a blob OID at a known path within a commit's tree.
 fn blob_oid_at_path(tree: &Tree<'_>, path: &str) -> Result<Option<Oid>> {
     match tree.get_path(std::path::Path::new(path)) {
@@ -178,53 +141,21 @@ fn blob_oid_at_path(tree: &Tree<'_>, path: &str) -> Result<Option<Oid>> {
     }
 }
 
-/// Extracts the filename from a URL (last path segment, ignoring query params).
-fn url_filename(url: &str) -> String {
-    let path = url.split('?').next().unwrap_or(url);
-    path.rsplit('/').next().unwrap_or(url).to_string()
-}
-
-/// Resolves a document URL to its full path within the git tree.
+/// Converts a document URL to its git tree path: `<domain>/<url_path>`.
 ///
-/// The tree stores files under percent-encoded distribution URL directories.
-/// Decodes each top-level directory name and checks if the document URL starts
-/// with it, then computes the remaining relative path.
-fn resolve_document_path(tree: &Tree<'_>, url: &str) -> Result<Option<String>> {
-    for entry in tree.iter() {
-        if entry.kind() != Some(git2::ObjectType::Tree) {
-            continue;
-        }
-        let name = entry.name().context("non-UTF8 tree entry name")?;
-        let Ok(decoded) = percent_encoding::percent_decode_str(name).decode_utf8() else {
-            continue;
-        };
-        let dist_url = decoded.trim_end_matches('/');
-        if let Some(relative) = url.strip_prefix(dist_url) {
-            let relative = relative.trim_start_matches('/');
-            if !relative.is_empty() {
-                return Ok(Some(format!("{name}/{relative}")));
-            }
-        }
+/// The worktree (and thus the git tree) stores files as
+/// `<domain>/<url_path>`, mirroring the URL structure directly.
+fn url_to_git_path(url: &str) -> Result<Option<String>> {
+    let parsed = url::Url::parse(url).context("invalid document URL")?;
+    let domain = match parsed.host_str() {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    let path = parsed.path().trim_start_matches('/');
+    if path.is_empty() {
+        return Ok(None);
     }
-    Ok(None)
-}
-
-/// Finds the git-tree path and blob OID for a document given its URL.
-///
-/// Tries URL-based path resolution first (matching the percent-encoded
-/// distribution URL directory), then falls back to recursive filename search.
-fn find_document_path(
-    repo: &Repository,
-    tree: &Tree<'_>,
-    url: &str,
-) -> Result<Option<(String, Oid)>> {
-    if let Some(path) = resolve_document_path(tree, url)?
-        && let Some(oid) = blob_oid_at_path(tree, &path)?
-    {
-        return Ok(Some((path, oid)));
-    }
-    let filename = url_filename(url);
-    find_file_in_tree(repo, tree, &filename, "")
+    Ok(Some(format!("{domain}/{path}")))
 }
 
 /// Returns the commits where a document changed, newest first.
@@ -241,9 +172,12 @@ pub fn document_versions(
     let head_commit = head.peel_to_commit()?;
     let head_tree = head_commit.tree()?;
 
-    let Some((file_path, _)) = find_document_path(&repo, &head_tree, url)? else {
+    let Some(file_path) = url_to_git_path(url)? else {
         return Ok(None);
     };
+    if blob_oid_at_path(&head_tree, &file_path)?.is_none() {
+        return Ok(None);
+    }
 
     let mut revwalk = repo.revwalk()?;
     revwalk.push(head.target().context("HEAD has no target")?)?;
@@ -302,10 +236,161 @@ pub fn read_document_blob(
     let commit = repo.find_commit(oid)?;
     let tree = commit.tree()?;
 
-    let Some((_, blob_oid)) = find_document_path(&repo, &tree, url)? else {
+    let Some(file_path) = url_to_git_path(url)? else {
+        return Ok(None);
+    };
+    let Some(blob_oid) = blob_oid_at_path(&tree, &file_path)? else {
         return Ok(None);
     };
 
     let blob = repo.find_blob(blob_oid)?;
     Ok(Some((blob.content().to_vec(), commit.time().seconds())))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::{fs, path::PathBuf};
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("csaf-trove-test-{}", std::process::id()))
+                .join(format!(
+                    "{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Creates a bare repo with a worktree, commits files, and pushes.
+    fn create_test_repo(files: &[(&str, &[u8])]) -> (TestDir, PathBuf) {
+        let dir = TestDir::new();
+        let bare_path = dir.path().join("repo.git");
+        let work_path = dir.path().join("work");
+
+        Repository::init_bare(&bare_path).unwrap();
+        let repo = Repository::init(&work_path).unwrap();
+        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
+
+        for (path, content) in files {
+            let full = work_path.join(path);
+            fs::create_dir_all(full.parent().unwrap()).unwrap();
+            fs::write(&full, content).unwrap();
+        }
+
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("test", "test@test").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+
+        push_to_bare(&repo).unwrap();
+
+        (dir, bare_path)
+    }
+
+    #[test]
+    fn url_to_git_path_converts_url() {
+        let path = url_to_git_path(
+            "https://security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json",
+        )
+        .unwrap();
+        assert_eq!(
+            path,
+            Some(
+                "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn url_to_git_path_returns_none_for_empty_path() {
+        let path = url_to_git_path("https://example.com").unwrap();
+        assert_eq!(path, None);
+    }
+
+    #[test]
+    fn document_versions_finds_by_url_path() {
+        let file_path =
+            "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let (_dir, bare_path) = create_test_repo(&[(file_path, b"{}")]);
+
+        let url =
+            "https://security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let versions = document_versions(&bare_path, url, 50).unwrap();
+        assert!(versions.is_some(), "should find document by URL");
+        assert_eq!(versions.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn document_versions_returns_none_for_missing() {
+        let file_path =
+            "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let (_dir, bare_path) = create_test_repo(&[(file_path, b"{}")]);
+
+        let url = "https://example.com/nonexistent.json";
+        let versions = document_versions(&bare_path, url, 50).unwrap();
+        assert!(
+            versions.is_none(),
+            "should return None for missing document"
+        );
+    }
+
+    #[test]
+    fn read_document_blob_finds_by_url_path() {
+        let file_path =
+            "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let content = b"{\"doc\": true}";
+        let (_dir, bare_path) = create_test_repo(&[(file_path, content)]);
+
+        let repo = Repository::open_bare(&bare_path).unwrap();
+        let head = repo.head().unwrap();
+        let commit_id = head.target().unwrap().to_string();
+
+        let url =
+            "https://security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let result = read_document_blob(&bare_path, url, &commit_id).unwrap();
+        assert!(result.is_some(), "should find blob by URL");
+        let (blob, _ts) = result.unwrap();
+        assert_eq!(blob, content);
+    }
+
+    #[test]
+    fn errata_url_does_not_find_document() {
+        let file_path =
+            "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let (_dir, bare_path) = create_test_repo(&[(file_path, b"{}")]);
+
+        let errata_url = "https://access.redhat.com/errata/RHSA-2024:1234";
+        let versions = document_versions(&bare_path, errata_url, 50).unwrap();
+        assert!(
+            versions.is_none(),
+            "errata URL should NOT find a document stored by distribution URL"
+        );
+    }
 }

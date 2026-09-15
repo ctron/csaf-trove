@@ -12,16 +12,17 @@ use csaf_walker::{
     metadata::MetadataRetriever,
     retrieve::{RetrievalContext, RetrievedAdvisory, RetrievedVisitor, RetrievingVisitor},
     source::{HttpOptions, HttpSource, Source},
-    visitors::store::{StoreRetrievedError, StoreVisitor},
     walker::Walker,
 };
 
 use crate::{AppState, models::source::Source as AppSource};
 
-/// Wraps [`StoreVisitor`] to increment the synced document count after each advisory.
+use super::store::{TroveStoreError, TroveStoreVisitor};
+
+/// Wraps [`TroveStoreVisitor`] to increment the synced document count after each advisory.
 struct CountingStoreVisitor {
     /// Inner visitor that performs the actual storage.
-    inner: StoreVisitor,
+    inner: TroveStoreVisitor,
     /// Shared application state for updating job progress.
     state: Arc<AppState>,
     /// Provider domain name.
@@ -32,8 +33,8 @@ impl<S: Source + Debug> RetrievedVisitor<S> for CountingStoreVisitor
 where
     S::Error: 'static,
 {
-    type Error = StoreRetrievedError<S>;
-    type Context = <StoreVisitor as RetrievedVisitor<S>>::Context;
+    type Error = TroveStoreError<S>;
+    type Context = ();
 
     async fn visit_context(
         &self,
@@ -119,7 +120,7 @@ pub async fn sync_provider(
     }
 
     let http_source = HttpSource::new(metadata, fetcher, http_options);
-    let store = StoreVisitor::new(worktree_dir);
+    let store = TroveStoreVisitor::new(worktree_dir);
     let counting_store = CountingStoreVisitor {
         inner: store,
         state: state.clone(),
