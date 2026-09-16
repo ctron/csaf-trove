@@ -136,7 +136,7 @@ pub async fn sync_provider(
         .with_progress(progress)
         .walk(retriever)
         .await
-        .map_err(|e| anyhow::anyhow!("Walker failed for {domain}: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     sync_state.last_sync = Some(Utc::now());
     sync_state.since_token = Some(Utc::now());

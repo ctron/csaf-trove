@@ -11,7 +11,7 @@ use csaf_walker::{
 use tokio::fs;
 use walker_common::{
     store::{Document, StoreError, store_document},
-    utils::openpgp::PublicKey,
+    utils::{openpgp::PublicKey, url::Urlify},
 };
 
 /// Stores CSAF documents under a clean `<domain>/<url_path>` layout.
@@ -27,8 +27,11 @@ pub enum TroveStoreError<S: Source> {
     #[error("{0:#}")]
     Store(#[from] StoreError),
     /// Failed to retrieve an advisory from the source.
-    #[error(transparent)]
-    Retrieval(Box<RetrievalError<DiscoveredAdvisory, S>>),
+    #[error("retrieval of {} failed: {inner}", inner.url())]
+    Retrieval {
+        /// The underlying retrieval error.
+        inner: Box<RetrievalError<DiscoveredAdvisory, S>>,
+    },
     /// General I/O or processing error.
     #[error("{0:#}")]
     Io(anyhow::Error),
@@ -125,7 +128,12 @@ where
     ) -> Result<(), Self::Error> {
         let advisory = match result {
             Ok(adv) => adv,
-            Err(err) => return Err(TroveStoreError::Retrieval(Box::new(err))),
+            Err(err) => {
+                tracing::warn!("Failed to retrieve advisory {}: {err}", err.url());
+                return Err(TroveStoreError::Retrieval {
+                    inner: Box::new(err),
+                });
+            }
         };
 
         let file = self.advisory_path(&advisory.url).ok_or_else(|| {
