@@ -34,6 +34,7 @@ use crate::{
         },
         source::Source,
     },
+    storage::Storage,
 };
 
 #[derive(Debug)]
@@ -76,6 +77,17 @@ struct DocumentResult {
     revision_history: Vec<RevisionEntry>,
 }
 
+/// Number of documents to accumulate before flushing to the database.
+const VALIDATION_BATCH_SIZE: usize = 500;
+
+/// Accumulates validation results and flushes them to the database in batches.
+struct ValidationBatchState {
+    /// Buffer of results awaiting flush.
+    buffer: Vec<DocumentResult>,
+    /// Total number of documents processed.
+    total_count: u64,
+}
+
 /// Loads OpenPGP public keys from the provider metadata in the worktree.
 async fn load_keys(file_source: &TroveFileSource) -> Result<Vec<PublicKey>> {
     let metadata = file_source.load_metadata().await?;
@@ -113,8 +125,12 @@ pub async fn validate_provider(
 
     let db_count_before = state.storage.document_count(domain).unwrap_or(0);
 
-    let results: Arc<Mutex<Vec<DocumentResult>>> = Arc::new(Mutex::new(Vec::new()));
-    let results_ref = results.clone();
+    let batch_state: Arc<Mutex<ValidationBatchState>> =
+        Arc::new(Mutex::new(ValidationBatchState {
+            buffer: Vec::with_capacity(VALIDATION_BATCH_SIZE),
+            total_count: 0,
+        }));
+    let batch_ref = batch_state.clone();
 
     let checks: Vec<(String, Box<dyn Check>)> = vec![
         ("basic".into(), Box::new(CsafValidation::new("basic"))),
@@ -131,7 +147,7 @@ pub async fn validate_provider(
             VerifiedAdvisory<RetrievedAdvisory, String>,
             VerificationError<_, RetrievedAdvisory>,
         >| {
-            let results = results_ref.clone();
+            let batch = batch_ref.clone();
             let keys = keys.clone();
             let opts = validation_options.clone();
             let state = state_for_closure.clone();
@@ -196,26 +212,43 @@ pub async fn validate_provider(
                             .map(|s| s.to_string())
                             .collect();
 
-                        results.lock().push(DocumentResult {
-                            tracking_id,
-                            title,
-                            url,
-                            failures,
-                            warnings,
-                            infos,
-                            successes,
-                            signature_error,
-                            signature_present,
-                            category: meta.category,
-                            publisher_name: meta.publisher_name,
-                            initial_release_date: meta.initial_release_date,
-                            current_release_date: meta.current_release_date,
-                            status: meta.status,
-                            revision: meta.revision,
-                            aggregate_severity: meta.aggregate_severity,
-                            csaf_version: meta.csaf_version,
-                            revision_history: meta.revision_history,
-                        });
+                        let batch_to_flush = {
+                            let mut b = batch.lock();
+                            b.buffer.push(DocumentResult {
+                                tracking_id,
+                                title,
+                                url,
+                                failures,
+                                warnings,
+                                infos,
+                                successes,
+                                signature_error,
+                                signature_present,
+                                category: meta.category,
+                                publisher_name: meta.publisher_name,
+                                initial_release_date: meta.initial_release_date,
+                                current_release_date: meta.current_release_date,
+                                status: meta.status,
+                                revision: meta.revision,
+                                aggregate_severity: meta.aggregate_severity,
+                                csaf_version: meta.csaf_version,
+                                revision_history: meta.revision_history,
+                            });
+                            b.total_count += 1;
+                            if b.buffer.len() >= VALIDATION_BATCH_SIZE {
+                                Some(std::mem::replace(
+                                    &mut b.buffer,
+                                    Vec::with_capacity(VALIDATION_BATCH_SIZE),
+                                ))
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(drained) = batch_to_flush {
+                            flush_batch(&state.storage, &domain, drained)?;
+                        }
+
                         state.increment_job_validated(&domain).await;
                     }
                     Err(e) => {
@@ -226,26 +259,43 @@ pub async fn validate_provider(
                             .unwrap_or(&url)
                             .trim_end_matches(".json")
                             .to_string();
-                        results.lock().push(DocumentResult {
-                            tracking_id,
-                            title: format!("Parse error: {e}"),
-                            url,
-                            failures: HashMap::new(),
-                            warnings: HashMap::new(),
-                            infos: HashMap::new(),
-                            successes: vec![],
-                            signature_error: Some(format!("Document error: {e}")),
-                            signature_present: false,
-                            category: None,
-                            publisher_name: None,
-                            initial_release_date: None,
-                            current_release_date: None,
-                            status: None,
-                            revision: None,
-                            aggregate_severity: None,
-                            csaf_version: None,
-                            revision_history: vec![],
-                        });
+                        let batch_to_flush = {
+                            let mut b = batch.lock();
+                            b.buffer.push(DocumentResult {
+                                tracking_id,
+                                title: format!("Parse error: {e}"),
+                                url,
+                                failures: HashMap::new(),
+                                warnings: HashMap::new(),
+                                infos: HashMap::new(),
+                                successes: vec![],
+                                signature_error: Some(format!("Document error: {e}")),
+                                signature_present: false,
+                                category: None,
+                                publisher_name: None,
+                                initial_release_date: None,
+                                current_release_date: None,
+                                status: None,
+                                revision: None,
+                                aggregate_severity: None,
+                                csaf_version: None,
+                                revision_history: vec![],
+                            });
+                            b.total_count += 1;
+                            if b.buffer.len() >= VALIDATION_BATCH_SIZE {
+                                Some(std::mem::replace(
+                                    &mut b.buffer,
+                                    Vec::with_capacity(VALIDATION_BATCH_SIZE),
+                                ))
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(drained) = batch_to_flush {
+                            flush_batch(&state.storage, &domain, drained)?;
+                        }
+
                         state.increment_job_validated(&domain).await;
                     }
                 }
@@ -267,55 +317,68 @@ pub async fn validate_provider(
         .await
         .map_err(|e| anyhow::anyhow!("Validation walker failed for {domain}: {e}"))?;
 
-    let results = Arc::try_unwrap(results)
-        .map_err(|_| anyhow::anyhow!("results Arc still shared after walk completed"))?
-        .into_inner();
+    let (remaining, total_count) = {
+        let mut b = batch_state.lock();
+        (std::mem::take(&mut b.buffer), b.total_count)
+    };
 
-    if db_count_before > 0 && (results.len() as u64) < db_count_before / 2 {
+    if db_count_before > 0 && total_count < db_count_before / 2 {
         tracing::warn!(
-            "{domain}: validation found {} documents but database has {db_count_before}; \
+            "{domain}: validation found {total_count} documents but database has {db_count_before}; \
              documents not in this batch are preserved via upsert",
-            results.len()
         );
     }
 
-    let documents = build_document_results(&results);
-    let total_documents = state.storage.save_documents(domain, &documents)?;
+    flush_batch(&state.storage, domain, remaining)?;
+
+    let total_documents = state.storage.document_count(domain)?;
 
     let summary = state.storage.build_summary_from_db(domain)?;
     state.storage.save_summary(domain, &summary).await?;
 
     tracing::info!(
-        "Validation complete for {domain}: {total_documents} documents ({} validated)",
-        results.len()
+        "Validation complete for {domain}: {total_documents} documents ({total_count} validated)",
     );
     Ok(total_documents)
 }
 
+/// Converts a batch of results to `DocumentValidation` and writes them to the database.
+fn flush_batch(storage: &Storage, domain: &str, batch: Vec<DocumentResult>) -> Result<()> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let documents = build_document_results(batch);
+    storage.save_documents(domain, &documents)?;
+    Ok(())
+}
+
 /// Converts internal results into serializable document validation records.
-fn build_document_results(results: &[DocumentResult]) -> Vec<DocumentValidation> {
+fn build_document_results(results: Vec<DocumentResult>) -> Vec<DocumentValidation> {
     results
-        .iter()
-        .map(|doc| DocumentValidation {
-            tracking_id: doc.tracking_id.clone(),
-            title: doc.title.clone(),
-            url: doc.url.clone(),
-            profiles: DocumentProfileResults {
-                basic: build_doc_profile_detail(doc, "basic"),
-                extended: build_doc_profile_detail(doc, "extended"),
-                full: build_doc_profile_detail(doc, "full"),
-            },
-            signature_error: doc.signature_error.clone(),
-            signature_present: doc.signature_present,
-            category: doc.category.clone(),
-            publisher_name: doc.publisher_name.clone(),
-            initial_release_date: doc.initial_release_date.clone(),
-            current_release_date: doc.current_release_date.clone(),
-            status: doc.status.clone(),
-            revision: doc.revision.clone(),
-            aggregate_severity: doc.aggregate_severity.clone(),
-            csaf_version: doc.csaf_version.clone(),
-            revision_history: doc.revision_history.clone(),
+        .into_iter()
+        .map(|doc| {
+            let profiles = DocumentProfileResults {
+                basic: build_doc_profile_detail(&doc, "basic"),
+                extended: build_doc_profile_detail(&doc, "extended"),
+                full: build_doc_profile_detail(&doc, "full"),
+            };
+            DocumentValidation {
+                tracking_id: doc.tracking_id,
+                title: doc.title,
+                url: doc.url,
+                profiles,
+                signature_error: doc.signature_error,
+                signature_present: doc.signature_present,
+                category: doc.category,
+                publisher_name: doc.publisher_name,
+                initial_release_date: doc.initial_release_date,
+                current_release_date: doc.current_release_date,
+                status: doc.status,
+                revision: doc.revision,
+                aggregate_severity: doc.aggregate_severity,
+                csaf_version: doc.csaf_version,
+                revision_history: doc.revision_history,
+            }
         })
         .collect()
 }
