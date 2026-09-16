@@ -18,6 +18,7 @@ use std::{
 use actix_web::{App, HttpServer, web};
 use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::Parser;
 use serde::Deserialize;
 use tokio::{
@@ -172,6 +173,7 @@ impl AppState {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
             job.phase = Some(phase.to_string());
+            job.phase_started_at = Some(Utc::now());
         }
         drop(jobs);
         self.job_notify.send(()).ok();
@@ -346,6 +348,8 @@ async fn main() -> Result<()> {
                         documents_validated: ss.documents_validated,
                         documents_total: ss.documents_total,
                         error: None,
+                        last_completed_at: Some(last_sync),
+                        phase_started_at: None,
                     },
                 );
             }

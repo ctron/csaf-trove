@@ -52,6 +52,12 @@ pub struct JobStatus {
     pub documents_total: u64,
     /// Error message if the job failed.
     pub error: Option<String>,
+    /// When the previous run completed (carried forward when a new run starts).
+    #[serde(skip)]
+    pub last_completed_at: Option<DateTime<Utc>>,
+    /// When the current pipeline phase began (used for ETA calculation).
+    #[serde(skip)]
+    pub phase_started_at: Option<DateTime<Utc>>,
 }
 
 /// Lifecycle phases of a pipeline job.

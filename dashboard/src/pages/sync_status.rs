@@ -26,34 +26,28 @@ fn format_duration(seconds: Option<f64>) -> String {
     }
 }
 
-/// Formats a relative time like "5m 23s ago" from an ISO 8601 timestamp.
-fn format_relative_time(started_at: &str, now_ms: f64) -> String {
-    let Ok(started) = chrono::DateTime::parse_from_rfc3339(started_at) else {
-        return started_at.to_string();
+/// Formats a coarse relative time like "5m ago" from an ISO 8601 timestamp.
+fn format_relative_time(timestamp: &str, now_ms: f64) -> String {
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
+        return timestamp.to_string();
     };
 
-    let started_ms = started.timestamp_millis() as f64;
-    let diff_seconds = ((now_ms - started_ms) / 1000.0).max(0.0) as u64;
+    let ts_ms = parsed.timestamp_millis() as f64;
+    let diff_seconds = ((now_ms - ts_ms) / 1000.0).max(0.0) as u64;
 
     let days = diff_seconds / 86400;
     let hours = (diff_seconds % 86400) / 3600;
     let minutes = (diff_seconds % 3600) / 60;
-    let secs = diff_seconds % 60;
 
-    let mut parts = Vec::new();
     if days > 0 {
-        parts.push(format!("{days}d"));
+        format!("{days}d {hours}h ago")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m ago")
+    } else if minutes > 0 {
+        format!("{minutes}m ago")
+    } else {
+        "just now".to_string()
     }
-    if hours > 0 {
-        parts.push(format!("{hours}h"));
-    }
-    if minutes > 0 {
-        parts.push(format!("{minutes}m"));
-    }
-    if secs > 0 || parts.is_empty() {
-        parts.push(format!("{secs}s"));
-    }
-    format!("{} ago", parts.join(" "))
 }
 
 /// Formats the progress column based on the current phase and document counts.
@@ -131,7 +125,7 @@ pub fn SyncStatusPage() -> impl IntoView {
 
     wasm_bindgen_futures::spawn_local(async move {
         loop {
-            gloo_timers::future::sleep(std::time::Duration::from_secs(1)).await;
+            gloo_timers::future::sleep(std::time::Duration::from_secs(60)).await;
             now_ms.set(js_sys::Date::now());
         }
     });
@@ -155,8 +149,8 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     <th>"Status"</th>
                                     <th>"Phase"</th>
                                     <th>"Progress"</th>
-                                    <th>"Duration"</th>
-                                    <th>"Started"</th>
+                                    <th>"ETA"</th>
+                                    <th>"Last Run"</th>
                                     <th>"Error"</th>
                                 </tr>
                             </thead>
@@ -171,9 +165,15 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     let status = job.status.clone();
                                     let phase = job.phase.clone().unwrap_or_else(|| "-".to_string());
                                     let progress = format_progress(&job);
-                                    let duration = format_duration(job.duration_seconds);
-                                    let started_at = job.started_at.clone();
-                                    let relative = format_relative_time(&started_at, now_ms.get());
+                                    let eta_display = if job.status == "running" {
+                                        job.eta.clone().unwrap_or_else(|| format_duration(job.duration_seconds))
+                                    } else {
+                                        format_duration(job.duration_seconds)
+                                    };
+                                    let last_run_display = job.last_run.as_deref()
+                                        .map(|lr| format_relative_time(lr, now_ms.get()))
+                                        .unwrap_or_else(|| "-".to_string());
+                                    let last_run_title = job.last_run.clone().unwrap_or_default();
                                     let error = job.error.clone().unwrap_or_default();
                                     view! {
                                         <tr>
@@ -181,8 +181,8 @@ pub fn SyncStatusPage() -> impl IntoView {
                                             <td><span class={status_class}>{status}</span></td>
                                             <td>{phase}</td>
                                             <td class="whitespace-nowrap">{progress}</td>
-                                            <td class="whitespace-nowrap">{duration}</td>
-                                            <td class="whitespace-nowrap" title={started_at}>{relative}</td>
+                                            <td class="whitespace-nowrap">{eta_display}</td>
+                                            <td class="whitespace-nowrap" title={last_run_title}>{last_run_display}</td>
                                             <td>{error}</td>
                                         </tr>
                                     }

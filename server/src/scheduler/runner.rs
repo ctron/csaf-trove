@@ -29,15 +29,20 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
 
     tracing::info!("Starting pipeline for {domain}");
 
+    let last_completed = state.get_job(domain).await.and_then(|j| j.completed_at);
+    let now = Utc::now();
+
     let job = JobStatus {
         status: JobPhase::Running,
-        started_at: Utc::now(),
+        started_at: now,
         completed_at: None,
         phase: Some("sync".into()),
         documents_synced: 0,
         documents_validated: 0,
         documents_total: 0,
         error: None,
+        last_completed_at: last_completed,
+        phase_started_at: Some(now),
     };
     state.update_job(domain, job).await;
 
@@ -54,6 +59,8 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
                 documents_validated: 0,
                 documents_total: 0,
                 error: None,
+                last_completed_at: None,
+                phase_started_at: None,
             });
             job.status = JobPhase::Completed;
             job.completed_at = Some(Utc::now());
@@ -72,6 +79,8 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
                 documents_validated: 0,
                 documents_total: 0,
                 error: None,
+                last_completed_at: None,
+                phase_started_at: None,
             });
             job.status = JobPhase::Failed;
             job.completed_at = Some(Utc::now());

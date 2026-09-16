@@ -10,7 +10,7 @@ use crate::{
     models::state::{JobPhase, JobStatus},
 };
 
-/// API response wrapper that adds computed duration to a job status.
+/// API response wrapper that adds computed fields to a job status.
 #[derive(Serialize)]
 struct SyncStatusEntry {
     /// The underlying job status fields.
@@ -18,6 +18,12 @@ struct SyncStatusEntry {
     job: JobStatus,
     /// Elapsed seconds (running) or total seconds (completed/failed).
     duration_seconds: Option<f64>,
+    /// Pre-formatted ETA string (e.g. "~5m 30s"), only while running.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eta: Option<String>,
+    /// When the provider last completed a sync (ISO 8601).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_run: Option<String>,
 }
 
 /// Builds status entries with computed durations for all providers.
@@ -35,15 +41,66 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
                     .completed_at
                     .map(|end| (end - job.started_at).num_milliseconds() as f64 / 1000.0),
             };
+
+            let eta = if job.status == JobPhase::Running {
+                compute_eta(job, now)
+            } else {
+                None
+            };
+
+            let last_run = match job.status {
+                JobPhase::Completed | JobPhase::Failed => job.completed_at.map(|t| t.to_rfc3339()),
+                _ => job.last_completed_at.map(|t| t.to_rfc3339()),
+            };
+
             (
                 domain.clone(),
                 SyncStatusEntry {
                     job: job.clone(),
                     duration_seconds,
+                    eta,
+                    last_run,
                 },
             )
         })
         .collect()
+}
+
+/// Computes a human-readable ETA for a running job based on the current phase progress.
+fn compute_eta(job: &JobStatus, now: chrono::DateTime<Utc>) -> Option<String> {
+    let phase_start = job.phase_started_at?;
+    let elapsed = (now - phase_start).num_seconds() as f64;
+    if elapsed <= 0.0 {
+        return None;
+    }
+
+    let current = match job.phase.as_deref() {
+        Some("sync") => job.documents_synced,
+        Some("validate") => job.documents_validated,
+        _ => return None,
+    };
+
+    if current == 0 || job.documents_total == 0 {
+        return None;
+    }
+
+    let remaining = job.documents_total.saturating_sub(current) as f64;
+    let rate = current as f64 / elapsed;
+    let eta_secs = (remaining / rate) as u64;
+
+    let hours = eta_secs / 3600;
+    let minutes = (eta_secs % 3600) / 60;
+    let secs = eta_secs % 60;
+
+    let formatted = if hours > 0 {
+        format!("~{hours}h {minutes}m {secs}s")
+    } else if minutes > 0 {
+        format!("~{minutes}m {secs}s")
+    } else {
+        format!("~{secs}s")
+    };
+
+    Some(formatted)
 }
 
 /// Returns the current job status for all providers with computed durations.

@@ -73,6 +73,12 @@ pub struct JobStatus {
     pub error: Option<String>,
     /// Elapsed seconds (running) or total seconds (completed/failed).
     pub duration_seconds: Option<f64>,
+    /// Pre-formatted ETA string (e.g. "~5m 30s"), only while running.
+    #[serde(default)]
+    pub eta: Option<String>,
+    /// When the provider last completed a sync (ISO 8601).
+    #[serde(default)]
+    pub last_run: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
