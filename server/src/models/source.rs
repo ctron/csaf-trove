@@ -13,6 +13,8 @@ pub struct Source {
     /// Whether to accept OpenPGP v3 signatures.
     #[serde(default)]
     pub accept_v3_signatures: bool,
+    /// Number of fetch retries on server errors (defaults to 5 if unset).
+    pub retries: Option<usize>,
 }
 
 fn default_true() -> bool {

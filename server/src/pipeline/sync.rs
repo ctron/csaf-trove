@@ -111,7 +111,11 @@ pub async fn sync_provider(
         tracing::info!("{domain}: starting full sync (no since_token)");
     }
 
-    let fetcher = Fetcher::new(FetcherOptions::default()).await?;
+    let mut fetcher_options = FetcherOptions::default();
+    if let Some(retries) = source.retries {
+        fetcher_options = fetcher_options.retries(retries);
+    }
+    let fetcher = Fetcher::new(fetcher_options).await?;
     let metadata = MetadataRetriever::new(domain);
 
     let mut http_options = HttpOptions::default();

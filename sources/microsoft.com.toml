@@ -1,1 +1,2 @@
 domain = "https://msrc.microsoft.com/csaf/provider-metadata.json"
+retries = 20
