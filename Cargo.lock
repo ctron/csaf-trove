@@ -1109,7 +1109,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-common"
-version = "0.1.0-alpha.18"
+version = "0.1.0-alpha.19"
 dependencies = [
  "serde",
  "time",
@@ -1117,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-dashboard"
-version = "0.1.0-alpha.18"
+version = "0.1.0-alpha.19"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -1137,7 +1137,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-server"
-version = "0.1.0-alpha.18"
+version = "0.1.0-alpha.19"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
@@ -1175,7 +1175,7 @@ dependencies = [
 [[package]]
 name = "csaf-walker"
 version = "0.18.0"
-source = "git+https://github.com/ctron/csaf-walker.git?branch=main#783a07eaa7b8974d9da19967e09c610e50941aac"
+source = "git+https://github.com/ctron/csaf-walker.git?branch=main#d8ac24659829d42bce41e6614b43c327bc5a305d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5445,7 +5445,7 @@ dependencies = [
 [[package]]
 name = "walker-common"
 version = "0.18.0"
-source = "git+https://github.com/ctron/csaf-walker.git?branch=main#783a07eaa7b8974d9da19967e09c610e50941aac"
+source = "git+https://github.com/ctron/csaf-walker.git?branch=main#d8ac24659829d42bce41e6614b43c327bc5a305d"
 dependencies = [
  "anyhow",
  "async-trait",
