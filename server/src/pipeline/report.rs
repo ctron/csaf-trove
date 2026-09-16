@@ -6,7 +6,7 @@ use chrono::Utc;
 use crate::{
     AppState,
     models::{
-        metrics::{MetricsEntry, MetricsProfileEntry},
+        metrics::{MetricsEntry, MetricsProfileEntry, MetricsSignatureEntry},
         source::Source,
     },
 };
@@ -53,6 +53,11 @@ pub async fn generate_report(state: &Arc<AppState>, source: &Source) -> Result<(
             valid: p.valid,
             invalid: p.invalid,
             pass_rate: p.pass_rate,
+        }),
+        signatures: summary.signatures.as_ref().map(|s| MetricsSignatureEntry {
+            valid: s.valid,
+            invalid: s.invalid,
+            missing: s.missing,
         }),
     };
 

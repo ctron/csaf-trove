@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::components::profile_badge::ProfileBadge;
+use crate::components::{profile_badge::ProfileBadge, signature_badge::SignatureBadge};
 use crate::models::{ProviderSummary, encode_path_segment};
 
 async fn fetch_providers() -> Result<Vec<ProviderSummary>, String> {
@@ -39,6 +39,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                     <th>"Basic"</th>
                     <th>"Extended"</th>
                     <th>"Full"</th>
+                    <th>"Signatures"</th>
                     <th>"Last Validated"</th>
                 </tr>
             </thead>
@@ -55,6 +56,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                             <td><ProfileBadge profile=p.profiles.basic /></td>
                             <td><ProfileBadge profile=p.profiles.extended /></td>
                             <td><ProfileBadge profile=p.profiles.full /></td>
+                            <td><SignatureBadge signatures=p.signatures /></td>
                             <td>{validated_at}</td>
                         </tr>
                     }

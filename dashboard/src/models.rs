@@ -7,6 +7,8 @@ pub struct ProviderSummary {
     pub validated_at: String,
     pub document_count: u64,
     pub profiles: ProfileResults,
+    #[serde(default)]
+    pub signatures: Option<SignatureSummary>,
     pub top_failing_tests: Vec<FailingTest>,
 }
 
@@ -22,6 +24,17 @@ pub struct ProfileSummary {
     pub valid: u64,
     pub invalid: u64,
     pub pass_rate: f64,
+}
+
+/// Aggregate signature validation counts for a provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignatureSummary {
+    /// Documents with a valid signature.
+    pub valid: u64,
+    /// Documents with an invalid signature.
+    pub invalid: u64,
+    /// Documents with no signature file.
+    pub missing: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +65,19 @@ pub struct MetricsEntry {
     pub basic: Option<MetricsProfileEntry>,
     pub extended: Option<MetricsProfileEntry>,
     pub full: Option<MetricsProfileEntry>,
+    #[serde(default)]
+    pub signatures: Option<MetricsSignatureEntry>,
+}
+
+/// Signature validation counts for a metrics entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsSignatureEntry {
+    /// Documents with a valid signature.
+    pub valid: u64,
+    /// Documents with an invalid signature.
+    pub invalid: u64,
+    /// Documents with no signature.
+    pub missing: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

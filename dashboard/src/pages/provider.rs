@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::components::profile_badge::ProfileBadge;
+use crate::components::{profile_badge::ProfileBadge, signature_badge::SignatureBadge};
 use crate::models::{
     DocumentProfileDetail, PaginatedDocuments, ProviderDetail, encode_path_segment,
 };
@@ -43,6 +43,7 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let history = detail.history;
     let summary = detail.summary;
     let tests = summary.top_failing_tests;
+    let signatures = summary.signatures.clone();
     let domain = summary.provider.clone();
 
     view! {
@@ -54,7 +55,17 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
             <span>"Extended "<ProfileBadge profile=summary.profiles.extended /></span>
             <span>"\u{00b7}"</span>
             <span>"Full "<ProfileBadge profile=summary.profiles.full /></span>
+            <span>"\u{00b7}"</span>
+            <span>"Signatures "<SignatureBadge signatures=signatures.clone() /></span>
         </div>
+
+        {signatures.map(|sig| view! {
+            <div class="flex items-center gap-4 text-sm mb-4">
+                <span class="badge badge-success">{sig.valid}" valid"</span>
+                <span class="badge badge-danger">{sig.invalid}" invalid"</span>
+                <span class="badge badge-warning">{sig.missing}" missing"</span>
+            </div>
+        })}
 
         <h3>"Top Failing Tests"</h3>
         <table>

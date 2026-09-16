@@ -7,7 +7,7 @@ use crate::models::{
     result::{
         DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
         FailingTest, PaginatedDocuments, ProfileResults, ProfileSummary, ProviderSummary,
-        RevisionEntry,
+        RevisionEntry, SignatureSummary,
     },
     source::sanitize_domain,
 };
@@ -655,12 +655,13 @@ pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<Provide
                 extended: None,
                 full: None,
             },
+            signatures: None,
             top_failing_tests: vec![],
         });
     }
     let conn = Connection::open(db_path)?;
 
-    let (total, basic, extended, full) = conn.query_row(
+    let (total, basic, extended, full, signatures) = conn.query_row(
         "SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN basic_passed = 1 THEN 1 ELSE 0 END),
@@ -668,7 +669,10 @@ pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<Provide
             SUM(CASE WHEN extended_passed = 1 THEN 1 ELSE 0 END),
             SUM(CASE WHEN extended_passed = 0 THEN 1 ELSE 0 END),
             SUM(CASE WHEN full_passed = 1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END)
+            SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN signature_present = 1 AND signature_error IS NULL THEN 1 ELSE 0 END),
+            SUM(CASE WHEN signature_present = 1 AND signature_error IS NOT NULL THEN 1 ELSE 0 END),
+            SUM(CASE WHEN signature_present = 0 THEN 1 ELSE 0 END)
          FROM documents",
         [],
         |row| {
@@ -679,11 +683,19 @@ pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<Provide
             let ei: Option<u64> = row.get(4)?;
             let fv: Option<u64> = row.get(5)?;
             let fi: Option<u64> = row.get(6)?;
+            let sv: Option<u64> = row.get(7)?;
+            let si: Option<u64> = row.get(8)?;
+            let sm: Option<u64> = row.get(9)?;
             Ok((
                 total,
                 build_profile_from_counts(bv.unwrap_or(0), bi.unwrap_or(0)),
                 build_profile_from_counts(ev.unwrap_or(0), ei.unwrap_or(0)),
                 build_profile_from_counts(fv.unwrap_or(0), fi.unwrap_or(0)),
+                SignatureSummary {
+                    valid: sv.unwrap_or(0),
+                    invalid: si.unwrap_or(0),
+                    missing: sm.unwrap_or(0),
+                },
             ))
         },
     )?;
@@ -727,6 +739,7 @@ pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<Provide
             extended: Some(extended),
             full: Some(full),
         },
+        signatures: Some(signatures),
         top_failing_tests,
     })
 }

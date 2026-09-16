@@ -22,6 +22,9 @@ pub struct MetricsEntry {
     pub extended: Option<MetricsProfileEntry>,
     /// Full profile metrics for this day.
     pub full: Option<MetricsProfileEntry>,
+    /// Signature metrics for this day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signatures: Option<MetricsSignatureEntry>,
 }
 
 /// Profile-level validation counts for a metrics entry.
@@ -33,6 +36,17 @@ pub struct MetricsProfileEntry {
     pub invalid: u64,
     /// Ratio of valid to total (0.0–1.0).
     pub pass_rate: f64,
+}
+
+/// Signature validation counts for a metrics entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsSignatureEntry {
+    /// Documents with a valid signature.
+    pub valid: u64,
+    /// Documents with an invalid signature.
+    pub invalid: u64,
+    /// Documents with no signature.
+    pub missing: u64,
 }
 
 impl MetricsTimeSeries {

@@ -33,6 +33,7 @@ pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> 
                     extended: None,
                     full: None,
                 },
+                signatures: None,
                 top_failing_tests: vec![],
             });
         }

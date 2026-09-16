@@ -28,6 +28,9 @@ pub struct ProviderSummary {
     pub document_count: u64,
     /// Pass/fail breakdown per CSAF profile.
     pub profiles: ProfileResults,
+    /// Signature validation breakdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signatures: Option<SignatureSummary>,
     /// Most frequently failing test IDs across all documents.
     pub top_failing_tests: Vec<FailingTest>,
 }
@@ -52,6 +55,17 @@ pub struct ProfileSummary {
     pub invalid: u64,
     /// Ratio of valid to total (0.0–1.0).
     pub pass_rate: f64,
+}
+
+/// Aggregate signature validation counts for a provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignatureSummary {
+    /// Documents with a valid signature (present, no error).
+    pub valid: u64,
+    /// Documents with an invalid signature (present, with error).
+    pub invalid: u64,
+    /// Documents with no signature file.
+    pub missing: u64,
 }
 
 /// A frequently failing validation test across documents.
