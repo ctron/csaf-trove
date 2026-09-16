@@ -11,4 +11,4 @@
 ## Tools
 
 * Try to avoid `gh api`, use the other `gh` commands
-* Try top avoid -C for git
+* Try to avoid -C for git
