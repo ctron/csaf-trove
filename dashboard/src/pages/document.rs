@@ -79,15 +79,14 @@ async fn fetch_historical_document(
     resp.json().await.map_err(|e| e.to_string())
 }
 
-/// Fetches a structured diff between two document versions.
+/// Fetches a structured diff between a document version and its next newer version.
 async fn fetch_diff(
     domain: String,
     tracking_id: String,
-    old_commit_id: String,
-    new_commit_id: String,
+    commit_id: String,
 ) -> Result<Vec<DiffLineInfo>, String> {
     let resp = gloo_net::http::Request::get(&format!(
-        "/api/providers/{}/document/{tracking_id}/diff/{old_commit_id}/{new_commit_id}",
+        "/api/providers/{}/document/{tracking_id}/versions/{commit_id}/diff",
         encode_path_segment(&domain)
     ))
     .send()
@@ -97,16 +96,6 @@ async fn fetch_diff(
         return Err("Diff not available".to_string());
     }
     resp.json().await.map_err(|e| e.to_string())
-}
-
-/// Finds the next newer version's commit ID from the versions list (newest-first).
-fn find_newer_version(commit_id: &str, versions: &[DocumentVersionInfo]) -> Option<String> {
-    let pos = versions.iter().position(|v| v.commit_id == commit_id)?;
-    if pos == 0 {
-        None
-    } else {
-        Some(versions[pos - 1].commit_id.clone())
-    }
 }
 
 /// Formats a Unix timestamp as a human-readable date string.
@@ -151,18 +140,10 @@ pub fn DocumentPage() -> impl IntoView {
     let diff = LocalResource::new(move || {
         let d = domain();
         let t = tracking_id();
-        let selected = selected_version.get();
-        let diff_pair = selected.and_then(|sel| {
-            versions.get().and_then(|res| {
-                res.ok().and_then(|vs| {
-                    let new_id = find_newer_version(&sel, &vs)?;
-                    Some((sel, new_id))
-                })
-            })
-        });
+        let v = selected_version.get();
         async move {
-            match diff_pair {
-                Some((old_id, new_id)) => Some(fetch_diff(d, t, old_id, new_id).await),
+            match v {
+                Some(commit_id) => Some(fetch_diff(d, t, commit_id).await),
                 None => None,
             }
         }

@@ -28,7 +28,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 web::get().to(providers::document_version_detail),
             )
             .route(
-                "/{domain}/document/{tracking_id}/diff/{old_commit_id}/{new_commit_id}",
+                "/{domain}/document/{tracking_id}/versions/{commit_id}/diff",
                 web::get().to(providers::document_diff),
             ),
     )

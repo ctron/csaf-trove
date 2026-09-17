@@ -228,13 +228,12 @@ impl Storage {
         }))
     }
 
-    /// Computes a structured diff between two versions of a document.
+    /// Computes a structured diff between a document version and its next newer version.
     pub fn diff_document_versions(
         &self,
         domain: &str,
         tracking_id: &str,
-        old_commit_id: &str,
-        new_commit_id: &str,
+        commit_id: &str,
     ) -> Result<Option<Vec<DiffLineInfo>>> {
         let repo_path = self.repo_path(domain);
         if !repo_path.exists() {
@@ -243,7 +242,17 @@ impl Storage {
         let Some(url) = documents::document_url(&self.results_dir, domain, tracking_id)? else {
             return Ok(None);
         };
-        git_repo::diff_document_versions(&repo_path, &url, old_commit_id, new_commit_id)
+        let Some(versions) = git_repo::document_versions(&repo_path, &url, 50)? else {
+            return Ok(None);
+        };
+        let Some(pos) = versions.iter().position(|v| v.commit_id == commit_id) else {
+            return Ok(None);
+        };
+        if pos == 0 {
+            return Ok(None);
+        }
+        let new_commit_id = &versions[pos - 1].commit_id;
+        git_repo::diff_document_versions(&repo_path, &url, commit_id, new_commit_id)
     }
 
     /// Reads a historical version of a document from git and extracts its metadata.

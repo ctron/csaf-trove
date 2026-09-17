@@ -173,15 +173,15 @@ pub async fn document_version_detail(
     Ok(HttpResponse::Ok().json(doc))
 }
 
-/// Returns a structured diff between two versions of a document.
+/// Returns a structured diff between a document version and its next newer version.
 pub async fn document_diff(
     state: web::Data<AppState>,
-    path: web::Path<(String, String, String, String)>,
+    path: web::Path<(String, String, String)>,
 ) -> Result<HttpResponse, ApiError> {
-    let (domain, tracking_id, old_commit_id, new_commit_id) = path.into_inner();
+    let (domain, tracking_id, commit_id) = path.into_inner();
     let diff = state
         .storage
-        .diff_document_versions(&domain, &tracking_id, &old_commit_id, &new_commit_id)?
+        .diff_document_versions(&domain, &tracking_id, &commit_id)?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(diff))
 }
