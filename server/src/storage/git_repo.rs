@@ -5,6 +5,8 @@ use git2::{Oid, Repository, Signature, Tree};
 use serde::Serialize;
 use walkdir::WalkDir;
 
+use crate::models::result::{DiffLineInfo, DiffTag};
+
 /// Opens an existing bare repo or initializes a new one.
 pub fn init_bare(path: &Path) -> Result<Repository> {
     if path.exists() {
@@ -224,43 +226,65 @@ pub fn read_document_blob(
     Ok(Some((blob.content().to_vec(), commit.time().seconds())))
 }
 
+/// Computes a structured line diff between two versions of a document.
+///
+/// Both blobs are pretty-printed as JSON to normalize formatting. If JSON
+/// parsing fails for either blob, the raw UTF-8 content is used instead.
+pub fn diff_document_versions(
+    repo_path: &Path,
+    url: &str,
+    old_commit_id: &str,
+    new_commit_id: &str,
+) -> Result<Option<Vec<DiffLineInfo>>> {
+    let old = read_document_blob(repo_path, url, old_commit_id)?;
+    let new = read_document_blob(repo_path, url, new_commit_id)?;
+
+    let (Some((old_blob, _)), Some((new_blob, _))) = (old, new) else {
+        return Ok(None);
+    };
+
+    let old_text = pretty_print_or_raw(&old_blob);
+    let new_text = pretty_print_or_raw(&new_blob);
+
+    let diff = similar::TextDiff::from_lines(&old_text, &new_text);
+
+    let lines = diff
+        .iter_all_changes()
+        .map(|change| {
+            let tag = match change.tag() {
+                similar::ChangeTag::Equal => DiffTag::Equal,
+                similar::ChangeTag::Insert => DiffTag::Insert,
+                similar::ChangeTag::Delete => DiffTag::Delete,
+            };
+            DiffLineInfo {
+                tag,
+                content: change.value().trim_end_matches('\n').to_string(),
+            }
+        })
+        .collect();
+
+    Ok(Some(lines))
+}
+
+/// Attempts to parse bytes as JSON and pretty-print; falls back to raw UTF-8.
+fn pretty_print_or_raw(blob: &[u8]) -> String {
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(blob) {
+        serde_json::to_string_pretty(&value)
+            .unwrap_or_else(|_| String::from_utf8_lossy(blob).into_owned())
+    } else {
+        String::from_utf8_lossy(blob).into_owned()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
 
-    struct TestDir(PathBuf);
-
-    impl TestDir {
-        fn new() -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("csaf-trove-test-{}", std::process::id()))
-                .join(format!(
-                    "{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-                ));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
     /// Creates a bare repo with a worktree, commits files, and pushes.
-    fn create_test_repo(files: &[(&str, &[u8])]) -> (TestDir, PathBuf) {
-        let dir = TestDir::new();
+    fn create_test_repo(files: &[(&str, &[u8])]) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
         let bare_path = dir.path().join("repo.git");
         let work_path = dir.path().join("work");
 
@@ -416,6 +440,87 @@ mod tests {
         assert_eq!(
             blob_count, 4,
             "HEAD tree must contain all 3 originals + 1 new file"
+        );
+    }
+
+    /// Creates a second commit by modifying a file in the existing worktree.
+    fn add_commit(work_path: &Path, file: &str, content: &[u8], msg: &str) {
+        let full = work_path.join(file);
+        fs::write(&full, content).unwrap();
+
+        let repo = Repository::open(work_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("test", "test@test").unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&parent])
+            .unwrap();
+
+        push_to_bare(&repo).unwrap();
+    }
+
+    #[test]
+    fn diff_document_versions_detects_changes() {
+        let file_path =
+            "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let v1 = br#"{"document":{"title":"Advisory v1","category":"csaf_vex"}}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let bare_path = dir.path().join("repo.git");
+        let work_path = dir.path().join("work");
+
+        Repository::init_bare(&bare_path).unwrap();
+        let repo = Repository::init(&work_path).unwrap();
+        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
+
+        let full = work_path.join(file_path);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(&full, v1).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("test", "test@test").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "v1", &tree, &[])
+            .unwrap();
+        push_to_bare(&repo).unwrap();
+
+        let v2 = br#"{"document":{"title":"Advisory v2","category":"csaf_vex"}}"#;
+        add_commit(&work_path, file_path, v2, "v2");
+
+        let url =
+            "https://security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
+        let versions = document_versions(&bare_path, url, 50).unwrap().unwrap();
+        assert_eq!(versions.len(), 2);
+
+        let old_id = &versions[1].commit_id;
+        let new_id = &versions[0].commit_id;
+
+        let diff = diff_document_versions(&bare_path, url, old_id, new_id)
+            .unwrap()
+            .unwrap();
+
+        let has_insert = diff.iter().any(|l| matches!(l.tag, DiffTag::Insert));
+        let has_delete = diff.iter().any(|l| matches!(l.tag, DiffTag::Delete));
+        assert!(has_insert, "diff should contain inserted lines");
+        assert!(has_delete, "diff should contain deleted lines");
+
+        let insert_text: String = diff
+            .iter()
+            .filter(|l| matches!(l.tag, DiffTag::Insert))
+            .map(|l| l.content.clone())
+            .collect();
+        assert!(
+            insert_text.contains("Advisory v2"),
+            "inserted text should contain new title"
         );
     }
 

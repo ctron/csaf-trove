@@ -211,6 +211,27 @@ pub struct HistoricalDocument {
     pub timestamp: i64,
 }
 
+/// Tag indicating how a diff line relates to the comparison.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffTag {
+    /// Line is unchanged between versions.
+    Equal,
+    /// Line was added in the newer version.
+    Insert,
+    /// Line was removed from the older version.
+    Delete,
+}
+
+/// A single line in a structured diff between two document versions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffLineInfo {
+    /// Whether this line is unchanged, inserted, or deleted.
+    pub tag: DiffTag,
+    /// The line content (without trailing newline).
+    pub content: String,
+}
+
 /// URL-encodes a path segment so that characters like `/` and `:` are percent-escaped.
 pub fn encode_path_segment(s: &str) -> String {
     js_sys::encode_uri_component(s)

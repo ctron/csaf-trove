@@ -23,6 +23,7 @@ parking_lot = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+similar = { workspace = true }
 sha2 = { workspace = true }
 static-files = { workspace = true }
 thiserror = { workspace = true }
@@ -35,6 +36,9 @@ tracing-subscriber = { workspace = true }
 url = { workspace = true }
 walkdir = { workspace = true }
 walker-common = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [build-dependencies]
 static-files = { workspace = true }

@@ -4,7 +4,8 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
 use crate::models::{
-    DocumentValidation, DocumentVersionInfo, HistoricalDocument, RevisionEntry, encode_path_segment,
+    DiffLineInfo, DiffTag, DocumentValidation, DocumentVersionInfo, HistoricalDocument,
+    RevisionEntry, encode_path_segment,
 };
 
 /// Compares dotted-numeric test IDs (e.g. `6.1.27.5`) segment by segment.
@@ -78,6 +79,36 @@ async fn fetch_historical_document(
     resp.json().await.map_err(|e| e.to_string())
 }
 
+/// Fetches a structured diff between two document versions.
+async fn fetch_diff(
+    domain: String,
+    tracking_id: String,
+    old_commit_id: String,
+    new_commit_id: String,
+) -> Result<Vec<DiffLineInfo>, String> {
+    let resp = gloo_net::http::Request::get(&format!(
+        "/api/providers/{}/document/{tracking_id}/diff/{old_commit_id}/{new_commit_id}",
+        encode_path_segment(&domain)
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if resp.status() == 404 {
+        return Err("Diff not available".to_string());
+    }
+    resp.json().await.map_err(|e| e.to_string())
+}
+
+/// Finds the next newer version's commit ID from the versions list (newest-first).
+fn find_newer_version(commit_id: &str, versions: &[DocumentVersionInfo]) -> Option<String> {
+    let pos = versions.iter().position(|v| v.commit_id == commit_id)?;
+    if pos == 0 {
+        None
+    } else {
+        Some(versions[pos - 1].commit_id.clone())
+    }
+}
+
 /// Formats a Unix timestamp as a human-readable date string.
 fn format_timestamp(ts: i64) -> String {
     chrono::DateTime::from_timestamp(ts, 0)
@@ -117,6 +148,26 @@ pub fn DocumentPage() -> impl IntoView {
         }
     });
 
+    let diff = LocalResource::new(move || {
+        let d = domain();
+        let t = tracking_id();
+        let selected = selected_version.get();
+        let diff_pair = selected.and_then(|sel| {
+            versions.get().and_then(|res| {
+                res.ok().and_then(|vs| {
+                    let new_id = find_newer_version(&sel, &vs)?;
+                    Some((sel, new_id))
+                })
+            })
+        });
+        async move {
+            match diff_pair {
+                Some((old_id, new_id)) => Some(fetch_diff(d, t, old_id, new_id).await),
+                None => None,
+            }
+        }
+    });
+
     view! {
         <div>
             <p><a href={move || format!("/providers/{}", encode_path_segment(&domain()))}>"Back to provider"</a></p>
@@ -141,6 +192,13 @@ pub fn DocumentPage() -> impl IntoView {
                             {move || historical.get().map(|outer| match outer {
                                 Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc /> }.into_any(),
                                 Some(Err(e)) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
+                                None => view! { <span /> }.into_any(),
+                            })}
+                        </Suspense>
+                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading diff..."</p> }>
+                            {move || diff.get().map(|outer| match outer {
+                                Some(Ok(lines)) => view! { <DiffView lines=lines /> }.into_any(),
+                                Some(Err(e)) => view! { <p class="text-danger text-sm py-4">"Diff unavailable: " {e}</p> }.into_any(),
                                 None => view! { <span /> }.into_any(),
                             })}
                         </Suspense>
@@ -240,6 +298,43 @@ fn HistoricalDocumentView(doc: HistoricalDocument) -> impl IntoView {
         </table>
 
         <RevisionHistoryTable entries=doc.revision_history />
+    }
+}
+
+#[component]
+fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
+    let additions = lines
+        .iter()
+        .filter(|l| matches!(l.tag, DiffTag::Insert))
+        .count();
+    let deletions = lines
+        .iter()
+        .filter(|l| matches!(l.tag, DiffTag::Delete))
+        .count();
+
+    view! {
+        <h3>"Changes (compared to next version)"</h3>
+        <p class="text-sm text-muted mb-2">
+            <span class="text-success">"+" {additions.to_string()} " added"</span>
+            " "
+            <span class="text-danger">"-" {deletions.to_string()} " removed"</span>
+        </p>
+        <pre class="bg-surface border border-border rounded-md overflow-x-auto text-xs p-0 mb-6">
+            <code>
+                {lines.into_iter().map(|line| {
+                    let (class, prefix) = match line.tag {
+                        DiffTag::Insert => ("bg-success-subtle text-foreground", "+"),
+                        DiffTag::Delete => ("bg-danger-subtle text-foreground", "-"),
+                        DiffTag::Equal => ("text-foreground", " "),
+                    };
+                    view! {
+                        <div class={format!("px-3 py-0 whitespace-pre {class}")}>
+                            {prefix}{" "}{line.content}
+                        </div>
+                    }
+                }).collect::<Vec<_>>()}
+            </code>
+        </pre>
     }
 }
 
