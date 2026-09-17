@@ -153,19 +153,6 @@ pub fn DocumentPage() -> impl IntoView {
         <div>
             <p><a href={move || format!("/providers/{}", encode_path_segment(&domain()))}>"Back to provider"</a></p>
 
-            <Suspense fallback=|| view! { <span /> }>
-                {move || versions.get().map(|result| match result {
-                    Ok(vs) => view! {
-                        <VersionSelector
-                            versions=vs
-                            selected=selected_version
-                            on_select=set_selected_version
-                        />
-                    }.into_any(),
-                    _ => view! { <span /> }.into_any(),
-                })}
-            </Suspense>
-
             {move || {
                 if selected_version.get().is_some() {
                     view! {
@@ -174,6 +161,18 @@ pub fn DocumentPage() -> impl IntoView {
                                 Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc /> }.into_any(),
                                 Some(Err(e)) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
                                 None => view! { <span /> }.into_any(),
+                            })}
+                        </Suspense>
+                        <Suspense fallback=|| view! { <span /> }>
+                            {move || versions.get().map(|result| match result {
+                                Ok(vs) => view! {
+                                    <VersionSelector
+                                        versions=vs
+                                        selected=selected_version
+                                        on_select=set_selected_version
+                                    />
+                                }.into_any(),
+                                _ => view! { <span /> }.into_any(),
                             })}
                         </Suspense>
                         <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading diff..."</p> }>
@@ -186,6 +185,18 @@ pub fn DocumentPage() -> impl IntoView {
                     }.into_any()
                 } else {
                     view! {
+                        <Suspense fallback=|| view! { <span /> }>
+                            {move || versions.get().map(|result| match result {
+                                Ok(vs) => view! {
+                                    <VersionSelector
+                                        versions=vs
+                                        selected=selected_version
+                                        on_select=set_selected_version
+                                    />
+                                }.into_any(),
+                                _ => view! { <span /> }.into_any(),
+                            })}
+                        </Suspense>
                         <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading..."</p> }>
                             {move || detail.get().map(|result| match result {
                                 Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
@@ -206,7 +217,7 @@ fn VersionSelector(
     on_select: WriteSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
-        <div class="mb-4">
+        <div class="mb-2">
             <label class="text-sm text-muted mr-2">"Version: "</label>
             <select class="bg-surface text-foreground border border-border rounded-md px-3 py-2 text-sm cursor-pointer min-w-[300px]" on:change=move |ev| {
                 use wasm_bindgen::JsCast;

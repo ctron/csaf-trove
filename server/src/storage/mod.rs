@@ -237,18 +237,26 @@ impl Storage {
     ) -> Result<Option<Vec<DiffLineInfo>>> {
         let repo_path = self.repo_path(domain);
         if !repo_path.exists() {
+            tracing::debug!("diff: repo not found for {domain}");
             return Ok(None);
         }
         let Some(url) = documents::document_url(&self.results_dir, domain, tracking_id)? else {
+            tracing::debug!("diff: no URL for {domain}/{tracking_id}");
             return Ok(None);
         };
         let Some(versions) = git_repo::document_versions(&repo_path, &url, 50)? else {
+            tracing::debug!("diff: no versions for {domain}/{tracking_id}");
             return Ok(None);
         };
         let Some(pos) = versions.iter().position(|v| v.commit_id == commit_id) else {
+            tracing::debug!(
+                "diff: commit {commit_id} not in {} versions for {domain}/{tracking_id}",
+                versions.len()
+            );
             return Ok(None);
         };
         if pos == 0 {
+            tracing::debug!("diff: {commit_id} is the latest version, no newer version to diff");
             return Ok(None);
         }
         let new_commit_id = &versions[pos - 1].commit_id;

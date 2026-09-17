@@ -277,7 +277,6 @@ fn pretty_print_or_raw(blob: &[u8]) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
@@ -536,5 +535,77 @@ mod tests {
             versions.is_none(),
             "errata URL should NOT find a document stored by distribution URL"
         );
+    }
+
+    /// Tests the server-side diff resolution: given a single commit ID,
+    /// find the next newer version and compute the diff.
+    #[test]
+    fn diff_resolution_by_single_commit_id() {
+        let file_path =
+            "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_5678.json";
+        let v1 = br#"{"document":{"title":"v1"}}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let bare_path = dir.path().join("repo.git");
+        let work_path = dir.path().join("work");
+
+        Repository::init_bare(&bare_path).unwrap();
+        let repo = Repository::init(&work_path).unwrap();
+        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
+
+        let full = work_path.join(file_path);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(&full, v1).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("test", "test@test").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "v1", &tree, &[])
+            .unwrap();
+        push_to_bare(&repo).unwrap();
+
+        let v2 = br#"{"document":{"title":"v2"}}"#;
+        add_commit(&work_path, file_path, v2, "v2");
+
+        let v3 = br#"{"document":{"title":"v3"}}"#;
+        add_commit(&work_path, file_path, v3, "v3");
+
+        let url =
+            "https://security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_5678.json";
+        let versions = document_versions(&bare_path, url, 50).unwrap().unwrap();
+        assert_eq!(versions.len(), 3);
+        assert!(versions[0].is_latest, "first version should be latest");
+        assert!(!versions[1].is_latest);
+        assert!(!versions[2].is_latest);
+
+        // Simulate Storage::diff_document_versions: pass only the selected
+        // commit_id (v2, the middle version) and resolve the newer version.
+        let selected_commit = &versions[1].commit_id;
+        let pos = versions
+            .iter()
+            .position(|v| v.commit_id == *selected_commit)
+            .expect("commit should be in versions list");
+        assert_ne!(pos, 0, "should not be the latest");
+        let new_commit = &versions[pos - 1].commit_id;
+        let diff =
+            diff_document_versions(&bare_path, url, selected_commit, new_commit)
+                .unwrap()
+                .expect("diff should be available");
+        assert!(
+            diff.iter().any(|l| matches!(l.tag, DiffTag::Insert)),
+            "diff should have insertions"
+        );
+
+        // Latest version (pos == 0) should have no diff.
+        let latest_commit = &versions[0].commit_id;
+        let latest_pos = versions
+            .iter()
+            .position(|v| v.commit_id == *latest_commit)
+            .unwrap();
+        assert_eq!(latest_pos, 0);
     }
 }

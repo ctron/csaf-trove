@@ -549,7 +549,6 @@ fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
