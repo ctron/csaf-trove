@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use git2::{Oid, Repository, Signature, Tree};
 use serde::Serialize;
+use walkdir::WalkDir;
 
 /// Opens an existing bare repo or initializes a new one.
 pub fn init_bare(path: &Path) -> Result<Repository> {
@@ -13,14 +14,29 @@ pub fn init_bare(path: &Path) -> Result<Repository> {
     }
 }
 
-/// Stages all changes in the worktree and commits, then pushes back to the bare repo.
+/// Stages working-directory files into the index and commits, then pushes to the bare repo.
 ///
-/// Returns `false` if nothing changed.
+/// Uses `add_path` per file instead of `add_all` so that existing index entries
+/// (e.g. from a previous `read_tree` in incremental mode) are preserved for files
+/// not present on disk.  Returns `false` if nothing changed.
 pub fn commit_all(repo_path: &Path, worktree_path: &Path, message: &str) -> Result<bool> {
     let repo = Repository::open(worktree_path)?;
     let mut index = repo.index()?;
 
-    index.add_all(["*"], git2::IndexAddOption::DEFAULT, None)?;
+    let git_dir = worktree_path.join(".git");
+    for entry in WalkDir::new(worktree_path)
+        .into_iter()
+        .filter_entry(|e| e.path() != git_dir)
+    {
+        let entry = entry.context("failed to walk worktree")?;
+        if entry.file_type().is_file() {
+            let relative = entry
+                .path()
+                .strip_prefix(worktree_path)
+                .context("file is not under worktree")?;
+            index.add_path(relative)?;
+        }
+    }
     index.write()?;
 
     let tree_oid = index.write_tree()?;
@@ -339,6 +355,68 @@ mod tests {
         assert!(result.is_some(), "should find blob by URL");
         let (blob, _ts) = result.unwrap();
         assert_eq!(blob, content);
+    }
+
+    /// Counts blob entries in a tree recursively.
+    fn count_tree_blobs(repo: &Repository, tree: &Tree) -> usize {
+        let mut count = 0;
+        for entry in tree.iter() {
+            match entry.kind() {
+                Some(git2::ObjectType::Blob) => count += 1,
+                Some(git2::ObjectType::Tree) => {
+                    if let Ok(sub) = repo.find_tree(entry.id()) {
+                        count += count_tree_blobs(repo, &sub);
+                    }
+                }
+                _ => {}
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn commit_all_preserves_existing_index_entries() {
+        let files: &[(&str, &[u8])] = &[
+            ("example.com/advisories/2024/adv-001.json", b"{\"a\":1}"),
+            ("example.com/advisories/2024/adv-002.json", b"{\"a\":2}"),
+            ("example.com/advisories/2025/adv-003.json", b"{\"a\":3}"),
+        ];
+        let (_dir, bare_path) = create_test_repo(files);
+
+        // Set up an incremental-style worktree: index from HEAD, no files on disk.
+        let inc_work = _dir.path().join("incremental");
+        let repo = Repository::init(&inc_work).unwrap();
+        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
+        let mut remote = repo.find_remote("origin").unwrap();
+        remote
+            .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
+            .unwrap();
+
+        let origin_ref = repo.find_reference("refs/remotes/origin/master").unwrap();
+        let origin_commit = origin_ref.peel_to_commit().unwrap();
+        let mut index = repo.index().unwrap();
+        index.read_tree(&origin_commit.tree().unwrap()).unwrap();
+        index.write().unwrap();
+        repo.branch("master", &origin_commit, false).unwrap();
+        repo.set_head("refs/heads/master").unwrap();
+
+        // Add one new file to the working directory (simulating incremental sync).
+        let new_file = inc_work.join("example.com/advisories/2025/adv-004.json");
+        fs::create_dir_all(new_file.parent().unwrap()).unwrap();
+        fs::write(&new_file, b"{\"a\":4}").unwrap();
+
+        // commit_all must preserve the 3 existing index entries.
+        let changed = commit_all(&bare_path, &inc_work, "incremental").unwrap();
+        assert!(changed, "should detect changes");
+
+        // Verify the bare repo's HEAD tree has all 4 files.
+        let bare = Repository::open_bare(&bare_path).unwrap();
+        let head_tree = bare.head().unwrap().peel_to_tree().unwrap();
+        let blob_count = count_tree_blobs(&bare, &head_tree);
+        assert_eq!(
+            blob_count, 4,
+            "HEAD tree must contain all 3 originals + 1 new file"
+        );
     }
 
     #[test]
