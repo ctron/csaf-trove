@@ -228,8 +228,9 @@ pub fn read_document_blob(
 
 /// Computes a structured line diff between two versions of a document.
 ///
-/// Both blobs are pretty-printed as JSON to normalize formatting. If JSON
-/// parsing fails for either blob, the raw UTF-8 content is used instead.
+/// Both blobs are pretty-printed as JSON to normalize formatting. If the
+/// pretty-printed content is identical (formatting-only change), falls back
+/// to diffing the raw content so the actual differences remain visible.
 pub fn diff_document_versions(
     repo_path: &Path,
     url: &str,
@@ -243,8 +244,16 @@ pub fn diff_document_versions(
         return Ok(None);
     };
 
-    let old_text = pretty_print_or_raw(&old_blob);
-    let new_text = pretty_print_or_raw(&new_blob);
+    let old_pretty = pretty_print_or_raw(&old_blob);
+    let new_pretty = pretty_print_or_raw(&new_blob);
+
+    let (old_text, new_text) = if old_pretty == new_pretty {
+        let old_raw = String::from_utf8_lossy(&old_blob).into_owned();
+        let new_raw = String::from_utf8_lossy(&new_blob).into_owned();
+        (old_raw, new_raw)
+    } else {
+        (old_pretty, new_pretty)
+    };
 
     let diff = similar::TextDiff::from_lines(&old_text, &new_text);
 
@@ -591,10 +600,9 @@ mod tests {
             .expect("commit should be in versions list");
         assert_ne!(pos, 0, "should not be the latest");
         let new_commit = &versions[pos - 1].commit_id;
-        let diff =
-            diff_document_versions(&bare_path, url, selected_commit, new_commit)
-                .unwrap()
-                .expect("diff should be available");
+        let diff = diff_document_versions(&bare_path, url, selected_commit, new_commit)
+            .unwrap()
+            .expect("diff should be available");
         assert!(
             diff.iter().any(|l| matches!(l.tag, DiffTag::Insert)),
             "diff should have insertions"
@@ -607,5 +615,60 @@ mod tests {
             .position(|v| v.commit_id == *latest_commit)
             .unwrap();
         assert_eq!(latest_pos, 0);
+    }
+
+    /// Formatting-only changes (different whitespace, same JSON semantics)
+    /// should still produce a visible diff by falling back to raw content.
+    #[test]
+    fn diff_falls_back_to_raw_for_formatting_only_changes() {
+        let file_path = "example.com/advisories/2024/fmt.json";
+        let compact = br#"{"document":{"title":"hello"}}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let bare_path = dir.path().join("repo.git");
+        let work_path = dir.path().join("work");
+
+        Repository::init_bare(&bare_path).unwrap();
+        let repo = Repository::init(&work_path).unwrap();
+        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
+
+        let full = work_path.join(file_path);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(&full, compact).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = Signature::now("test", "test@test").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "compact", &tree, &[])
+            .unwrap();
+        push_to_bare(&repo).unwrap();
+
+        let pretty = b"{\n  \"document\": {\n    \"title\": \"hello\"\n  }\n}\n";
+        add_commit(&work_path, file_path, pretty, "pretty");
+
+        let url = "https://example.com/advisories/2024/fmt.json";
+        let versions = document_versions(&bare_path, url, 50).unwrap().unwrap();
+        assert_eq!(versions.len(), 2, "both commits should appear as versions");
+
+        let diff = diff_document_versions(
+            &bare_path,
+            url,
+            &versions[1].commit_id,
+            &versions[0].commit_id,
+        )
+        .unwrap()
+        .expect("diff should be available");
+
+        let has_changes = diff
+            .iter()
+            .any(|l| matches!(l.tag, DiffTag::Insert | DiffTag::Delete));
+        assert!(
+            has_changes,
+            "formatting-only change should still produce a visible diff"
+        );
     }
 }
