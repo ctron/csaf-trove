@@ -262,20 +262,22 @@ fn DocumentsTable(domain: String) -> impl IntoView {
     });
 
     view! {
-        <Tabs>
-            <Tab
-                active=Signal::derive(move || status_filter.get().is_none())
-                on_click=Callback::new(move |_| { set_status_param.set(None); set_offset_param.set(None); })
-            >"All"</Tab>
-            <Tab
-                active=Signal::derive(move || status_filter.get().as_deref() == Some("failing"))
-                on_click=Callback::new(move |_| { set_status_param.set(Some("failing".into())); set_offset_param.set(None); })
-            >"Failing"</Tab>
-            <Tab
-                active=Signal::derive(move || status_filter.get().as_deref() == Some("passing"))
-                on_click=Callback::new(move |_| { set_status_param.set(Some("passing".into())); set_offset_param.set(None); })
-            >"Passing"</Tab>
-        </Tabs>
+        <div class="mt-6 md:flex md:items-center md:justify-between">
+            <Tabs>
+                <Tab
+                    active=Signal::derive(move || status_filter.get().is_none())
+                    on_click=Callback::new(move |_| { set_status_param.set(None); set_offset_param.set(None); })
+                >"All"</Tab>
+                <Tab
+                    active=Signal::derive(move || status_filter.get().as_deref() == Some("failing"))
+                    on_click=Callback::new(move |_| { set_status_param.set(Some("failing".into())); set_offset_param.set(None); })
+                >"Failing"</Tab>
+                <Tab
+                    active=Signal::derive(move || status_filter.get().as_deref() == Some("passing"))
+                    on_click=Callback::new(move |_| { set_status_param.set(Some("passing".into())); set_offset_param.set(None); })
+                >"Passing"</Tab>
+            </Tabs>
+        </div>
 
         <Transition fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading documents..."</p> }>
             {move || docs.get().map(|result| match result {

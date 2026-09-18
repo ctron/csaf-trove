@@ -4,7 +4,7 @@ use leptos::prelude::*;
 #[component]
 pub fn Tabs(children: Children) -> impl IntoView {
     view! {
-        <div class="inline-flex overflow-hidden bg-white border divide-x rounded-lg dark:bg-gray-900 dark:border-gray-700 dark:divide-gray-700 mb-4">
+        <div class="inline-flex overflow-hidden bg-white border border-gray-200 divide-x divide-gray-200 rounded-lg dark:bg-gray-900 rtl:flex-row-reverse dark:border-gray-700 dark:divide-gray-700 mb-4">
             {children()}
         </div>
     }
@@ -22,9 +22,9 @@ pub fn Tab(
 ) -> impl IntoView {
     let class = move || {
         if active.get() {
-            "px-5 py-2 text-xs font-medium text-gray-600 transition-colors duration-200 sm:text-sm dark:text-gray-300 bg-gray-100 dark:bg-gray-800 cursor-pointer focus:outline-none"
+            "px-5 py-2 text-xs font-medium text-gray-600 transition-colors duration-200 bg-gray-100 sm:text-sm dark:bg-gray-800 dark:text-gray-300 cursor-pointer"
         } else {
-            "px-5 py-2 text-xs font-medium text-gray-600 transition-colors duration-200 sm:text-sm dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer focus:outline-none"
+            "px-5 py-2 text-xs font-medium text-gray-600 transition-colors duration-200 sm:text-sm dark:hover:bg-gray-800 dark:text-gray-300 hover:bg-gray-100 cursor-pointer"
         }
     };
 

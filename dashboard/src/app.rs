@@ -16,6 +16,7 @@ use crate::{
 pub fn App() -> impl IntoView {
     view! {
         <Router>
+            <div class="min-h-screen bg-gray-50 dark:bg-gray-900">
             <nav class="bg-white shadow dark:bg-gray-800">
                 <div class="container flex items-center justify-between px-6 py-4 mx-auto">
                     <a href="/" class="text-xl font-bold text-gray-800 dark:text-white no-underline hover:no-underline">"csaf-trove"</a>
@@ -42,6 +43,7 @@ pub fn App() -> impl IntoView {
                     "csaf-trove v" {env!("CARGO_PKG_VERSION")}
                 </div>
             </footer>
+            </div>
         </Router>
     }
 }
