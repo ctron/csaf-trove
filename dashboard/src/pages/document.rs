@@ -3,6 +3,13 @@ use std::cmp::Ordering;
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
+use crate::components::{
+    alert::{Alert, AlertVariant},
+    badge::{Badge, BadgeVariant},
+    breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
+    section_heading::{SectionHeading, SubHeading},
+    table::{Table, Tbody, Td, Th, Thead},
+};
 use crate::models::{
     DiffLineInfo, DiffTag, DocumentValidation, DocumentVersionInfo, HistoricalDocument,
     RevisionEntry, encode_path_segment,
@@ -151,15 +158,18 @@ pub fn DocumentPage() -> impl IntoView {
 
     view! {
         <div>
-            <p><a href={move || format!("/providers/{}", encode_path_segment(&domain()))}>"Back to provider"</a></p>
+            <Breadcrumb>
+                <BreadcrumbItem href={move || format!("/providers/{}", encode_path_segment(&domain()))}>"Provider"</BreadcrumbItem>
+                <BreadcrumbCurrent>{move || tracking_id()}</BreadcrumbCurrent>
+            </Breadcrumb>
 
             {move || {
                 if selected_version.get().is_some() {
                     view! {
-                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading version..."</p> }>
+                        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading version..."</p> }>
                             {move || historical.get().map(|outer| match outer {
                                 Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc /> }.into_any(),
-                                Some(Err(e)) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
+                                Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                                 None => view! { <span /> }.into_any(),
                             })}
                         </Suspense>
@@ -175,20 +185,20 @@ pub fn DocumentPage() -> impl IntoView {
                                 _ => view! { <span /> }.into_any(),
                             })}
                         </Suspense>
-                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading diff..."</p> }>
+                        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading diff..."</p> }>
                             {move || diff.get().map(|outer| match outer {
                                 Some(Ok(lines)) => view! { <DiffView lines=lines /> }.into_any(),
-                                Some(Err(e)) => view! { <p class="text-danger text-sm py-4">"Diff unavailable: " {e}</p> }.into_any(),
+                                Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-sm py-4">"Diff unavailable: " {e}</p> }.into_any(),
                                 None => view! { <span /> }.into_any(),
                             })}
                         </Suspense>
                     }.into_any()
                 } else {
                     view! {
-                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading..."</p> }>
+                        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                             {move || detail.get().map(|result| match result {
                                 Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
-                                Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
+                                Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                             })}
                         </Suspense>
                         <Suspense fallback=|| view! { <span /> }>
@@ -218,17 +228,20 @@ fn VersionSelector(
 ) -> impl IntoView {
     view! {
         <div class="mb-2">
-            <label class="text-sm text-muted mr-2">"Version: "</label>
-            <select class="bg-surface text-foreground border border-border rounded-md px-3 py-2 text-sm cursor-pointer min-w-[300px]" on:change=move |ev| {
-                use wasm_bindgen::JsCast;
-                let target = ev.target().unwrap();
-                let val = target.unchecked_ref::<web_sys::HtmlSelectElement>().value();
-                if val == "latest" {
-                    on_select.set(None);
-                } else {
-                    on_select.set(Some(val));
+            <label class="text-sm text-gray-500 dark:text-gray-400 mr-2">"Version: "</label>
+            <select
+                class="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm cursor-pointer min-w-[300px]"
+                on:change=move |ev| {
+                    use wasm_bindgen::JsCast;
+                    let target = ev.target().unwrap();
+                    let val = target.unchecked_ref::<web_sys::HtmlSelectElement>().value();
+                    if val == "latest" {
+                        on_select.set(None);
+                    } else {
+                        on_select.set(Some(val));
+                    }
                 }
-            }>
+            >
                 {versions.into_iter().map(|v| {
                     let label = if v.is_latest {
                         format!("{} (current)", format_timestamp(v.timestamp))
@@ -261,33 +274,33 @@ fn VersionSelector(
 #[component]
 fn HistoricalDocumentView(doc: HistoricalDocument) -> impl IntoView {
     view! {
-        <h2>{doc.tracking_id.clone()}</h2>
+        <SectionHeading>{doc.tracking_id.clone()}</SectionHeading>
 
-        <p class="bg-warning-subtle text-warning rounded-md px-4 py-2 text-sm mb-4">
+        <Alert variant=AlertVariant::Warning>
             "Showing version from " {format_timestamp(doc.timestamp)}
             ". Validation results are only available for the current version."
-        </p>
+        </Alert>
 
-        <h3>"Document"</h3>
-        <table class="mb-6">
-            <tbody>
+        <SubHeading>"Document"</SubHeading>
+        <Table>
+            <Tbody>
                 <MetadataRow label="Title" value=Some(doc.title.clone()) />
                 <MetadataRow label="Category" value=doc.category.clone() />
                 <MetadataRow label="Publisher" value=doc.publisher_name.clone() />
                 <MetadataRow label="Severity" value=doc.aggregate_severity.clone() />
                 <MetadataRow label="CSAF Version" value=doc.csaf_version.clone() />
-            </tbody>
-        </table>
+            </Tbody>
+        </Table>
 
-        <h3>"Tracking"</h3>
-        <table class="mb-6">
-            <tbody>
+        <SubHeading>"Tracking"</SubHeading>
+        <Table>
+            <Tbody>
                 <MetadataRow label="Status" value=doc.status.clone() />
                 <MetadataRow label="Version" value=doc.revision.clone() />
                 <MetadataRow label="Initial Release" value=doc.initial_release_date.clone() />
                 <MetadataRow label="Current Release" value=doc.current_release_date.clone() />
-            </tbody>
-        </table>
+            </Tbody>
+        </Table>
 
         <RevisionHistoryTable entries=doc.revision_history />
     }
@@ -305,19 +318,19 @@ fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
         .count();
 
     view! {
-        <h3>"Changes (compared to next version)"</h3>
-        <p class="text-sm text-muted mb-2">
-            <span class="text-success">"+" {additions.to_string()} " added"</span>
+        <SubHeading>"Changes (compared to next version)"</SubHeading>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+            <span class="text-emerald-500">"+" {additions.to_string()} " added"</span>
             " "
-            <span class="text-danger">"-" {deletions.to_string()} " removed"</span>
+            <span class="text-red-500">"-" {deletions.to_string()} " removed"</span>
         </p>
-        <pre class="bg-surface border border-border rounded-md overflow-x-auto text-xs p-0 mb-6">
+        <pre class="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto text-xs p-0 mb-6">
             <code>
                 {lines.into_iter().map(|line| {
                     let (class, prefix) = match line.tag {
-                        DiffTag::Insert => ("bg-success-subtle text-foreground", "+"),
-                        DiffTag::Delete => ("bg-danger-subtle text-foreground", "-"),
-                        DiffTag::Equal => ("text-foreground", " "),
+                        DiffTag::Insert => ("bg-emerald-50 dark:bg-emerald-900/20 text-gray-800 dark:text-gray-200", "+"),
+                        DiffTag::Delete => ("bg-red-50 dark:bg-red-900/20 text-gray-800 dark:text-gray-200", "-"),
+                        DiffTag::Equal => ("text-gray-800 dark:text-gray-200", " "),
                     };
                     view! {
                         <div class={format!("px-3 py-0 whitespace-pre {class}")}>
@@ -332,19 +345,12 @@ fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
 
 #[component]
 fn DocumentDetailView(doc: DocumentValidation) -> impl IntoView {
-    let sig_class = if doc.signature_error.is_some() {
-        "badge badge-danger"
+    let (sig_variant, sig_label) = if doc.signature_error.is_some() {
+        (BadgeVariant::Danger, "Invalid")
     } else if doc.signature_present {
-        "badge badge-success"
+        (BadgeVariant::Success, "Valid")
     } else {
-        "badge badge-warning"
-    };
-    let sig_label = if doc.signature_error.is_some() {
-        "Invalid"
-    } else if doc.signature_present {
-        "Valid"
-    } else {
-        "Missing"
+        (BadgeVariant::Warning, "Missing")
     };
 
     let sig_error = doc.signature_error.clone();
@@ -352,41 +358,41 @@ fn DocumentDetailView(doc: DocumentValidation) -> impl IntoView {
     let url_label = doc.url.clone();
 
     view! {
-        <h2>{doc.tracking_id.clone()}</h2>
+        <SectionHeading>{doc.tracking_id.clone()}</SectionHeading>
 
-        <h3>"Document"</h3>
-        <table class="mb-6">
-            <tbody>
+        <SubHeading>"Document"</SubHeading>
+        <Table>
+            <Tbody>
                 <MetadataRow label="Title" value=Some(doc.title.clone()) />
                 <MetadataRow label="Category" value=doc.category.clone() />
                 <MetadataRow label="Publisher" value=doc.publisher_name.clone() />
                 <MetadataRow label="Severity" value=doc.aggregate_severity.clone() />
                 <MetadataRow label="CSAF Version" value=doc.csaf_version.clone() />
                 <tr>
-                    <td class="text-xs font-semibold uppercase text-muted w-48">"URL"</td>
-                    <td><a href={url_href} target="_blank">{url_label}</a></td>
+                    <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"URL"</Td>
+                    <Td><a href={url_href} target="_blank">{url_label}</a></Td>
                 </tr>
                 <tr>
-                    <td class="text-xs font-semibold uppercase text-muted w-48">"Signature"</td>
-                    <td>
-                        <span class={sig_class}>{sig_label}</span>
+                    <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"Signature"</Td>
+                    <Td>
+                        <Badge variant=sig_variant>{sig_label}</Badge>
                         {sig_error.map(|e| view! {
-                            <span class="text-sm text-danger ml-2">{e}</span>
+                            <span class="text-sm text-red-500 dark:text-red-400 ml-2">{e}</span>
                         })}
-                    </td>
+                    </Td>
                 </tr>
-            </tbody>
-        </table>
+            </Tbody>
+        </Table>
 
-        <h3>"Tracking"</h3>
-        <table class="mb-6">
-            <tbody>
+        <SubHeading>"Tracking"</SubHeading>
+        <Table>
+            <Tbody>
                 <MetadataRow label="Status" value=doc.status.clone() />
                 <MetadataRow label="Version" value=doc.revision.clone() />
                 <MetadataRow label="Initial Release" value=doc.initial_release_date.clone() />
                 <MetadataRow label="Current Release" value=doc.current_release_date.clone() />
-            </tbody>
-        </table>
+            </Tbody>
+        </Table>
 
         <RevisionHistoryTable entries=doc.revision_history />
 
@@ -404,54 +410,56 @@ fn ProfileSection(
     match detail {
         None => view! { <div /> }.into_any(),
         Some(d) => {
-            let (badge_class, badge_label) = if d.passed {
-                ("badge badge-success", "Pass".to_string())
+            let (variant, badge_label) = if d.passed {
+                (BadgeVariant::Success, "Pass".to_string())
             } else if d.error_count > 0 {
-                ("badge badge-danger", format!("{} errors", d.error_count))
+                (BadgeVariant::Danger, format!("{} errors", d.error_count))
             } else if d.warning_count > 0 {
                 (
-                    "badge badge-warning",
+                    BadgeVariant::Warning,
                     format!("{} warnings", d.warning_count),
                 )
             } else {
-                ("badge badge-info", format!("{} info", d.info_count))
+                (BadgeVariant::Info, format!("{} info", d.info_count))
             };
 
             view! {
-                <h3>{title}" "<span class={badge_class}>{badge_label}</span></h3>
+                <h3 class="text-base font-medium text-gray-800 dark:text-white mt-6 mb-3">
+                    {title}" "<Badge variant=variant>{badge_label}</Badge>
+                </h3>
                 {if d.failing_tests.is_empty() {
                     view! { <div /> }.into_any()
                 } else {
                     let mut tests = d.failing_tests;
                     tests.sort_by(|a, b| numeric_test_id_cmp(&a.test_id, &b.test_id));
                     view! {
-                        <table>
-                            <thead>
+                        <Table>
+                            <Thead>
                                 <tr>
-                                    <th>"Severity"</th>
-                                    <th>"Test ID"</th>
-                                    <th>"Message"</th>
+                                    <Th>"Severity"</Th>
+                                    <Th>"Test ID"</Th>
+                                    <Th>"Message"</Th>
                                 </tr>
-                            </thead>
-                            <tbody>
+                            </Thead>
+                            <Tbody>
                                 {tests.into_iter().map(|f| {
-                                    let sev_class = match f.severity.as_str() {
-                                        "error" => "badge badge-danger",
-                                        "warning" => "badge badge-warning",
-                                        "info" => "badge badge-info",
-                                        _ => "badge",
+                                    let variant = match f.severity.as_str() {
+                                        "error" => BadgeVariant::Danger,
+                                        "warning" => BadgeVariant::Warning,
+                                        "info" => BadgeVariant::Info,
+                                        _ => BadgeVariant::Neutral,
                                     };
                                     let sev_label = f.severity.clone();
                                     view! {
                                         <tr>
-                                            <td><span class={sev_class}>{sev_label}</span></td>
-                                            <td>{f.test_id}</td>
-                                            <td>{f.message}</td>
+                                            <Td><Badge variant=variant>{sev_label}</Badge></Td>
+                                            <Td>{f.test_id}</Td>
+                                            <Td>{f.message}</Td>
                                         </tr>
                                     }
                                 }).collect::<Vec<_>>()}
-                            </tbody>
-                        </table>
+                            </Tbody>
+                        </Table>
                     }.into_any()
                 }}
             }
@@ -465,8 +473,8 @@ fn MetadataRow(label: &'static str, value: Option<String>) -> impl IntoView {
     value.map(|v| {
         view! {
             <tr>
-                <td class="text-xs font-semibold uppercase text-muted w-48">{label}</td>
-                <td>{v}</td>
+                <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">{label}</Td>
+                <Td>{v}</Td>
             </tr>
         }
     })
@@ -478,25 +486,25 @@ fn RevisionHistoryTable(entries: Vec<RevisionEntry>) -> impl IntoView {
         return view! { <div /> }.into_any();
     }
     view! {
-        <h3>"Revision History"</h3>
-        <table class="mb-6">
-            <thead>
+        <SubHeading>"Revision History"</SubHeading>
+        <Table>
+            <Thead>
                 <tr>
-                    <th>"Version"</th>
-                    <th>"Date"</th>
-                    <th>"Summary"</th>
+                    <Th>"Version"</Th>
+                    <Th>"Date"</Th>
+                    <Th>"Summary"</Th>
                 </tr>
-            </thead>
-            <tbody>
+            </Thead>
+            <Tbody>
                 {entries.into_iter().map(|r| view! {
                     <tr>
-                        <td>{r.number}</td>
-                        <td>{r.date}</td>
-                        <td>{r.summary}</td>
+                        <Td>{r.number}</Td>
+                        <Td>{r.date}</Td>
+                        <Td>{r.summary}</Td>
                     </tr>
                 }).collect::<Vec<_>>()}
-            </tbody>
-        </table>
+            </Tbody>
+        </Table>
     }
     .into_any()
 }

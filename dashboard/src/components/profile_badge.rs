@@ -1,21 +1,23 @@
 use leptos::prelude::*;
 
+use crate::components::badge::{Badge, BadgeVariant};
 use crate::models::ProfileSummary;
 
+/// Displays a provider-level profile pass-rate badge.
 #[component]
 pub fn ProfileBadge(profile: Option<ProfileSummary>) -> impl IntoView {
     match profile {
         Some(p) => {
-            let class = if p.pass_rate >= 0.95 {
-                "badge badge-success"
+            let variant = if p.pass_rate >= 0.95 {
+                BadgeVariant::Success
             } else if p.pass_rate >= 0.80 {
-                "badge badge-warning"
+                BadgeVariant::Warning
             } else {
-                "badge badge-danger"
+                BadgeVariant::Danger
             };
             let label = format!("{:.1}%", p.pass_rate * 100.0);
-            view! { <span class={class}>{label}</span> }.into_any()
+            view! { <Badge variant=variant>{label}</Badge> }.into_any()
         }
-        None => view! { <span class="badge">"-"</span> }.into_any(),
+        None => view! { <Badge variant=BadgeVariant::Neutral>"-"</Badge> }.into_any(),
     }
 }

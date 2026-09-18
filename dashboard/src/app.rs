@@ -15,19 +15,19 @@ use crate::{
 pub fn App() -> impl IntoView {
     view! {
         <Router>
-            <header class="border-b border-border py-4">
-                <div class="max-w-[1200px] mx-auto px-6">
-                    <h1 class="text-xl font-semibold">"csaf-trove"</h1>
-                    <nav class="flex gap-4 mt-2 items-center">
-                        <a href="/" class="text-muted text-sm px-2 py-1 rounded-md no-underline hover:text-foreground hover:bg-surface hover:no-underline">"Providers"</a>
-                        <a href="/sync" class="text-muted text-sm px-2 py-1 rounded-md no-underline hover:text-foreground hover:bg-surface hover:no-underline">"Sync Status"</a>
+            <nav class="bg-white shadow dark:bg-gray-800">
+                <div class="container flex items-center justify-between px-6 py-4 mx-auto">
+                    <a href="/" class="text-xl font-bold text-gray-800 dark:text-white no-underline hover:no-underline">"csaf-trove"</a>
+                    <div class="flex items-center gap-x-4">
+                        <a href="/" class="text-gray-600 border-b-2 border-transparent transition-colors duration-300 hover:text-gray-800 hover:border-blue-500 dark:text-gray-300 dark:hover:text-gray-200 no-underline hover:no-underline">"Providers"</a>
+                        <a href="/sync" class="text-gray-600 border-b-2 border-transparent transition-colors duration-300 hover:text-gray-800 hover:border-blue-500 dark:text-gray-300 dark:hover:text-gray-200 no-underline hover:no-underline">"Sync Status"</a>
                         <ThemeToggle />
-                    </nav>
+                    </div>
                 </div>
-            </header>
-            <main class="py-6">
-                <div class="max-w-[1200px] mx-auto px-6">
-                    <Routes fallback=|| view! { <p>"Page not found."</p> }>
+            </nav>
+            <main class="py-8">
+                <div class="container mx-auto px-6">
+                    <Routes fallback=|| view! { <p class="text-gray-500 dark:text-gray-400">"Page not found."</p> }>
                         <Route path=path!("/") view=HomePage />
                         <Route path=path!("/providers/:domain") view=ProviderPage />
                         <Route path=path!("/providers/:domain/documents/:tracking_id") view=DocumentPage />
@@ -35,8 +35,8 @@ pub fn App() -> impl IntoView {
                     </Routes>
                 </div>
             </main>
-            <footer class="border-t border-border py-4 mt-auto">
-                <div class="max-w-[1200px] mx-auto px-6 text-xs text-muted">
+            <footer class="border-t border-gray-200 dark:border-gray-700 py-4 mt-auto">
+                <div class="container mx-auto px-6 text-xs text-gray-500 dark:text-gray-400">
                     "csaf-trove v" {env!("CARGO_PKG_VERSION")}
                 </div>
             </footer>

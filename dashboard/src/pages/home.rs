@@ -1,6 +1,11 @@
 use leptos::prelude::*;
 
-use crate::components::{profile_badge::ProfileBadge, signature_badge::SignatureBadge};
+use crate::components::{
+    profile_badge::ProfileBadge,
+    section_heading::SectionHeading,
+    signature_badge::SignatureBadge,
+    table::{Table, Tbody, Td, Th, Thead},
+};
 use crate::models::{ProviderSummary, encode_path_segment};
 
 async fn fetch_providers() -> Result<Vec<ProviderSummary>, String> {
@@ -17,11 +22,11 @@ pub fn HomePage() -> impl IntoView {
 
     view! {
         <div>
-            <h2>"CSAF Providers"</h2>
-            <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading providers..."</p> }>
+            <SectionHeading>"CSAF Providers"</SectionHeading>
+            <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading providers..."</p> }>
                 {move || providers.get().map(|result| match result {
                     Ok(list) => view! { <ProviderTable providers=list /> }.into_any(),
-                    Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
+                    Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                 })}
             </Suspense>
         </div>
@@ -31,19 +36,19 @@ pub fn HomePage() -> impl IntoView {
 #[component]
 fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
     view! {
-        <table>
-            <thead>
+        <Table>
+            <Thead>
                 <tr>
-                    <th>"Provider"</th>
-                    <th>"Documents"</th>
-                    <th>"Basic"</th>
-                    <th>"Extended"</th>
-                    <th>"Full"</th>
-                    <th>"Signatures"</th>
-                    <th>"Last Validated"</th>
+                    <Th>"Provider"</Th>
+                    <Th>"Documents"</Th>
+                    <Th>"Basic"</Th>
+                    <Th>"Extended"</Th>
+                    <Th>"Full"</Th>
+                    <Th>"Signatures"</Th>
+                    <Th>"Last Validated"</Th>
                 </tr>
-            </thead>
-            <tbody>
+            </Thead>
+            <Tbody>
                 {providers.into_iter().map(|p| {
                     let domain = p.provider.clone();
                     let href = format!("/providers/{}", encode_path_segment(&domain));
@@ -51,17 +56,17 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                     let validated_at = p.validated_at.clone();
                     view! {
                         <tr>
-                            <td><a href={href}>{display_domain}</a></td>
-                            <td>{p.document_count}</td>
-                            <td><ProfileBadge profile=p.profiles.basic /></td>
-                            <td><ProfileBadge profile=p.profiles.extended /></td>
-                            <td><ProfileBadge profile=p.profiles.full /></td>
-                            <td><SignatureBadge signatures=p.signatures /></td>
-                            <td>{validated_at}</td>
+                            <Td><a href={href}>{display_domain}</a></Td>
+                            <Td>{p.document_count}</Td>
+                            <Td><ProfileBadge profile=p.profiles.basic /></Td>
+                            <Td><ProfileBadge profile=p.profiles.extended /></Td>
+                            <Td><ProfileBadge profile=p.profiles.full /></Td>
+                            <Td><SignatureBadge signatures=p.signatures /></Td>
+                            <Td>{validated_at}</Td>
                         </tr>
                     }
                 }).collect::<Vec<_>>()}
-            </tbody>
-        </table>
+            </Tbody>
+        </Table>
     }
 }

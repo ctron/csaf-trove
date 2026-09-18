@@ -1,10 +1,17 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::components::{profile_badge::ProfileBadge, signature_badge::SignatureBadge};
-use crate::models::{
-    DocumentProfileDetail, PaginatedDocuments, ProviderDetail, encode_path_segment,
+use crate::components::{
+    badge::{Badge, BadgeVariant},
+    doc_profile_badge::DocProfileBadge,
+    pagination::Pagination,
+    profile_badge::ProfileBadge,
+    section_heading::{SectionHeading, SubHeading},
+    signature_badge::SignatureBadge,
+    table::{Table, Tbody, Td, Th, Thead},
+    tabs::{Tab, Tabs},
 };
+use crate::models::{PaginatedDocuments, ProviderDetail, encode_path_segment};
 
 async fn fetch_provider(domain: String) -> Result<ProviderDetail, String> {
     let resp =
@@ -27,11 +34,11 @@ pub fn ProviderPage() -> impl IntoView {
 
     view! {
         <div>
-            <h2>{move || format!("Provider: {}", domain())}</h2>
-            <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading..."</p> }>
+            <SectionHeading>{move || format!("Provider: {}", domain())}</SectionHeading>
+            <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                 {move || detail.get().map(|result| match result {
                     Ok(d) => view! { <ProviderDetailView detail=d /> }.into_any(),
-                    Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
+                    Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                 })}
             </Suspense>
         </div>
@@ -47,7 +54,7 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let domain = summary.provider.clone();
 
     view! {
-        <div class="flex items-center gap-4 text-sm text-muted mb-6">
+        <div class="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400 mb-6">
             <span>{summary.document_count}" documents"</span>
             <span>"\u{00b7}"</span>
             <span>"Basic "<ProfileBadge profile=summary.profiles.basic /></span>
@@ -61,54 +68,54 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
 
         {signatures.map(|sig| view! {
             <div class="flex items-center gap-4 text-sm mb-4">
-                <span class="badge badge-success">{sig.valid}" valid"</span>
-                <span class="badge badge-danger">{sig.invalid}" invalid"</span>
-                <span class="badge badge-warning">{sig.missing}" missing"</span>
+                <Badge variant=BadgeVariant::Success>{sig.valid}" valid"</Badge>
+                <Badge variant=BadgeVariant::Danger>{sig.invalid}" invalid"</Badge>
+                <Badge variant=BadgeVariant::Warning>{sig.missing}" missing"</Badge>
             </div>
         })}
 
-        <h3>"Top Failing Tests"</h3>
-        <table>
-            <thead>
+        <SubHeading>"Top Failing Tests"</SubHeading>
+        <Table>
+            <Thead>
                 <tr>
-                    <th>"Test ID"</th>
-                    <th>"Count"</th>
-                    <th>"Severity"</th>
+                    <Th>"Test ID"</Th>
+                    <Th>"Count"</Th>
+                    <Th>"Severity"</Th>
                 </tr>
-            </thead>
-            <tbody>
+            </Thead>
+            <Tbody>
                 {tests.into_iter().map(|t| {
                     let test_id = t.test_id.clone();
-                    let sev_class = match t.severity.as_str() {
-                        "error" => "badge badge-danger",
-                        "warning" => "badge badge-warning",
-                        "info" => "badge badge-info",
-                        _ => "badge",
+                    let variant = match t.severity.as_str() {
+                        "error" => BadgeVariant::Danger,
+                        "warning" => BadgeVariant::Warning,
+                        "info" => BadgeVariant::Info,
+                        _ => BadgeVariant::Neutral,
                     };
                     let sev_label = t.severity.clone();
                     view! {
                         <tr>
-                            <td>{test_id}</td>
-                            <td>{t.count}</td>
-                            <td><span class={sev_class}>{sev_label}</span></td>
+                            <Td>{test_id}</Td>
+                            <Td>{t.count}</Td>
+                            <Td><Badge variant=variant>{sev_label}</Badge></Td>
                         </tr>
                     }
                 }).collect::<Vec<_>>()}
-            </tbody>
-        </table>
+            </Tbody>
+        </Table>
 
         {if !history.is_empty() {
             Some(view! {
-                <h3>"Sync History"</h3>
-                <table>
-                    <thead>
+                <SubHeading>"Sync History"</SubHeading>
+                <Table>
+                    <Thead>
                         <tr>
-                            <th>"Date"</th>
-                            <th>"Documents Changed"</th>
-                            <th>"Message"</th>
+                            <Th>"Date"</Th>
+                            <Th>"Documents Changed"</Th>
+                            <Th>"Message"</Th>
                         </tr>
-                    </thead>
-                    <tbody>
+                    </Thead>
+                    <Tbody>
                         {history.into_iter().map(|commit| {
                             let ts = commit.timestamp;
                             let date = format!(
@@ -121,14 +128,14 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                             );
                             view! {
                                 <tr>
-                                    <td>{date}</td>
-                                    <td>{commit.files_changed}</td>
-                                    <td class="truncate max-w-xs">{commit.message}</td>
+                                    <Td>{date}</Td>
+                                    <Td>{commit.files_changed}</Td>
+                                    <Td class="truncate max-w-xs">{commit.message}</Td>
                                 </tr>
                             }
                         }).collect::<Vec<_>>()}
-                    </tbody>
-                </table>
+                    </Tbody>
+                </Table>
             })
         } else {
             None
@@ -176,128 +183,84 @@ fn DocumentsTable(domain: String) -> impl IntoView {
     });
 
     view! {
-        <h3>"Documents"</h3>
-        <div class="flex items-center justify-between mb-4">
-            <div class="flex gap-2">
-                <button
-                    class=move || if status_filter.get().is_none() { "btn btn-active" } else { "btn" }
-                    on:click=move |_| { set_status_filter.set(None); set_offset.set(0); }
-                >"All"</button>
-                <button
-                    class=move || if status_filter.get().as_deref() == Some("failing") { "btn btn-active" } else { "btn" }
-                    on:click=move |_| { set_status_filter.set(Some("failing".into())); set_offset.set(0); }
-                >"Failing"</button>
-                <button
-                    class=move || if status_filter.get().as_deref() == Some("passing") { "btn btn-active" } else { "btn" }
-                    on:click=move |_| { set_status_filter.set(Some("passing".into())); set_offset.set(0); }
-                >"Passing"</button>
-            </div>
-        </div>
+        <SubHeading>"Documents"</SubHeading>
 
-        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading documents..."</p> }>
+        <Tabs>
+            <Tab
+                active=Signal::derive(move || status_filter.get().is_none())
+                on_click=Callback::new(move |_| { set_status_filter.set(None); set_offset.set(0); })
+            >"All"</Tab>
+            <Tab
+                active=Signal::derive(move || status_filter.get().as_deref() == Some("failing"))
+                on_click=Callback::new(move |_| { set_status_filter.set(Some("failing".into())); set_offset.set(0); })
+            >"Failing"</Tab>
+            <Tab
+                active=Signal::derive(move || status_filter.get().as_deref() == Some("passing"))
+                on_click=Callback::new(move |_| { set_status_filter.set(Some("passing".into())); set_offset.set(0); })
+            >"Passing"</Tab>
+        </Tabs>
+
+        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading documents..."</p> }>
             {move || docs.get().map(|result| match result {
                 Ok(page) => {
                     let total = page.total;
-                    let page_offset = page.offset;
                     let count = page.items.len() as u64;
                     let d = domain.get_value();
                     view! {
-                        <div class="flex items-center justify-between mb-2">
-                            <p class="text-sm text-muted">{move || format!("Showing {}\u{2013}{} of {total}", page_offset + 1, page_offset + count)}</p>
-                            <div class="flex gap-2">
-                                <button
-                                    class="btn"
-                                    disabled={move || offset.get() == 0}
-                                    on:click=move |_| set_offset.set(offset.get().saturating_sub(limit))
-                                >"Previous"</button>
-                                <button
-                                    class="btn"
-                                    disabled={move || offset.get() + limit >= total}
-                                    on:click=move |_| set_offset.set(offset.get() + limit)
-                                >"Next"</button>
-                            </div>
-                        </div>
-                        <table>
-                            <thead>
+                        <Table>
+                            <Thead>
                                 <tr>
-                                    <th>"Tracking ID"</th>
-                                    <th>"Title"</th>
-                                    <th>"Basic"</th>
-                                    <th>"Extended"</th>
-                                    <th>"Full"</th>
-                                    <th>"Signature"</th>
+                                    <Th>"Tracking ID"</Th>
+                                    <Th>"Title"</Th>
+                                    <Th>"Basic"</Th>
+                                    <Th>"Extended"</Th>
+                                    <Th>"Full"</Th>
+                                    <Th>"Signature"</Th>
+                                    <Th>"Versions"</Th>
                                 </tr>
-                            </thead>
-                            <tbody>
+                            </Thead>
+                            <Tbody>
                                 {page.items.into_iter().map(|doc| {
                                     let href = format!("/providers/{}/documents/{}", encode_path_segment(&d), doc.tracking_id);
                                     let tid = doc.tracking_id.clone();
                                     let title = doc.title.clone();
-                                    let sig_class = if doc.signature_error.is_some() {
-                                        "badge badge-danger"
+                                    let (sig_variant, sig_label) = if doc.signature_error.is_some() {
+                                        (BadgeVariant::Danger, "Invalid")
                                     } else if doc.signature_present {
-                                        "badge badge-success"
+                                        (BadgeVariant::Success, "Valid")
                                     } else {
-                                        "badge badge-warning"
-                                    };
-                                    let sig_label = if doc.signature_error.is_some() {
-                                        "Invalid"
-                                    } else if doc.signature_present {
-                                        "Valid"
-                                    } else {
-                                        "Missing"
+                                        (BadgeVariant::Warning, "Missing")
                                     };
                                     view! {
                                         <tr>
-                                            <td><a href={href}>{tid}</a></td>
-                                            <td class="truncate max-w-xs">{title}</td>
-                                            <td><DocProfileBadge detail=doc.profiles.basic /></td>
-                                            <td><DocProfileBadge detail=doc.profiles.extended /></td>
-                                            <td><DocProfileBadge detail=doc.profiles.full /></td>
-                                            <td><span class={sig_class}>{sig_label}</span></td>
+                                            <Td><a href={href}>{tid}</a></Td>
+                                            <Td class="truncate max-w-xs">{title}</Td>
+                                            <Td><DocProfileBadge detail=doc.profiles.basic /></Td>
+                                            <Td><DocProfileBadge detail=doc.profiles.extended /></Td>
+                                            <Td><DocProfileBadge detail=doc.profiles.full /></Td>
+                                            <Td><Badge variant=sig_variant>{sig_label}</Badge></Td>
+                                            <Td>{match doc.version_count {
+                                                Some(n) if n > 1 => view! { <Badge variant=BadgeVariant::Neutral>{n}</Badge> }.into_any(),
+                                                _ => view! { <span /> }.into_any(),
+                                            }}</Td>
                                         </tr>
                                     }
                                 }).collect::<Vec<_>>()}
-                            </tbody>
-                        </table>
+                            </Tbody>
+                        </Table>
 
+                        <Pagination
+                            offset=offset
+                            limit=limit
+                            total=total
+                            count=count
+                            on_prev=Callback::new(move |_| set_offset.set(offset.get().saturating_sub(limit)))
+                            on_next=Callback::new(move |_| set_offset.set(offset.get() + limit))
+                        />
                     }.into_any()
                 }
-                Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
+                Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
             })}
         </Suspense>
-    }
-}
-
-#[component]
-fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
-    match detail {
-        Some(d) if d.passed => view! { <span class="badge badge-success">"Pass"</span> }.into_any(),
-        Some(d) => {
-            let mut parts = Vec::new();
-            if d.error_count > 0 {
-                parts.push(format!("{} errors", d.error_count));
-            }
-            if d.warning_count > 0 {
-                parts.push(format!("{} warnings", d.warning_count));
-            }
-            if d.info_count > 0 {
-                parts.push(format!("{} info", d.info_count));
-            }
-            let label = if parts.is_empty() {
-                "Fail".to_string()
-            } else {
-                parts.join(", ")
-            };
-            let class = if d.error_count > 0 {
-                "badge badge-danger"
-            } else if d.warning_count > 0 {
-                "badge badge-warning"
-            } else {
-                "badge badge-info"
-            };
-            view! { <span class={class}>{label}</span> }.into_any()
-        }
-        None => view! { <span class="badge">"-"</span> }.into_any(),
     }
 }

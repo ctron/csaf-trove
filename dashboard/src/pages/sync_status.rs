@@ -4,6 +4,11 @@ use leptos::prelude::*;
 use wasm_bindgen::{JsCast, prelude::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
+use crate::components::{
+    badge::{Badge, BadgeVariant},
+    section_heading::SectionHeading,
+    table::{Table, Tbody, Td, Th, Thead},
+};
 use crate::models::JobStatus;
 
 /// Formats a duration in seconds as a human-readable string.
@@ -132,35 +137,35 @@ pub fn SyncStatusPage() -> impl IntoView {
 
     view! {
         <div>
-            <h2>"Sync Status"</h2>
+            <SectionHeading>"Sync Status"</SectionHeading>
             {move || {
                 let map = jobs.get();
                 if map.is_empty() {
-                    view! { <p class="text-muted text-center py-12">"Waiting for data\u{2026}"</p> }.into_any()
+                    view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Waiting for data\u{2026}"</p> }.into_any()
                 } else {
                     let mut entries: Vec<_> = map.into_iter().collect();
                     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
                     view! {
-                        <table>
-                            <thead>
+                        <Table>
+                            <Thead>
                                 <tr>
-                                    <th>"Provider"</th>
-                                    <th>"Status"</th>
-                                    <th>"Phase"</th>
-                                    <th>"Progress"</th>
-                                    <th>"ETA"</th>
-                                    <th>"Last Run"</th>
-                                    <th>"Error"</th>
+                                    <Th>"Provider"</Th>
+                                    <Th>"Status"</Th>
+                                    <Th>"Phase"</Th>
+                                    <Th>"Progress"</Th>
+                                    <Th>"ETA"</Th>
+                                    <Th>"Last Run"</Th>
+                                    <Th>"Error"</Th>
                                 </tr>
-                            </thead>
-                            <tbody>
+                            </Thead>
+                            <Tbody>
                                 {entries.into_iter().map(|(domain, job)| {
-                                    let status_class = match job.status.as_str() {
-                                        "running" => "badge badge-warning",
-                                        "completed" => "badge badge-success",
-                                        "failed" => "badge badge-danger",
-                                        _ => "badge",
+                                    let variant = match job.status.as_str() {
+                                        "running" => BadgeVariant::Warning,
+                                        "completed" => BadgeVariant::Success,
+                                        "failed" => BadgeVariant::Danger,
+                                        _ => BadgeVariant::Neutral,
                                     };
                                     let status = job.status.clone();
                                     let phase = job.phase.clone().unwrap_or_else(|| "-".to_string());
@@ -177,18 +182,18 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     let error = job.error.clone().unwrap_or_default();
                                     view! {
                                         <tr>
-                                            <td>{domain}</td>
-                                            <td><span class={status_class}>{status}</span></td>
-                                            <td>{phase}</td>
-                                            <td class="whitespace-nowrap">{progress}</td>
-                                            <td class="whitespace-nowrap">{eta_display}</td>
-                                            <td class="whitespace-nowrap" title={last_run_title}>{last_run_display}</td>
-                                            <td>{error}</td>
+                                            <Td>{domain}</Td>
+                                            <Td><Badge variant=variant>{status}</Badge></Td>
+                                            <Td>{phase}</Td>
+                                            <Td class="whitespace-nowrap">{progress}</Td>
+                                            <Td class="whitespace-nowrap">{eta_display}</Td>
+                                            <Td class="whitespace-nowrap"><span title={last_run_title}>{last_run_display}</span></Td>
+                                            <Td>{error}</Td>
                                         </tr>
                                     }
                                 }).collect::<Vec<_>>()}
-                            </tbody>
-                        </table>
+                            </Tbody>
+                        </Table>
                     }.into_any()
                 }
             }}

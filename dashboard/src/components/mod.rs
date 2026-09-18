@@ -1,3 +1,11 @@
+pub mod alert;
+pub mod badge;
+pub mod breadcrumb;
+pub mod doc_profile_badge;
+pub mod pagination;
 pub mod profile_badge;
+pub mod section_heading;
 pub mod signature_badge;
+pub mod table;
+pub mod tabs;
 pub mod theme_toggle;

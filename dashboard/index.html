@@ -7,5 +7,9 @@
     <link data-trunk rel="rust" data-wasm-opt="z" />
     <link data-trunk rel="tailwind-css" href="tailwind.css" />
 </head>
-<body></body>
+<body>
+<script>
+(function(){var t=localStorage.getItem("theme");if(t==="dark"||t==="light"){document.documentElement.setAttribute("data-theme",t)}else{document.documentElement.setAttribute("data-theme",matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light")}})();
+</script>
+</body>
 </html>

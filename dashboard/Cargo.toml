@@ -22,7 +22,9 @@ wasm-bindgen-futures = { workspace = true }
 workspace = true
 features = [
     "CloseEvent",
+    "EventTarget",
     "Location",
+    "MediaQueryList",
     "MessageEvent",
     "Storage",
     "WebSocket",
