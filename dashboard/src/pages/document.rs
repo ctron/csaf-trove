@@ -185,6 +185,12 @@ pub fn DocumentPage() -> impl IntoView {
                     }.into_any()
                 } else {
                     view! {
+                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading..."</p> }>
+                            {move || detail.get().map(|result| match result {
+                                Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
+                                Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
+                            })}
+                        </Suspense>
                         <Suspense fallback=|| view! { <span /> }>
                             {move || versions.get().map(|result| match result {
                                 Ok(vs) => view! {
@@ -195,12 +201,6 @@ pub fn DocumentPage() -> impl IntoView {
                                     />
                                 }.into_any(),
                                 _ => view! { <span /> }.into_any(),
-                            })}
-                        </Suspense>
-                        <Suspense fallback=|| view! { <p class="text-muted text-center py-12">"Loading..."</p> }>
-                            {move || detail.get().map(|result| match result {
-                                Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
-                                Err(e) => view! { <p class="text-danger text-center py-12">{e}</p> }.into_any(),
                             })}
                         </Suspense>
                     }.into_any()
