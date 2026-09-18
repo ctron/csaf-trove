@@ -7,7 +7,8 @@ use crate::components::{
     alert::{Alert, AlertVariant},
     badge::{Badge, BadgeVariant},
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
-    section_heading::{SectionHeading, SubHeading},
+    content_tabs::{ContentTab, ContentTabs},
+    section_heading::SubHeading,
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{
@@ -119,6 +120,7 @@ pub fn DocumentPage() -> impl IntoView {
     let tracking_id = move || params.read().get("tracking_id").unwrap_or_default();
 
     let (selected_version, set_selected_version) = signal(Option::<String>::None);
+    let (tab, set_tab) = signal("overview".to_string());
 
     let detail = LocalResource::new(move || {
         let d = domain();
@@ -159,7 +161,8 @@ pub fn DocumentPage() -> impl IntoView {
     view! {
         <div>
             <Breadcrumb>
-                <BreadcrumbItem href={move || format!("/providers/{}", encode_path_segment(&domain()))}>"Provider"</BreadcrumbItem>
+                <BreadcrumbItem href=Signal::derive(|| "/".to_string())>"Providers"</BreadcrumbItem>
+                <BreadcrumbItem href=Signal::derive(move || format!("/providers/{}", encode_path_segment(&domain())))>{move || domain()}</BreadcrumbItem>
                 <BreadcrumbCurrent>{move || tracking_id()}</BreadcrumbCurrent>
             </Breadcrumb>
 
@@ -168,7 +171,7 @@ pub fn DocumentPage() -> impl IntoView {
                     view! {
                         <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading version..."</p> }>
                             {move || historical.get().map(|outer| match outer {
-                                Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc /> }.into_any(),
+                                Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc tab=tab set_tab=set_tab /> }.into_any(),
                                 Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                                 None => view! { <span /> }.into_any(),
                             })}
@@ -197,7 +200,7 @@ pub fn DocumentPage() -> impl IntoView {
                     view! {
                         <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                             {move || detail.get().map(|result| match result {
-                                Ok(doc) => view! { <DocumentDetailView doc=doc /> }.into_any(),
+                                Ok(doc) => view! { <DocumentDetailView doc=doc tab=tab set_tab=set_tab /> }.into_any(),
                                 Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                             })}
                         </Suspense>
@@ -272,37 +275,62 @@ fn VersionSelector(
 }
 
 #[component]
-fn HistoricalDocumentView(doc: HistoricalDocument) -> impl IntoView {
-    view! {
-        <SectionHeading>{doc.tracking_id.clone()}</SectionHeading>
+fn HistoricalDocumentView(
+    doc: HistoricalDocument,
+    tab: ReadSignal<String>,
+    set_tab: WriteSignal<String>,
+) -> impl IntoView {
+    let timestamp = doc.timestamp;
+    let doc = StoredValue::new(doc);
 
+    view! {
         <Alert variant=AlertVariant::Warning>
-            "Showing version from " {format_timestamp(doc.timestamp)}
+            "Showing version from " {format_timestamp(timestamp)}
             ". Validation results are only available for the current version."
         </Alert>
 
-        <SubHeading>"Document"</SubHeading>
-        <Table>
-            <Tbody>
-                <MetadataRow label="Title" value=Some(doc.title.clone()) />
-                <MetadataRow label="Category" value=doc.category.clone() />
-                <MetadataRow label="Publisher" value=doc.publisher_name.clone() />
-                <MetadataRow label="Severity" value=doc.aggregate_severity.clone() />
-                <MetadataRow label="CSAF Version" value=doc.csaf_version.clone() />
-            </Tbody>
-        </Table>
+        <ContentTabs>
+            <ContentTab
+                active=Signal::derive(move || tab.get() != "history")
+                on_click=Callback::new(move |_| set_tab.set("overview".into()))
+            >"Overview"</ContentTab>
+            <ContentTab
+                active=Signal::derive(move || tab.get() == "history")
+                on_click=Callback::new(move |_| set_tab.set("history".into()))
+            >"History"</ContentTab>
+        </ContentTabs>
 
-        <SubHeading>"Tracking"</SubHeading>
-        <Table>
-            <Tbody>
-                <MetadataRow label="Status" value=doc.status.clone() />
-                <MetadataRow label="Version" value=doc.revision.clone() />
-                <MetadataRow label="Initial Release" value=doc.initial_release_date.clone() />
-                <MetadataRow label="Current Release" value=doc.current_release_date.clone() />
-            </Tbody>
-        </Table>
+        {move || {
+            let d = doc.get_value();
+            if tab.get() == "history" {
+                view! {
+                    <RevisionHistoryTable entries=d.revision_history />
+                }.into_any()
+            } else {
+                view! {
+                    <SubHeading>"Document"</SubHeading>
+                    <Table>
+                        <Tbody>
+                            <MetadataRow label="Title" value=Some(d.title) />
+                            <MetadataRow label="Category" value=d.category />
+                            <MetadataRow label="Publisher" value=d.publisher_name />
+                            <MetadataRow label="Severity" value=d.aggregate_severity />
+                            <MetadataRow label="CSAF Version" value=d.csaf_version />
+                        </Tbody>
+                    </Table>
 
-        <RevisionHistoryTable entries=doc.revision_history />
+                    <SubHeading>"Tracking"</SubHeading>
+                    <Table>
+                        <Tbody>
+                            <MetadataRow label="Status" value=d.status />
+                            <MetadataRow label="Version" value=d.revision />
+                            <MetadataRow label="Initial Release" value=d.initial_release_date />
+                            <MetadataRow label="Current Release" value=d.current_release_date />
+                        </Tbody>
+                    </Table>
+                }.into_any()
+            }
+        }}
     }
 }
 
@@ -344,61 +372,87 @@ fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
 }
 
 #[component]
-fn DocumentDetailView(doc: DocumentValidation) -> impl IntoView {
-    let (sig_variant, sig_label) = if doc.signature_error.is_some() {
-        (BadgeVariant::Danger, "Invalid")
-    } else if doc.signature_present {
-        (BadgeVariant::Success, "Valid")
-    } else {
-        (BadgeVariant::Warning, "Missing")
-    };
-
-    let sig_error = doc.signature_error.clone();
-    let url_href = doc.url.clone();
-    let url_label = doc.url.clone();
+fn DocumentDetailView(
+    doc: DocumentValidation,
+    tab: ReadSignal<String>,
+    set_tab: WriteSignal<String>,
+) -> impl IntoView {
+    let doc = StoredValue::new(doc);
 
     view! {
-        <SectionHeading>{doc.tracking_id.clone()}</SectionHeading>
+        <ContentTabs>
+            <ContentTab
+                active=Signal::derive(move || tab.get() == "overview")
+                on_click=Callback::new(move |_| set_tab.set("overview".into()))
+            >"Overview"</ContentTab>
+            <ContentTab
+                active=Signal::derive(move || tab.get() == "validation")
+                on_click=Callback::new(move |_| set_tab.set("validation".into()))
+            >"Validation"</ContentTab>
+            <ContentTab
+                active=Signal::derive(move || tab.get() == "history")
+                on_click=Callback::new(move |_| set_tab.set("history".into()))
+            >"History"</ContentTab>
+        </ContentTabs>
 
-        <SubHeading>"Document"</SubHeading>
-        <Table>
-            <Tbody>
-                <MetadataRow label="Title" value=Some(doc.title.clone()) />
-                <MetadataRow label="Category" value=doc.category.clone() />
-                <MetadataRow label="Publisher" value=doc.publisher_name.clone() />
-                <MetadataRow label="Severity" value=doc.aggregate_severity.clone() />
-                <MetadataRow label="CSAF Version" value=doc.csaf_version.clone() />
-                <tr>
-                    <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"URL"</Td>
-                    <Td><a href={url_href} target="_blank">{url_label}</a></Td>
-                </tr>
-                <tr>
-                    <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"Signature"</Td>
-                    <Td>
-                        <Badge variant=sig_variant>{sig_label}</Badge>
-                        {sig_error.map(|e| view! {
-                            <span class="text-sm text-red-500 dark:text-red-400 ml-2">{e}</span>
-                        })}
-                    </Td>
-                </tr>
-            </Tbody>
-        </Table>
+        {move || {
+            let t = tab.get();
+            let d = doc.get_value();
+            if t == "validation" {
+                view! {
+                    <ProfileSection title="Basic" detail=d.profiles.basic />
+                    <ProfileSection title="Extended" detail=d.profiles.extended />
+                    <ProfileSection title="Full" detail=d.profiles.full />
+                }.into_any()
+            } else if t == "history" {
+                view! {
+                    <RevisionHistoryTable entries=d.revision_history />
+                }.into_any()
+            } else {
+                let (sig_variant, sig_label) = if d.signature_error.is_some() {
+                    (BadgeVariant::Danger, "Invalid")
+                } else if d.signature_present {
+                    (BadgeVariant::Success, "Valid")
+                } else {
+                    (BadgeVariant::Warning, "Missing")
+                };
+                view! {
+                    <SubHeading>"Document"</SubHeading>
+                    <Table>
+                        <Tbody>
+                            <MetadataRow label="Title" value=Some(d.title) />
+                            <MetadataRow label="Category" value=d.category />
+                            <MetadataRow label="Publisher" value=d.publisher_name />
+                            <MetadataRow label="Severity" value=d.aggregate_severity />
+                            <MetadataRow label="CSAF Version" value=d.csaf_version />
+                            <tr>
+                                <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"URL"</Td>
+                                <Td><a href={d.url.clone()} target="_blank">{d.url.clone()}</a></Td>
+                            </tr>
+                            <tr>
+                                <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"Signature"</Td>
+                                <Td>
+                                    <Badge variant=sig_variant>{sig_label}</Badge>
+                                    {d.signature_error.map(|e| view! {
+                                        <span class="text-sm text-red-500 dark:text-red-400 ml-2">{e}</span>
+                                    })}
+                                </Td>
+                            </tr>
+                        </Tbody>
+                    </Table>
 
-        <SubHeading>"Tracking"</SubHeading>
-        <Table>
-            <Tbody>
-                <MetadataRow label="Status" value=doc.status.clone() />
-                <MetadataRow label="Version" value=doc.revision.clone() />
-                <MetadataRow label="Initial Release" value=doc.initial_release_date.clone() />
-                <MetadataRow label="Current Release" value=doc.current_release_date.clone() />
-            </Tbody>
-        </Table>
-
-        <RevisionHistoryTable entries=doc.revision_history />
-
-        <ProfileSection title="Basic" detail=doc.profiles.basic />
-        <ProfileSection title="Extended" detail=doc.profiles.extended />
-        <ProfileSection title="Full" detail=doc.profiles.full />
+                    <SubHeading>"Tracking"</SubHeading>
+                    <Table>
+                        <Tbody>
+                            <MetadataRow label="Status" value=d.status />
+                            <MetadataRow label="Version" value=d.revision />
+                            <MetadataRow label="Initial Release" value=d.initial_release_date />
+                            <MetadataRow label="Current Release" value=d.current_release_date />
+                        </Tbody>
+                    </Table>
+                }.into_any()
+            }
+        }}
     }
 }
 

@@ -6,10 +6,11 @@ use leptos_router::{
 
 use crate::components::{
     badge::{Badge, BadgeVariant},
+    breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     doc_profile_badge::DocProfileBadge,
     pagination::Pagination,
     profile_badge::ProfileBadge,
-    section_heading::{SectionHeading, SubHeading},
+    section_heading::SubHeading,
     signature_badge::SignatureBadge,
     table::{Table, Tbody, Td, Th, Thead},
     tabs::{Tab, Tabs},
@@ -37,7 +38,11 @@ pub fn ProviderPage() -> impl IntoView {
 
     view! {
         <div>
-            <SectionHeading>{move || format!("Provider: {}", domain())}</SectionHeading>
+            <Breadcrumb>
+                <BreadcrumbItem href=Signal::derive(|| "/".to_string())>"Providers"</BreadcrumbItem>
+                <BreadcrumbCurrent>{move || domain()}</BreadcrumbCurrent>
+            </Breadcrumb>
+
             <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                 {move || detail.get().map(|result| match result {
                     Ok(d) => view! { <ProviderDetailView detail=d /> }.into_any(),

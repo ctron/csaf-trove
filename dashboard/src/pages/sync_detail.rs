@@ -8,7 +8,6 @@ use crate::components::{
     badge::{Badge, BadgeVariant},
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     pagination::Pagination,
-    section_heading::SectionHeading,
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::encode_path_segment;
@@ -61,8 +60,6 @@ pub fn SyncDetailPage() -> impl IntoView {
                 <BreadcrumbItem href=Signal::derive(|| "/sync".to_string())>"Sync Status"</BreadcrumbItem>
                 <BreadcrumbCurrent>{move || domain()}</BreadcrumbCurrent>
             </Breadcrumb>
-
-            <SectionHeading>{move || format!("Sync History: {}", domain())}</SectionHeading>
 
             <Transition fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                 {move || history.get().map(|result| match result {
