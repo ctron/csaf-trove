@@ -5,6 +5,7 @@ pub mod content_tabs;
 pub mod doc_profile_badge;
 pub mod pagination;
 pub mod profile_badge;
+pub mod progress_bar;
 pub mod section_heading;
 pub mod signature_badge;
 pub mod table;

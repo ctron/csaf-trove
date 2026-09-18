@@ -33,7 +33,7 @@ fn page_window(current: u64, total: u64) -> Vec<u64> {
     pages
 }
 
-/// Pagination controls following the Meraki UI pattern.
+/// Pagination controls following the Meraki UI table pattern.
 #[component]
 pub fn Pagination(
     /// Current zero-based offset into the result set.
@@ -63,28 +63,31 @@ pub fn Pagination(
     };
 
     view! {
-        <div class="flex flex-col items-center py-5 space-y-6 sm:flex-row sm:justify-between sm:space-y-0 mt-6">
-            <div class="-mx-2 flex items-center">
-                <button
-                    class=move || if prev_disabled() {
-                        "inline-flex items-center justify-center px-4 py-1 mx-2 text-gray-500 rounded-lg cursor-not-allowed dark:text-gray-600"
-                    } else {
-                        "inline-flex items-center justify-center px-4 py-1 mx-2 text-gray-700 transition-colors duration-300 transform rounded-lg hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700 cursor-pointer"
-                    }
-                    disabled=prev_disabled
-                    on:click=on_prev
-                >
-                    "previous"
-                </button>
+        <div class="flex items-center justify-between mt-6">
+            <button
+                class=move || if prev_disabled() {
+                    "flex items-center px-5 py-2 text-sm text-gray-700 capitalize transition-colors duration-200 bg-white border rounded-md gap-x-2 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700 opacity-50 cursor-not-allowed"
+                } else {
+                    "flex items-center px-5 py-2 text-sm text-gray-700 capitalize transition-colors duration-200 bg-white border rounded-md gap-x-2 hover:bg-gray-100 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-800 cursor-pointer"
+                }
+                disabled=prev_disabled
+                on:click=on_prev
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 rtl:-scale-x-100">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 15.75L3 12m0 0l3.75-3.75M3 12h18" />
+                </svg>
+                <span>"previous"</span>
+            </button>
 
+            <div class="items-center hidden md:flex gap-x-3">
                 {move || {
                     let cur = current_page();
                     page_window(cur, total_pages).into_iter().map(|p| {
                         if p == 0 {
-                            view! { <span class="inline-flex items-center justify-center px-4 py-1 mx-2 text-gray-500 dark:text-gray-400">"…"</span> }.into_any()
+                            view! { <span class="px-2 py-1 text-sm text-gray-500 dark:text-gray-400">"…"</span> }.into_any()
                         } else if p == cur {
                             view! {
-                                <span class="inline-flex items-center justify-center px-4 py-1 mx-2 text-gray-700 transition-colors duration-300 transform bg-gray-100 rounded-lg dark:text-white dark:bg-gray-700">
+                                <span class="px-2 py-1 text-sm text-blue-500 rounded-md dark:bg-gray-800 bg-blue-100/60">
                                     {p}
                                 </span>
                             }.into_any()
@@ -92,36 +95,39 @@ pub fn Pagination(
                             let new_offset = (p - 1) * limit;
                             view! {
                                 <button
-                                    class="inline-flex items-center justify-center px-4 py-1 mx-2 text-gray-700 transition-colors duration-300 transform rounded-lg hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700 cursor-pointer"
+                                    class="px-2 py-1 text-sm text-gray-500 rounded-md dark:hover:bg-gray-800 dark:text-gray-300 hover:bg-gray-100 cursor-pointer"
                                     on:click=move |_| on_change.run(new_offset)
                                 >{p}</button>
                             }.into_any()
                         }
                     }).collect::<Vec<_>>()
                 }}
-
-                <button
-                    class=move || if next_disabled() {
-                        "inline-flex items-center justify-center px-4 py-1 mx-2 text-gray-500 rounded-lg cursor-not-allowed dark:text-gray-600"
-                    } else {
-                        "inline-flex items-center justify-center px-4 py-1 mx-2 text-gray-700 transition-colors duration-300 transform rounded-lg hover:bg-gray-100 dark:text-white dark:hover:bg-gray-700 cursor-pointer"
-                    }
-                    disabled=next_disabled
-                    on:click=on_next
-                >
-                    "next"
-                </button>
             </div>
 
-            <div class="text-gray-500 dark:text-gray-400">
-                <span class="font-medium text-gray-700 dark:text-gray-100">
-                    {move || {
-                        let o = offset.get();
-                        format!("{} - {}", o + 1, o + count)
-                    }}
-                </span>
-                {format!(" of {total} records")}
-            </div>
+            <button
+                class=move || if next_disabled() {
+                    "flex items-center px-5 py-2 text-sm text-gray-700 capitalize transition-colors duration-200 bg-white border rounded-md gap-x-2 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700 opacity-50 cursor-not-allowed"
+                } else {
+                    "flex items-center px-5 py-2 text-sm text-gray-700 capitalize transition-colors duration-200 bg-white border rounded-md gap-x-2 hover:bg-gray-100 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-800 cursor-pointer"
+                }
+                disabled=next_disabled
+                on:click=on_next
+            >
+                <span>"Next"</span>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 rtl:-scale-x-100">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 8.25L21 12m0 0l-3.75 3.75M21 12H3" />
+                </svg>
+            </button>
+        </div>
+
+        <div class="text-sm text-gray-500 dark:text-gray-400 mt-3 text-center">
+            <span class="font-medium text-gray-700 dark:text-gray-100">
+                {move || {
+                    let o = offset.get();
+                    format!("{} - {}", o + 1, o + count)
+                }}
+            </span>
+            {format!(" of {total} records")}
         </div>
     }
 }

@@ -7,16 +7,18 @@ use leptos_router::{
 use crate::components::{
     badge::{Badge, BadgeVariant},
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
+    content_tabs::{ContentTab, ContentTabs},
     doc_profile_badge::DocProfileBadge,
     pagination::Pagination,
-    profile_badge::ProfileBadge,
-    section_heading::SubHeading,
-    signature_badge::SignatureBadge,
+    progress_bar::{ProgressBar, color_for_pass_rate},
     table::{Table, Tbody, Td, Th, Thead},
     tabs::{Tab, Tabs},
 };
-use crate::models::{PaginatedDocuments, ProviderDetail, encode_path_segment};
+use crate::models::{
+    PaginatedDocuments, ProfileSummary, ProviderDetail, SignatureSummary, encode_path_segment,
+};
 
+/// Fetches provider detail from the API.
 async fn fetch_provider(domain: String) -> Result<ProviderDetail, String> {
     let resp =
         gloo_net::http::Request::get(&format!("/api/providers/{}", encode_path_segment(&domain)))
@@ -26,6 +28,7 @@ async fn fetch_provider(domain: String) -> Result<ProviderDetail, String> {
     resp.json().await.map_err(|e| e.to_string())
 }
 
+/// Provider detail page with grouped cards, content tabs, and documents table.
 #[component]
 pub fn ProviderPage() -> impl IntoView {
     let params = use_params_map();
@@ -53,6 +56,53 @@ pub fn ProviderPage() -> impl IntoView {
     }
 }
 
+/// Renders a single profile row with label, pass rate, progress bar, and counts.
+fn profile_row(label: &'static str, profile: Option<ProfileSummary>) -> impl IntoView {
+    match profile {
+        Some(p) => {
+            let pct = p.pass_rate * 100.0;
+            let color = color_for_pass_rate(p.pass_rate);
+            let rate_label = format!("{pct:.1}%");
+            let detail = format!("{} valid \u{00b7} {} invalid", p.valid, p.invalid);
+            view! {
+                <div class="mb-4 last:mb-0">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{rate_label}</span>
+                    </div>
+                    <ProgressBar percentage=pct color=color />
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{detail}</p>
+                </div>
+            }
+            .into_any()
+        }
+        None => view! {
+            <div class="mb-4 last:mb-0">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
+                    <span class="text-sm text-gray-400 dark:text-gray-500">"not tested"</span>
+                </div>
+            </div>
+        }
+        .into_any(),
+    }
+}
+
+/// Renders the optional signature summary section inside the overview card.
+fn signature_section(sig: SignatureSummary) -> impl IntoView {
+    view! {
+        <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+            <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">"Signatures"</p>
+            <div class="flex items-center gap-3">
+                <Badge variant=BadgeVariant::Success>{sig.valid}" valid"</Badge>
+                <Badge variant=BadgeVariant::Danger>{sig.invalid}" invalid"</Badge>
+                <Badge variant=BadgeVariant::Warning>{sig.missing}" missing"</Badge>
+            </div>
+        </div>
+    }
+}
+
+/// Main detail view with grouped cards, info line, and tabbed content.
 #[component]
 fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let summary = detail.summary;
@@ -61,30 +111,77 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let domain = summary.provider.clone();
     let sync_href = format!("/sync/{}", encode_path_segment(&domain));
 
+    let (active_tab, set_active_tab) = signal("documents".to_string());
+
     view! {
-        <div class="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400 mb-6">
-            <span>{summary.document_count}" documents"</span>
-            <span>"\u{00b7}"</span>
-            <span>"Basic "<ProfileBadge profile=summary.profiles.basic /></span>
-            <span>"\u{00b7}"</span>
-            <span>"Extended "<ProfileBadge profile=summary.profiles.extended /></span>
-            <span>"\u{00b7}"</span>
-            <span>"Full "<ProfileBadge profile=summary.profiles.full /></span>
-            <span>"\u{00b7}"</span>
-            <span>"Signatures "<SignatureBadge signatures=signatures.clone() /></span>
-            <span>"\u{00b7}"</span>
-            <a href={sync_href}>"Sync History"</a>
+        // Two-card grid
+        <div class="grid grid-cols-1 gap-6 md:grid-cols-2 mb-6">
+            // Overview card
+            <div class="bg-white rounded-lg shadow-md dark:bg-gray-800 p-6">
+                <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-4">"Overview"</h2>
+                <p class="text-4xl font-bold text-gray-800 dark:text-white">{summary.document_count}</p>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">"documents"</p>
+
+                <div class="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                    {summary.publisher_name.map(|name| view! {
+                        <p><span class="text-gray-500 dark:text-gray-500">"Publisher: "</span><span class="text-gray-700 dark:text-gray-300">{name}</span></p>
+                    })}
+                    <p><span class="text-gray-500 dark:text-gray-500">"Last synced: "</span><span class="text-gray-700 dark:text-gray-300">{summary.validated_at}</span></p>
+                    <p>
+                        <a href={sync_href} class="text-blue-600 dark:text-blue-400 hover:underline">"Sync History \u{2192}"</a>
+                    </p>
+                </div>
+
+                {signatures.map(signature_section)}
+            </div>
+
+            // Validation card
+            <div class="bg-white rounded-lg shadow-md dark:bg-gray-800 p-6">
+                <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-4">"Validation"</h2>
+                {profile_row("Basic", summary.profiles.basic.clone())}
+                {profile_row("Extended", summary.profiles.extended.clone())}
+                {profile_row("Full", summary.profiles.full)}
+            </div>
         </div>
 
-        {signatures.map(|sig| view! {
-            <div class="flex items-center gap-4 text-sm mb-4">
-                <Badge variant=BadgeVariant::Success>{sig.valid}" valid"</Badge>
-                <Badge variant=BadgeVariant::Danger>{sig.invalid}" invalid"</Badge>
-                <Badge variant=BadgeVariant::Warning>{sig.missing}" missing"</Badge>
-            </div>
-        })}
+        // Content tabs
+        <ContentTabs>
+            <ContentTab
+                active=Signal::derive(move || active_tab.get() == "documents")
+                on_click=Callback::new(move |_| set_active_tab.set("documents".to_string()))
+            >"Documents"</ContentTab>
+            <ContentTab
+                active=Signal::derive(move || active_tab.get() == "tests")
+                on_click=Callback::new(move |_| set_active_tab.set("tests".to_string()))
+            >"Failing Tests"</ContentTab>
+        </ContentTabs>
 
-        <SubHeading>"Top Failing Tests"</SubHeading>
+        // Tab content
+        <div>
+            {move || {
+                let tab = active_tab.get();
+                if tab == "documents" {
+                    view! { <DocumentsTable domain=domain.clone() /> }.into_any()
+                } else {
+                    let tests = tests.clone();
+                    view! { <FailingTestsView tests=tests /> }.into_any()
+                }
+            }}
+        </div>
+    }
+}
+
+/// Displays the top failing tests table, or a success message when empty.
+#[component]
+fn FailingTestsView(tests: Vec<crate::models::FailingTest>) -> impl IntoView {
+    if tests.is_empty() {
+        return view! {
+            <p class="text-gray-500 dark:text-gray-400 text-center py-12">"No failing tests."</p>
+        }
+        .into_any();
+    }
+
+    view! {
         <Table>
             <Thead>
                 <tr>
@@ -113,11 +210,11 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                 }).collect::<Vec<_>>()}
             </Tbody>
         </Table>
-
-        <DocumentsTable domain=domain />
     }
+    .into_any()
 }
 
+/// Fetches paginated documents from the API.
 async fn fetch_documents(
     domain: String,
     offset: u64,
@@ -141,6 +238,7 @@ async fn fetch_documents(
     resp.json().await.map_err(|e| e.to_string())
 }
 
+/// Paginated documents table with status filter tabs.
 #[component]
 fn DocumentsTable(domain: String) -> impl IntoView {
     let nav = NavigateOptions {
@@ -164,8 +262,6 @@ fn DocumentsTable(domain: String) -> impl IntoView {
     });
 
     view! {
-        <SubHeading>"Documents"</SubHeading>
-
         <Tabs>
             <Tab
                 active=Signal::derive(move || status_filter.get().is_none())
