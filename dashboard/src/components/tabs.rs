@@ -1,27 +1,30 @@
 use leptos::prelude::*;
 
-/// A container for line-style tab buttons following the Meraki UI pattern.
+/// A segmented button group for filtering, following the Meraki UI pattern.
 #[component]
 pub fn Tabs(children: Children) -> impl IntoView {
     view! {
-        <div class="flex overflow-x-auto border-b border-gray-200 whitespace-nowrap dark:border-gray-700 mb-4">
+        <div class="inline-flex overflow-hidden bg-white border divide-x rounded-lg dark:bg-gray-900 dark:border-gray-700 dark:divide-gray-700 mb-4">
             {children()}
         </div>
     }
 }
 
-/// A single tab button within a `Tabs` container.
+/// A single filter button within a `Tabs` container.
 #[component]
 pub fn Tab(
+    /// Whether this tab is currently active.
     active: Signal<bool>,
-    #[prop(into)] on_click: Callback<()>,
+    /// Called when the tab is clicked.
+    #[prop(into)]
+    on_click: Callback<()>,
     children: Children,
 ) -> impl IntoView {
     let class = move || {
         if active.get() {
-            "inline-flex items-center h-10 px-4 -mb-px text-sm text-center text-blue-600 bg-transparent border-b-2 border-blue-500 dark:border-blue-400 dark:text-blue-300 whitespace-nowrap focus:outline-none cursor-pointer"
+            "px-5 py-2 text-xs font-medium text-gray-600 transition-colors duration-200 sm:text-sm dark:text-gray-300 bg-gray-100 dark:bg-gray-800 cursor-pointer focus:outline-none"
         } else {
-            "inline-flex items-center h-10 px-4 -mb-px text-sm text-center text-gray-700 bg-transparent border-b-2 border-transparent dark:text-white whitespace-nowrap cursor-pointer focus:outline-none hover:border-gray-400"
+            "px-5 py-2 text-xs font-medium text-gray-600 transition-colors duration-200 sm:text-sm dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer focus:outline-none"
         }
     };
 

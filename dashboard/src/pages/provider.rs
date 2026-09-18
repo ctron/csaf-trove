@@ -1,5 +1,8 @@
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
+use leptos_router::{
+    NavigateOptions,
+    hooks::{query_signal_with_options, use_params_map},
+};
 
 use crate::components::{
     badge::{Badge, BadgeVariant},
@@ -47,11 +50,11 @@ pub fn ProviderPage() -> impl IntoView {
 
 #[component]
 fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
-    let history = detail.history;
     let summary = detail.summary;
     let tests = summary.top_failing_tests;
     let signatures = summary.signatures.clone();
     let domain = summary.provider.clone();
+    let sync_href = format!("/sync/{}", encode_path_segment(&domain));
 
     view! {
         <div class="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400 mb-6">
@@ -64,6 +67,8 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
             <span>"Full "<ProfileBadge profile=summary.profiles.full /></span>
             <span>"\u{00b7}"</span>
             <span>"Signatures "<SignatureBadge signatures=signatures.clone() /></span>
+            <span>"\u{00b7}"</span>
+            <a href={sync_href}>"Sync History"</a>
         </div>
 
         {signatures.map(|sig| view! {
@@ -104,43 +109,6 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
             </Tbody>
         </Table>
 
-        {if !history.is_empty() {
-            Some(view! {
-                <SubHeading>"Sync History"</SubHeading>
-                <Table>
-                    <Thead>
-                        <tr>
-                            <Th>"Date"</Th>
-                            <Th>"Documents Changed"</Th>
-                            <Th>"Message"</Th>
-                        </tr>
-                    </Thead>
-                    <Tbody>
-                        {history.into_iter().map(|commit| {
-                            let ts = commit.timestamp;
-                            let date = format!(
-                                "{:04}-{:02}-{:02} {:02}:{:02}",
-                                ts.year(),
-                                u8::from(ts.month()),
-                                ts.day(),
-                                ts.hour(),
-                                ts.minute(),
-                            );
-                            view! {
-                                <tr>
-                                    <Td>{date}</Td>
-                                    <Td>{commit.files_changed}</Td>
-                                    <Td class="truncate max-w-xs">{commit.message}</Td>
-                                </tr>
-                            }
-                        }).collect::<Vec<_>>()}
-                    </Tbody>
-                </Table>
-            })
-        } else {
-            None
-        }}
-
         <DocumentsTable domain=domain />
     }
 }
@@ -170,9 +138,17 @@ async fn fetch_documents(
 
 #[component]
 fn DocumentsTable(domain: String) -> impl IntoView {
-    let (offset, set_offset) = signal(0u64);
-    let (status_filter, set_status_filter) = signal(Option::<String>::None);
-    let limit = 50u64;
+    let nav = NavigateOptions {
+        scroll: false,
+        ..Default::default()
+    };
+    let (offset_param, set_offset_param) = query_signal_with_options::<u64>("offset", nav.clone());
+    let offset = Signal::derive(move || offset_param.get().unwrap_or(0));
+
+    let (status_param, set_status_param) = query_signal_with_options::<String>("status", nav);
+    let status_filter = Signal::derive(move || status_param.get());
+
+    let limit = 10u64;
     let domain = StoredValue::new(domain);
 
     let docs = LocalResource::new(move || {
@@ -188,19 +164,19 @@ fn DocumentsTable(domain: String) -> impl IntoView {
         <Tabs>
             <Tab
                 active=Signal::derive(move || status_filter.get().is_none())
-                on_click=Callback::new(move |_| { set_status_filter.set(None); set_offset.set(0); })
+                on_click=Callback::new(move |_| { set_status_param.set(None); set_offset_param.set(None); })
             >"All"</Tab>
             <Tab
                 active=Signal::derive(move || status_filter.get().as_deref() == Some("failing"))
-                on_click=Callback::new(move |_| { set_status_filter.set(Some("failing".into())); set_offset.set(0); })
+                on_click=Callback::new(move |_| { set_status_param.set(Some("failing".into())); set_offset_param.set(None); })
             >"Failing"</Tab>
             <Tab
                 active=Signal::derive(move || status_filter.get().as_deref() == Some("passing"))
-                on_click=Callback::new(move |_| { set_status_filter.set(Some("passing".into())); set_offset.set(0); })
+                on_click=Callback::new(move |_| { set_status_param.set(Some("passing".into())); set_offset_param.set(None); })
             >"Passing"</Tab>
         </Tabs>
 
-        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading documents..."</p> }>
+        <Transition fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading documents..."</p> }>
             {move || docs.get().map(|result| match result {
                 Ok(page) => {
                     let total = page.total;
@@ -254,13 +230,14 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                             limit=limit
                             total=total
                             count=count
-                            on_prev=Callback::new(move |_| set_offset.set(offset.get().saturating_sub(limit)))
-                            on_next=Callback::new(move |_| set_offset.set(offset.get() + limit))
+                            on_change=Callback::new(move |new_offset: u64| {
+                                set_offset_param.set(if new_offset == 0 { None } else { Some(new_offset) });
+                            })
                         />
                     }.into_any()
                 }
                 Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
             })}
-        </Suspense>
+        </Transition>
     }
 }

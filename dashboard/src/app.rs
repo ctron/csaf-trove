@@ -7,7 +7,8 @@ use leptos_router::{
 use crate::{
     components::theme_toggle::ThemeToggle,
     pages::{
-        document::DocumentPage, home::HomePage, provider::ProviderPage, sync_status::SyncStatusPage,
+        document::DocumentPage, home::HomePage, provider::ProviderPage,
+        sync_detail::SyncDetailPage, sync_status::SyncStatusPage,
     },
 };
 
@@ -32,6 +33,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/providers/:domain") view=ProviderPage />
                         <Route path=path!("/providers/:domain/documents/:tracking_id") view=DocumentPage />
                         <Route path=path!("/sync") view=SyncStatusPage />
+                        <Route path=path!("/sync/:domain") view=SyncDetailPage />
                     </Routes>
                 </div>
             </main>

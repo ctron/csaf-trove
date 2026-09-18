@@ -1,2 +1,14 @@
+[serve]
+port = 9090
+
 [tools]
-tailwindcss = "4.1.10"
+tailwindcss = "4.3.3"
+
+[[proxy]]
+rewrite = "/api/sync/ws"
+backend = "ws://127.0.0.1:8080/api/sync/ws"
+ws = true
+
+[[proxy]]
+rewrite = "/api/"
+backend = "http://127.0.0.1:8080/api/"

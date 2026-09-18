@@ -9,7 +9,7 @@ use crate::components::{
     section_heading::SectionHeading,
     table::{Table, Tbody, Td, Th, Thead},
 };
-use crate::models::JobStatus;
+use crate::models::{JobStatus, encode_path_segment};
 
 /// Formats a duration in seconds as a human-readable string.
 fn format_duration(seconds: Option<f64>) -> String {
@@ -180,9 +180,11 @@ pub fn SyncStatusPage() -> impl IntoView {
                                         .unwrap_or_else(|| "-".to_string());
                                     let last_run_title = job.last_run.clone().unwrap_or_default();
                                     let error = job.error.clone().unwrap_or_default();
+                                    let domain_display = domain.clone();
+                                    let domain_href = format!("/sync/{}", encode_path_segment(&domain));
                                     view! {
                                         <tr>
-                                            <Td>{domain}</Td>
+                                            <Td><a href={domain_href}>{domain_display}</a></Td>
                                             <Td><Badge variant=variant>{status}</Badge></Td>
                                             <Td>{phase}</Td>
                                             <Td class="whitespace-nowrap">{progress}</Td>

@@ -57,14 +57,30 @@ pub async fn detail(
     Ok(HttpResponse::Ok().json(detail))
 }
 
-/// Returns the git commit history for a provider's document repository.
+/// Query parameters for the sync history endpoint.
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    /// Zero-based offset for pagination.
+    pub offset: Option<u64>,
+    /// Maximum number of results (default 50, max 200).
+    pub limit: Option<u64>,
+}
+
+/// Returns paginated sync run history for a provider.
 pub async fn history(
     state: web::Data<AppState>,
     domain: web::Path<String>,
+    query: web::Query<HistoryQuery>,
 ) -> Result<HttpResponse, ApiError> {
     let domain = domain.into_inner();
-    let history = state.storage.provider_history(&domain)?.or_not_found()?;
-    Ok(HttpResponse::Ok().json(history))
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(50).min(200);
+
+    let page = state
+        .storage
+        .provider_history_paginated(&domain, offset, limit)?
+        .or_not_found()?;
+    Ok(HttpResponse::Ok().json(page))
 }
 
 /// Query parameters for the document listing endpoint.

@@ -121,6 +121,9 @@ pub struct DocumentValidation {
     /// Revision history entries from the CSAF tracking section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub revision_history: Vec<RevisionEntry>,
+    /// Number of distinct git versions (commits where the document blob changed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_count: Option<u32>,
 }
 
 /// Per-profile failure information for a single document.
@@ -243,17 +246,4 @@ pub struct DiffLineInfo {
     pub tag: DiffTag,
     /// The line content (without trailing newline).
     pub content: String,
-}
-
-/// Paginated response wrapper for document validation results.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PaginatedDocuments {
-    /// The current page of document results.
-    pub items: Vec<DocumentValidation>,
-    /// Total number of documents matching the query.
-    pub total: u64,
-    /// Zero-based offset of the first item in this page.
-    pub offset: u64,
-    /// Maximum items per page.
-    pub limit: u64,
 }

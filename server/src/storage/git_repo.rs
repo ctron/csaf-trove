@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
 use git2::{Oid, Repository, Signature, Tree};
@@ -202,6 +202,71 @@ pub fn document_versions(
     }
 
     Ok(Some(versions))
+}
+
+/// Counts the distinct versions for multiple documents in a single revwalk.
+///
+/// Returns a map from document URL to version count. Documents not found
+/// in the repo are omitted. More efficient than calling `document_versions`
+/// per document because the repo and revwalk are shared.
+pub fn document_version_counts(repo_path: &Path, urls: &[&str]) -> Result<HashMap<String, u32>> {
+    let repo = Repository::open_bare(repo_path)?;
+
+    let Ok(head) = repo.head() else {
+        return Ok(HashMap::new());
+    };
+
+    let paths: Vec<(String, String)> = urls
+        .iter()
+        .filter_map(|url| {
+            url_to_git_path(url)
+                .ok()
+                .flatten()
+                .map(|path| ((*url).to_string(), path))
+        })
+        .collect();
+
+    if paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut revwalk = repo.revwalk()?;
+    revwalk.push(head.target().context("HEAD has no target")?)?;
+
+    let mut prev_oids: HashMap<&str, Option<Oid>> = HashMap::new();
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+
+    for oid in revwalk {
+        let oid = oid?;
+        let commit = repo.find_commit(oid)?;
+        let tree = commit.tree()?;
+
+        for (url, git_path) in &paths {
+            let current_oid = blob_oid_at_path(&tree, git_path)?;
+            let prev = prev_oids.get(url.as_str()).copied().flatten();
+
+            let changed = match (current_oid, prev) {
+                (Some(cur), Some(prv)) => cur != prv,
+                (Some(_), None) => true,
+                (None, Some(_)) => {
+                    prev_oids.insert(url, None);
+                    continue;
+                }
+                (None, None) => continue,
+            };
+
+            prev_oids.insert(url, current_oid);
+
+            if changed {
+                *counts.entry(url).or_default() += 1;
+            }
+        }
+    }
+
+    Ok(counts
+        .into_iter()
+        .map(|(url, count)| (url.to_string(), count))
+        .collect())
 }
 
 /// Reads the raw content of a document blob at a specific commit.
@@ -669,6 +734,31 @@ mod tests {
         assert!(
             has_changes,
             "formatting-only change should still produce a visible diff"
+        );
+    }
+
+    #[test]
+    fn version_counts_batch() {
+        let file_a = "example.com/advisories/2024/adv-001.json";
+        let file_b = "example.com/advisories/2024/adv-002.json";
+        let (_dir, bare_path) = create_test_repo(&[(file_a, b"{\"v\":1}"), (file_b, b"{\"v\":1}")]);
+
+        let work_path = _dir.path().join("work");
+        add_commit(&work_path, file_a, b"{\"v\":2}", "update a");
+
+        let url_a = "https://example.com/advisories/2024/adv-001.json";
+        let url_b = "https://example.com/advisories/2024/adv-002.json";
+
+        let counts = document_version_counts(&bare_path, &[url_a, url_b]).unwrap();
+        assert_eq!(
+            counts.get(url_a).copied(),
+            Some(2),
+            "modified file should have 2 versions"
+        );
+        assert_eq!(
+            counts.get(url_b).copied(),
+            Some(1),
+            "unmodified file should have 1 version"
         );
     }
 }

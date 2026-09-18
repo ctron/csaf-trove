@@ -5,11 +5,13 @@ pub mod state;
 
 use std::path::{Path, PathBuf};
 
+use csaf_trove_common::Paginated;
+
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
-        DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument,
-        PaginatedDocuments, ProviderDetail, ProviderSummary, RevisionEntry,
+        DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, ProviderDetail,
+        ProviderSummary, RevisionEntry,
     },
     source::sanitize_domain,
     state::SyncState,
@@ -182,6 +184,16 @@ impl Storage {
         documents::build_summary_from_db(&self.results_dir, domain)
     }
 
+    /// Returns paginated sync run history for a provider from the database.
+    pub fn provider_history_paginated(
+        &self,
+        domain: &str,
+        offset: u64,
+        limit: u64,
+    ) -> Result<Option<Paginated<csaf_trove_common::CommitInfo>>> {
+        documents::load_sync_runs_paginated(&self.results_dir, domain, offset, limit)
+    }
+
     /// Loads paginated document validation results for a provider.
     pub fn load_documents_paginated(
         &self,
@@ -189,8 +201,28 @@ impl Storage {
         offset: u64,
         limit: u64,
         status_filter: Option<&str>,
-    ) -> Result<Option<PaginatedDocuments>> {
-        documents::load_documents_paginated(&self.results_dir, domain, offset, limit, status_filter)
+    ) -> Result<Option<Paginated<DocumentValidation>>> {
+        let mut page = documents::load_documents_paginated(
+            &self.results_dir,
+            domain,
+            offset,
+            limit,
+            status_filter,
+        )?;
+
+        if let Some(ref mut page) = page {
+            let repo_path = self.repo_path(domain);
+            if !page.items.is_empty() && repo_path.exists() {
+                let urls: Vec<&str> = page.items.iter().map(|d| d.url.as_str()).collect();
+                if let Ok(counts) = git_repo::document_version_counts(&repo_path, &urls) {
+                    for doc in &mut page.items {
+                        doc.version_count = counts.get(&doc.url).copied();
+                    }
+                }
+            }
+        }
+
+        Ok(page)
     }
 
     /// Loads a single document's validation results by tracking ID.

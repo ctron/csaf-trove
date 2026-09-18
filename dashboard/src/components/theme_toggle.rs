@@ -119,8 +119,8 @@ pub fn ThemeToggle() -> impl IntoView {
     });
 
     // Listen for OS preference changes so System mode updates live.
-    if let Some(mq) = web_sys::window()
-        .and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok()?)
+    if let Some(mq) =
+        web_sys::window().and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok()?)
     {
         let cb = Closure::wrap(Box::new(move || {
             if theme.get_untracked() == Theme::System {

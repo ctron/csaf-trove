@@ -49,10 +49,13 @@ pub struct Config {
     pub server: ServerConfig,
     /// Data directory paths.
     pub data: DataConfig,
-    /// GitHub integration settings.
-    pub github: GithubConfig,
+    /// GitHub integration settings (omit to skip config sync).
+    pub github: Option<GithubConfig>,
     /// Scheduler settings.
     pub scheduler: SchedulerConfig,
+    /// Inline provider sources (alternative to GitHub-managed sources).
+    #[serde(default)]
+    pub source: Vec<Source>,
 }
 
 /// HTTP server configuration.
@@ -209,15 +212,17 @@ impl AppState {
         self.job_notify.send(()).ok();
     }
 
-    /// Syncs the config repo from GitHub and reloads provider sources.
+    /// Syncs the config repo from GitHub (if configured) and reloads provider sources.
     pub async fn sync_and_reload_sources(&self) {
-        let data_dir = self.data_dir.clone();
-        let repo_url = self.config.github.repo.clone();
+        if let Some(github) = &self.config.github {
+            let data_dir = self.data_dir.clone();
+            let repo_url = github.repo.clone();
 
-        match spawn_blocking(move || config_sync::sync(&data_dir, &repo_url)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!("Config sync failed: {e:#}"),
-            Err(e) => tracing::error!("Config sync task failed: {e:#}"),
+            match spawn_blocking(move || config_sync::sync(&data_dir, &repo_url)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::error!("Config sync failed: {e:#}"),
+                Err(e) => tracing::error!("Config sync task failed: {e:#}"),
+            }
         }
 
         self.reload_sources().await;
@@ -297,15 +302,15 @@ async fn main() -> Result<()> {
 
     let webhook_secret = config
         .github
-        .webhook_secret_file
         .as_ref()
+        .and_then(|g| g.webhook_secret_file.as_ref())
         .map(|path| read_secret_file(path))
         .transpose()
         .context("Failed to read webhook secret")?;
 
-    {
+    if let Some(github) = &config.github {
         let sync_dir = data_dir.clone();
-        let sync_url = config.github.repo.clone();
+        let sync_url = github.repo.clone();
         match spawn_blocking(move || config_sync::sync(&sync_dir, &sync_url)).await {
             Ok(Ok(())) => tracing::info!("Initial config sync complete"),
             Ok(Err(e)) => tracing::warn!("Initial config sync failed: {e:#}"),
@@ -313,9 +318,17 @@ async fn main() -> Result<()> {
         }
     }
 
-    let sources = load_sources_from_dir(&data_dir.join("sources"))
+    let mut sources = load_sources_from_dir(&data_dir.join("sources"))
         .await
         .unwrap_or_default();
+
+    for s in &config.source {
+        sources.insert(s.domain.clone(), s.clone());
+    }
+    if !config.source.is_empty() {
+        tracing::info!("Added {} inline source(s) from config", config.source.len());
+    }
+
     tracing::info!("Loaded {} sources", sources.len());
 
     let (job_notify, _) = watch::channel(());

@@ -3,11 +3,13 @@ use std::path::Path;
 use anyhow::Result;
 use rusqlite::Connection;
 
+use csaf_trove_common::Paginated;
+
 use crate::models::{
     result::{
         DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
-        FailingTest, PaginatedDocuments, ProfileResults, ProfileSummary, ProviderSummary,
-        RevisionEntry, SignatureSummary,
+        FailingTest, ProfileResults, ProfileSummary, ProviderSummary, RevisionEntry,
+        SignatureSummary,
     },
     source::sanitize_domain,
 };
@@ -276,12 +278,12 @@ pub fn load_documents_paginated(
     offset: u64,
     limit: u64,
     status_filter: Option<&str>,
-) -> Result<Option<PaginatedDocuments>> {
+) -> Result<Option<Paginated<DocumentValidation>>> {
     let db_path = results_dir
         .join(sanitize_domain(domain))
         .join("documents.db");
     if !db_path.exists() {
-        return Ok(Some(PaginatedDocuments {
+        return Ok(Some(Paginated {
             items: vec![],
             total: 0,
             offset,
@@ -296,7 +298,7 @@ pub fn load_documents_paginated(
         |row| row.get(0),
     )?;
     if !table_exists {
-        return Ok(Some(PaginatedDocuments {
+        return Ok(Some(Paginated {
             items: vec![],
             total: 0,
             offset,
@@ -331,7 +333,7 @@ pub fn load_documents_paginated(
     let doc_rows: Vec<DocumentRow> = rows.collect::<Result<_, _>>()?;
     let items = load_failures_for_docs(&conn, &doc_rows)?;
 
-    Ok(Some(PaginatedDocuments {
+    Ok(Some(Paginated {
         items,
         total,
         offset,
@@ -570,6 +572,7 @@ fn load_failures_for_docs(
                 aggregate_severity: doc.aggregate_severity.clone(),
                 csaf_version: doc.csaf_version.clone(),
                 revision_history: revisions.get(&doc.id).cloned().unwrap_or_default(),
+                version_count: None,
             }
         })
         .collect();
@@ -812,6 +815,80 @@ pub fn load_sync_runs(
         });
     }
     Ok(entries)
+}
+
+/// Loads a paginated list of sync runs for a provider.
+pub fn load_sync_runs_paginated(
+    results_dir: &Path,
+    domain: &str,
+    offset: u64,
+    limit: u64,
+) -> Result<Option<Paginated<csaf_trove_common::CommitInfo>>> {
+    let db_path = results_dir
+        .join(sanitize_domain(domain))
+        .join("documents.db");
+    if !db_path.exists() {
+        return Ok(Some(Paginated {
+            items: vec![],
+            total: 0,
+            offset,
+            limit,
+        }));
+    }
+    let conn = Connection::open(db_path)?;
+
+    let table_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_runs')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !table_exists {
+        return Ok(Some(Paginated {
+            items: vec![],
+            total: 0,
+            offset,
+            limit,
+        }));
+    }
+
+    let total: u64 = conn.query_row("SELECT COUNT(*) FROM sync_runs", [], |row| row.get(0))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, timestamp, documents_changed
+         FROM sync_runs
+         ORDER BY id DESC
+         LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+        let id: i64 = row.get(0)?;
+        let ts_str: String = row.get(1)?;
+        let docs: u64 = row.get(2)?;
+        Ok((id, ts_str, docs))
+    })?;
+
+    let mut items = Vec::new();
+    for row in rows {
+        let (id, ts_str, docs) = row?;
+        let timestamp = chrono::DateTime::parse_from_rfc3339(&ts_str)
+            .map(|dt| {
+                time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+            })
+            .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+        items.push(csaf_trove_common::CommitInfo {
+            id: id.to_string(),
+            message: String::new(),
+            timestamp,
+            files_changed: docs as usize,
+        });
+    }
+
+    Ok(Some(Paginated {
+        items,
+        total,
+        offset,
+        limit,
+    }))
 }
 
 /// Builds a `ProfileSummary` from valid and invalid counts.

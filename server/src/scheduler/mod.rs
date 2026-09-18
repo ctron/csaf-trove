@@ -7,15 +7,17 @@ use tokio::{sync::Semaphore, task::spawn_blocking, time::sleep};
 /// Runs the periodic scheduler loop, syncing all enabled providers on each interval.
 pub async fn run(state: Arc<AppState>) {
     let interval = state.config.scheduler.sync_interval;
-    let poll_interval = state.config.github.poll_interval;
 
-    let state_poll = state.clone();
-    tokio::spawn(async move {
-        loop {
-            sleep(poll_interval).await;
-            state_poll.sync_and_reload_sources().await;
-        }
-    });
+    if let Some(github) = &state.config.github {
+        let poll_interval = github.poll_interval;
+        let state_poll = state.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(poll_interval).await;
+                state_poll.sync_and_reload_sources().await;
+            }
+        });
+    }
 
     loop {
         sync_all(&state).await;

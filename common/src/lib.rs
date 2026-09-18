@@ -1,6 +1,19 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+/// Generic paginated response wrapper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Paginated<T> {
+    /// The current page of results.
+    pub items: Vec<T>,
+    /// Total number of items matching the query.
+    pub total: u64,
+    /// Zero-based offset of the first item in this page.
+    pub offset: u64,
+    /// Maximum items per page.
+    pub limit: u64,
+}
+
 /// Summary of a single git commit from a provider's sync history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitInfo {

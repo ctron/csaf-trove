@@ -133,6 +133,9 @@ pub struct DocumentValidation {
     pub csaf_version: Option<String>,
     #[serde(default)]
     pub revision_history: Vec<RevisionEntry>,
+    /// Number of distinct git versions.
+    #[serde(default)]
+    pub version_count: Option<u32>,
 }
 
 /// A single entry in the CSAF revision history.
@@ -169,13 +172,8 @@ pub struct DocumentCheckFailure {
     pub severity: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PaginatedDocuments {
-    pub items: Vec<DocumentValidation>,
-    pub total: u64,
-    pub offset: u64,
-    pub limit: u64,
-}
+/// Paginated document validation results.
+pub type PaginatedDocuments = csaf_trove_common::Paginated<DocumentValidation>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentVersionInfo {
