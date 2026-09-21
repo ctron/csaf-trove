@@ -8,12 +8,12 @@ use crate::{
     storage::{ProviderInfo, git_repo},
 };
 use anyhow::{Context, Result};
-use chrono::Utc;
 use csaf_walker::model::metadata::{ProviderMetadata, Role};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use time::OffsetDateTime;
 
 /// Runs the full pipeline (sync, validate, report) for a provider with job status tracking.
 ///
@@ -33,7 +33,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
     tracing::info!("Starting pipeline for {domain}");
 
     let last_completed = state.get_job(domain).await.and_then(|j| j.completed_at);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
 
     let job = JobStatus {
         status: JobPhase::Running,
@@ -55,8 +55,8 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
         Ok(()) => {
             let mut job = state.get_job(domain).await.unwrap_or_else(|| JobStatus {
                 status: JobPhase::Completed,
-                started_at: Utc::now(),
-                completed_at: Some(Utc::now()),
+                started_at: OffsetDateTime::now_utc(),
+                completed_at: Some(OffsetDateTime::now_utc()),
                 phase: None,
                 documents_synced: 0,
                 documents_validated: 0,
@@ -66,7 +66,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
                 phase_started_at: None,
             });
             job.status = JobPhase::Completed;
-            job.completed_at = Some(Utc::now());
+            job.completed_at = Some(OffsetDateTime::now_utc());
             job.phase = None;
             state.update_job(domain, job.clone()).await;
             persist_job_counts(state, domain, &job).await;
@@ -75,8 +75,8 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
         Err(e) => {
             let mut job = state.get_job(domain).await.unwrap_or_else(|| JobStatus {
                 status: JobPhase::Failed,
-                started_at: Utc::now(),
-                completed_at: Some(Utc::now()),
+                started_at: OffsetDateTime::now_utc(),
+                completed_at: Some(OffsetDateTime::now_utc()),
                 phase: None,
                 documents_synced: 0,
                 documents_validated: 0,
@@ -86,7 +86,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
                 phase_started_at: None,
             });
             job.status = JobPhase::Failed;
-            job.completed_at = Some(Utc::now());
+            job.completed_at = Some(OffsetDateTime::now_utc());
             job.error = Some(format!("{e:#}"));
             state.update_job(domain, job).await;
             tracing::error!("Pipeline for {domain} failed: {e:#}");
@@ -113,13 +113,21 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
         }
     }
 
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     if let Err(e) = state
         .storage
-        .save_sync_run(domain, &now, job.documents_synced)
+        .save_sync_run(domain, now, job.documents_synced)
         .await
     {
         tracing::warn!("Failed to save sync run for {domain}: {e}");
+    }
+
+    if let Ok(Some(points)) = state.storage.recent_sync_points(domain, 30).await {
+        state
+            .recent_sync_points
+            .write()
+            .await
+            .insert(domain.to_string(), points);
     }
 }
 
@@ -162,7 +170,15 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     {
         let repo = repo_path.clone();
         let worktree = worktree_dir.clone();
-        let msg = format!("sync: {}", Utc::now().format("%Y-%m-%dT%H:%MZ"));
+        let now = OffsetDateTime::now_utc();
+        let msg = format!(
+            "sync: {:04}-{:02}-{:02}T{:02}:{:02}Z",
+            now.year(),
+            now.month() as u8,
+            now.day(),
+            now.hour(),
+            now.minute(),
+        );
         tokio::task::spawn_blocking(move || git_repo::commit_all(&repo, &worktree, &msg)).await??;
     }
 

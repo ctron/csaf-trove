@@ -7,6 +7,7 @@ use web_sys::{CloseEvent, MessageEvent, WebSocket};
 use crate::components::{
     badge::{Badge, BadgeVariant},
     section_heading::SectionHeading,
+    sparkline::Sparkline,
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{JobStatus, encode_path_segment};
@@ -143,6 +144,11 @@ pub fn SyncStatusPage() -> impl IntoView {
                 if map.is_empty() {
                     view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Waiting for data\u{2026}"</p> }.into_any()
                 } else {
+                    let global_max = map.values()
+                        .flat_map(|j| j.recent_sync_points.iter().map(|p| p.count))
+                        .max()
+                        .unwrap_or(1);
+
                     let mut entries: Vec<_> = map.into_iter().collect();
                     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -156,6 +162,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     <Th>"Progress"</Th>
                                     <Th>"ETA"</Th>
                                     <Th>"Last Run"</Th>
+                                    <Th>"History"</Th>
                                     <Th>"Error"</Th>
                                 </tr>
                             </Thead>
@@ -182,6 +189,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     let error = job.error.clone().unwrap_or_default();
                                     let domain_display = domain.clone();
                                     let domain_href = format!("/sync/{}", encode_path_segment(&domain));
+                                    let points = job.recent_sync_points.clone();
                                     view! {
                                         <tr>
                                             <Td><a href={domain_href}>{domain_display}</a></Td>
@@ -190,6 +198,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                             <Td class="whitespace-nowrap">{progress}</Td>
                                             <Td class="whitespace-nowrap">{eta_display}</Td>
                                             <Td class="whitespace-nowrap"><span title={last_run_title}>{last_run_display}</span></Td>
+                                            <Td><Sparkline points=points global_max=global_max /></Td>
                                             <Td>{error}</Td>
                                         </tr>
                                     }

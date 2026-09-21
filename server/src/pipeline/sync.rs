@@ -1,7 +1,6 @@
 use std::{fmt::Debug, path::Path, sync::Arc, time::SystemTime};
 
 use anyhow::Result;
-use chrono::Utc;
 use csaf_walker::{
     common::{
         fetcher::{Fetcher, FetcherOptions},
@@ -14,6 +13,7 @@ use csaf_walker::{
     source::{HttpOptions, HttpSource, Source},
     walker::Walker,
 };
+use time::OffsetDateTime;
 
 use crate::{AppState, models::source::Source as AppSource};
 
@@ -142,8 +142,8 @@ pub async fn sync_provider(
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    sync_state.last_sync = Some(Utc::now());
-    sync_state.since_token = Some(Utc::now());
+    sync_state.last_sync = Some(OffsetDateTime::now_utc());
+    sync_state.since_token = Some(OffsetDateTime::now_utc());
     state.storage.save_sync_state(&sync_state).await?;
 
     tracing::info!("Sync complete for {domain}");

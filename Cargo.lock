@@ -1440,6 +1440,7 @@ name = "csaf-trove-entity"
 version = "0.1.0-alpha.24"
 dependencies = [
  "sea-orm",
+ "time",
 ]
 
 [[package]]

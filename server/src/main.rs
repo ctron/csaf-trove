@@ -18,9 +18,10 @@ use std::{
 use actix_web::{App, HttpServer, web};
 use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
-use chrono::Utc;
 use clap::Parser;
+use csaf_trove_common::SyncPoint;
 use serde::Deserialize;
+use time::OffsetDateTime;
 use tokio::{
     sync::{Mutex, Notify, RwLock, watch},
     task::spawn_blocking,
@@ -162,6 +163,8 @@ pub struct AppState {
     pub sources_changed: Notify,
     /// Notifies WebSocket clients when job status changes.
     pub job_notify: watch::Sender<()>,
+    /// Cached recent sync points per provider for sparkline rendering.
+    pub recent_sync_points: RwLock<HashMap<String, Vec<SyncPoint>>>,
 }
 
 impl AppState {
@@ -216,7 +219,7 @@ impl AppState {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
             job.phase = Some(phase.to_string());
-            job.phase_started_at = Some(Utc::now());
+            job.phase_started_at = Some(OffsetDateTime::now_utc());
         }
         drop(jobs);
         self.job_notify.send(()).ok();
@@ -384,6 +387,7 @@ async fn main() -> Result<()> {
         pipeline_locks: RwLock::new(HashMap::new()),
         sources_changed: Notify::new(),
         job_notify,
+        recent_sync_points: RwLock::new(HashMap::new()),
     });
 
     if let Ok(sync_states) = state.storage.list_sync_states().await {
@@ -408,6 +412,16 @@ async fn main() -> Result<()> {
             }
         }
         tracing::info!("Restored {} job statuses from persisted state", jobs.len());
+    }
+
+    {
+        let sources = state.sources.read().await;
+        let mut points = state.recent_sync_points.write().await;
+        for domain in sources.keys() {
+            if let Ok(Some(p)) = state.storage.recent_sync_points(domain, 30).await {
+                points.insert(domain.clone(), p);
+            }
+        }
     }
 
     let scheduler_state = state.clone();

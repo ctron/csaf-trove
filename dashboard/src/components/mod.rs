@@ -8,6 +8,7 @@ pub mod profile_badge;
 pub mod progress_bar;
 pub mod section_heading;
 pub mod signature_badge;
+pub mod sparkline;
 pub mod table;
 pub mod tabs;
 pub mod theme_toggle;

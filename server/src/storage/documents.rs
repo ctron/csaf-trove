@@ -7,8 +7,9 @@ use sea_orm::{
     TransactionTrait,
 };
 
-use csaf_trove_common::Paginated;
+use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
 use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
+use time::OffsetDateTime;
 
 use crate::models::result::{
     DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
@@ -539,11 +540,11 @@ fn build_profile_from_counts(valid: u64, invalid: u64) -> ProfileSummary {
 /// Records a completed sync run with the number of documents that changed.
 pub async fn save_sync_run(
     db: &DatabaseConnection,
-    timestamp: &chrono::DateTime<chrono::Utc>,
+    timestamp: OffsetDateTime,
     documents_changed: u64,
 ) -> Result<()> {
     sync_run::ActiveModel {
-        timestamp: Set(timestamp.to_rfc3339()),
+        timestamp: Set(timestamp),
         documents_changed: Set(documents_changed as i64),
         ..Default::default()
     }
@@ -553,10 +554,7 @@ pub async fn save_sync_run(
 }
 
 /// Loads the most recent sync runs for a provider.
-pub async fn load_sync_runs(
-    db: &DatabaseConnection,
-    max_entries: u64,
-) -> Result<Vec<csaf_trove_common::CommitInfo>> {
+pub async fn load_sync_runs(db: &DatabaseConnection, max_entries: u64) -> Result<Vec<CommitInfo>> {
     let rows = sync_run::Entity::find()
         .order_by_desc(sync_run::Column::Id)
         .limit(max_entries)
@@ -565,19 +563,11 @@ pub async fn load_sync_runs(
 
     let entries = rows
         .into_iter()
-        .map(|row| {
-            let timestamp = chrono::DateTime::parse_from_rfc3339(&row.timestamp)
-                .map(|dt| {
-                    time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
-                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
-                })
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            csaf_trove_common::CommitInfo {
-                id: row.id.to_string(),
-                message: String::new(),
-                timestamp,
-                files_changed: row.documents_changed as usize,
-            }
+        .map(|row| CommitInfo {
+            id: row.id.to_string(),
+            message: String::new(),
+            timestamp: row.timestamp,
+            files_changed: row.documents_changed as usize,
         })
         .collect();
 
@@ -589,7 +579,7 @@ pub async fn load_sync_runs_paginated(
     db: &DatabaseConnection,
     offset: u64,
     limit: u64,
-) -> Result<Paginated<csaf_trove_common::CommitInfo>> {
+) -> Result<Paginated<CommitInfo>> {
     let total = sync_run::Entity::find().count(db).await?;
 
     let rows = sync_run::Entity::find()
@@ -601,19 +591,11 @@ pub async fn load_sync_runs_paginated(
 
     let items = rows
         .into_iter()
-        .map(|row| {
-            let timestamp = chrono::DateTime::parse_from_rfc3339(&row.timestamp)
-                .map(|dt| {
-                    time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
-                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
-                })
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            csaf_trove_common::CommitInfo {
-                id: row.id.to_string(),
-                message: String::new(),
-                timestamp,
-                files_changed: row.documents_changed as usize,
-            }
+        .map(|row| CommitInfo {
+            id: row.id.to_string(),
+            message: String::new(),
+            timestamp: row.timestamp,
+            files_changed: row.documents_changed as usize,
         })
         .collect();
 
@@ -623,6 +605,29 @@ pub async fn load_sync_runs_paginated(
         offset,
         limit,
     })
+}
+
+/// Loads the most recent sync runs as sparkline data points in chronological order.
+pub async fn load_recent_sync_points(
+    db: &DatabaseConnection,
+    limit: u64,
+) -> Result<Vec<SyncPoint>> {
+    let rows = sync_run::Entity::find()
+        .order_by_desc(sync_run::Column::Id)
+        .limit(limit)
+        .all(db)
+        .await?;
+
+    let mut points: Vec<SyncPoint> = rows
+        .into_iter()
+        .map(|row| SyncPoint {
+            timestamp: row.timestamp,
+            count: row.documents_changed as u64,
+        })
+        .collect();
+    points.reverse();
+
+    Ok(points)
 }
 
 /// Upserts provider metadata info for aggregator generation.

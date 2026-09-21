@@ -1,3 +1,4 @@
+use csaf_trove_common::SyncPoint;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +106,9 @@ pub struct JobStatus {
     /// When the provider last completed a sync (ISO 8601).
     #[serde(default)]
     pub last_run: Option<String>,
+    /// Recent sync points in chronological order.
+    #[serde(default)]
+    pub recent_sync_points: Vec<SyncPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

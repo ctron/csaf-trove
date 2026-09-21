@@ -1,4 +1,5 @@
 use sea_orm::entity::prelude::*;
+use time::OffsetDateTime;
 
 #[sea_orm::model]
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -6,7 +7,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    pub timestamp: String,
+    pub timestamp: OffsetDateTime,
     pub documents_changed: i64,
 }
 

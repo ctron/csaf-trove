@@ -1,8 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use actix_web::{HttpRequest, HttpResponse, web};
-use chrono::Utc;
+use csaf_trove_common::SyncPoint;
 use serde::Serialize;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{auth::verify_bearer_token, error::ApiError};
 use crate::{
@@ -24,22 +25,26 @@ struct SyncStatusEntry {
     /// When the provider last completed a sync (ISO 8601).
     #[serde(skip_serializing_if = "Option::is_none")]
     last_run: Option<String>,
+    /// Recent sync points in chronological order for sparkline rendering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recent_sync_points: Vec<SyncPoint>,
 }
 
 /// Builds status entries with computed durations for all providers.
 async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEntry> {
     let jobs = state.jobs.read().await;
-    let now = Utc::now();
+    let sparklines = state.recent_sync_points.read().await;
+    let now = OffsetDateTime::now_utc();
 
     jobs.iter()
         .map(|(domain, job)| {
             let duration_seconds = match job.status {
                 JobPhase::Running | JobPhase::Pending => {
-                    Some((now - job.started_at).num_milliseconds() as f64 / 1000.0)
+                    Some((now - job.started_at).as_seconds_f64())
                 }
                 JobPhase::Completed | JobPhase::Failed => job
                     .completed_at
-                    .map(|end| (end - job.started_at).num_milliseconds() as f64 / 1000.0),
+                    .map(|end| (end - job.started_at).as_seconds_f64()),
             };
 
             let eta = if job.status == JobPhase::Running {
@@ -49,9 +54,13 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
             };
 
             let last_run = match job.status {
-                JobPhase::Completed | JobPhase::Failed => job.completed_at.map(|t| t.to_rfc3339()),
-                _ => job.last_completed_at.map(|t| t.to_rfc3339()),
+                JobPhase::Completed | JobPhase::Failed => {
+                    job.completed_at.and_then(|t| t.format(&Rfc3339).ok())
+                }
+                _ => job.last_completed_at.and_then(|t| t.format(&Rfc3339).ok()),
             };
+
+            let recent_sync_points = sparklines.get(domain).cloned().unwrap_or_default();
 
             (
                 domain.clone(),
@@ -60,6 +69,7 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
                     duration_seconds,
                     eta,
                     last_run,
+                    recent_sync_points,
                 },
             )
         })
@@ -67,9 +77,9 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
 }
 
 /// Computes a human-readable ETA for a running job based on the current phase progress.
-fn compute_eta(job: &JobStatus, now: chrono::DateTime<Utc>) -> Option<String> {
+fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
     let phase_start = job.phase_started_at?;
-    let elapsed = (now - phase_start).num_seconds() as f64;
+    let elapsed = (now - phase_start).as_seconds_f64();
     if elapsed <= 0.0 {
         return None;
     }

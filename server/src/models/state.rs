@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// Persisted state tracking incremental sync progress for a provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -7,9 +7,11 @@ pub struct SyncState {
     /// Domain name of the provider.
     pub domain: String,
     /// Timestamp of the last successful sync.
-    pub last_sync: Option<DateTime<Utc>>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub last_sync: Option<OffsetDateTime>,
     /// Opaque token for incremental fetching (typically a timestamp).
-    pub since_token: Option<DateTime<Utc>>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub since_token: Option<OffsetDateTime>,
     /// Number of documents fetched during the last sync.
     pub documents_synced: u64,
     /// Number of documents validated during the last run.
@@ -39,9 +41,11 @@ pub struct JobStatus {
     /// Current lifecycle phase of the job.
     pub status: JobPhase,
     /// When the job was started.
-    pub started_at: DateTime<Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub started_at: OffsetDateTime,
     /// When the job finished, if it has.
-    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub completed_at: Option<OffsetDateTime>,
     /// Human-readable label for the current pipeline stage.
     pub phase: Option<String>,
     /// Documents fetched so far.
@@ -54,10 +58,10 @@ pub struct JobStatus {
     pub error: Option<String>,
     /// When the previous run completed (carried forward when a new run starts).
     #[serde(skip)]
-    pub last_completed_at: Option<DateTime<Utc>>,
+    pub last_completed_at: Option<OffsetDateTime>,
     /// When the current pipeline phase began (used for ETA calculation).
     #[serde(skip)]
-    pub phase_started_at: Option<DateTime<Utc>>,
+    pub phase_started_at: Option<OffsetDateTime>,
 }
 
 /// Lifecycle phases of a pipeline job.

@@ -14,6 +14,16 @@ pub struct Paginated<T> {
     pub limit: u64,
 }
 
+/// A single data point for the sync history sparkline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncPoint {
+    /// Timestamp of the sync run.
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
+    /// Number of documents changed.
+    pub count: u64,
+}
+
 /// Summary of a single git commit from a provider's sync history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitInfo {

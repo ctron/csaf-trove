@@ -6,7 +6,8 @@ pub mod state;
 
 use std::path::{Path, PathBuf};
 
-use csaf_trove_common::Paginated;
+use csaf_trove_common::{Paginated, SyncPoint};
+use time::OffsetDateTime;
 
 use crate::models::{
     metrics::MetricsTimeSeries,
@@ -130,11 +131,27 @@ impl Storage {
         Ok(Some(runs))
     }
 
+    /// Returns the last N sync points for a provider in chronological order.
+    pub async fn recent_sync_points(
+        &self,
+        domain: &str,
+        limit: u64,
+    ) -> Result<Option<Vec<SyncPoint>>> {
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(None);
+        };
+        let points = documents::load_recent_sync_points(&db, limit).await?;
+        if points.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(points))
+    }
+
     /// Records a completed sync run with the number of documents changed.
     pub async fn save_sync_run(
         &self,
         domain: &str,
-        timestamp: &chrono::DateTime<chrono::Utc>,
+        timestamp: OffsetDateTime,
         documents_changed: u64,
     ) -> Result<()> {
         let db = self.db.get(domain).await?;
