@@ -78,7 +78,7 @@ impl DbPool {
     /// Opens a SQLite connection, sets PRAGMAs, and runs pending migrations.
     async fn open_and_migrate(&self, key: &str) -> Result<DatabaseConnection> {
         let dir = self.results_dir.join(key);
-        std::fs::create_dir_all(&dir)?;
+        tokio::fs::create_dir_all(&dir).await?;
         let db_path = dir.join("documents.db");
 
         let url = format!("sqlite://{}?mode=rwc", db_path.display());

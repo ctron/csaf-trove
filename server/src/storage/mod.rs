@@ -376,9 +376,8 @@ impl Storage {
     /// Loads provider metadata info for all providers that have results directories.
     pub async fn load_all_provider_info(&self) -> Result<Vec<(String, ProviderInfo)>> {
         let mut result = Vec::new();
-        let entries = std::fs::read_dir(&self.results_dir)?;
-        for entry in entries {
-            let entry = entry?;
+        let mut entries = tokio::fs::read_dir(&self.results_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
             if !entry.path().is_dir() {
                 continue;
             }

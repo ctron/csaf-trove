@@ -154,7 +154,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
 
     if let Err(e) = &sync_result {
         tracing::error!("Sync failed for {domain}: {e:#}");
-        cleanup_worktree(&worktree_dir);
+        cleanup_worktree(&worktree_dir).await;
         return sync_result;
     }
 
@@ -181,7 +181,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     state.update_job_phase(domain, "report").await;
     crate::pipeline::report::generate_report(state, source).await?;
 
-    cleanup_worktree(&worktree_dir);
+    cleanup_worktree(&worktree_dir).await;
     Ok(())
 }
 
@@ -286,9 +286,9 @@ fn setup_worktree_incremental(
     Ok(())
 }
 
-fn cleanup_worktree(worktree_dir: &PathBuf) {
+async fn cleanup_worktree(worktree_dir: &PathBuf) {
     if worktree_dir.exists()
-        && let Err(e) = std::fs::remove_dir_all(worktree_dir)
+        && let Err(e) = tokio::fs::remove_dir_all(worktree_dir).await
     {
         tracing::warn!(
             "Failed to clean up worktree {}: {e}",
