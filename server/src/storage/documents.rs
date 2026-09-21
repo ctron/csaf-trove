@@ -78,6 +78,7 @@ fn create_tables(conn: &Connection) -> Result<()> {
     migrate_add_metadata_columns(conn)?;
     migrate_add_severity_columns(conn)?;
     migrate_add_sync_runs(conn)?;
+    migrate_add_provider_info(conn)?;
     Ok(())
 }
 
@@ -903,5 +904,95 @@ fn build_profile_from_counts(valid: u64, invalid: u64) -> ProfileSummary {
         valid,
         invalid,
         pass_rate,
+    }
+}
+
+/// Persisted provider metadata fields for aggregator generation.
+#[derive(Debug, Clone)]
+pub struct ProviderInfo {
+    /// Canonical URL of the provider's `provider-metadata.json`.
+    pub canonical_url: String,
+    /// Publisher name.
+    pub publisher_name: String,
+    /// Publisher category (e.g. `"vendor"`).
+    pub publisher_category: String,
+    /// Publisher namespace URI.
+    pub publisher_namespace: String,
+    /// Role of the issuing party (e.g. `"csaf_provider"`).
+    pub role: Option<String>,
+    /// Whether the provider consents to being listed by aggregators.
+    pub list_on_aggregators: bool,
+    /// Whether the provider consents to being mirrored by aggregators.
+    pub mirror_on_aggregators: bool,
+    /// When the provider metadata was last updated.
+    pub last_updated: String,
+}
+
+/// Creates the `provider_info` table (idempotent).
+fn migrate_add_provider_info(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS provider_info (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            canonical_url TEXT NOT NULL,
+            publisher_name TEXT NOT NULL,
+            publisher_category TEXT NOT NULL,
+            publisher_namespace TEXT NOT NULL,
+            role TEXT,
+            list_on_aggregators INTEGER NOT NULL DEFAULT 1,
+            mirror_on_aggregators INTEGER NOT NULL DEFAULT 1,
+            last_updated TEXT NOT NULL
+        )",
+    )?;
+    Ok(())
+}
+
+/// Upserts provider metadata info for aggregator generation.
+pub fn save_provider_info(results_dir: &Path, domain: &str, info: &ProviderInfo) -> Result<()> {
+    let conn = open_db(results_dir, domain)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO provider_info (
+            id, canonical_url, publisher_name, publisher_category,
+            publisher_namespace, role, list_on_aggregators,
+            mirror_on_aggregators, last_updated
+        ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            info.canonical_url,
+            info.publisher_name,
+            info.publisher_category,
+            info.publisher_namespace,
+            info.role,
+            info.list_on_aggregators,
+            info.mirror_on_aggregators,
+            info.last_updated,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Loads the persisted provider metadata info, if available.
+pub fn load_provider_info(results_dir: &Path, domain: &str) -> Result<Option<ProviderInfo>> {
+    let conn = open_db(results_dir, domain)?;
+    let mut stmt = conn.prepare(
+        "SELECT canonical_url, publisher_name, publisher_category,
+                publisher_namespace, role, list_on_aggregators,
+                mirror_on_aggregators, last_updated
+         FROM provider_info WHERE id = 1",
+    )?;
+    let result = stmt.query_row([], |row| {
+        Ok(ProviderInfo {
+            canonical_url: row.get(0)?,
+            publisher_name: row.get(1)?,
+            publisher_category: row.get(2)?,
+            publisher_namespace: row.get(3)?,
+            role: row.get(4)?,
+            list_on_aggregators: row.get(5)?,
+            mirror_on_aggregators: row.get(6)?,
+            last_updated: row.get(7)?,
+        })
+    });
+    match result {
+        Ok(info) => Ok(Some(info)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }

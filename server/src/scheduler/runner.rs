@@ -1,15 +1,18 @@
-use std::{path::PathBuf, sync::Arc};
-
-use anyhow::{Context, Result};
-use chrono::Utc;
-
 use crate::{
     AppState,
     models::{
         source::{Source, sanitize_domain},
         state::{JobPhase, JobStatus},
     },
-    storage::git_repo,
+    pipeline::store::DIR_METADATA,
+    storage::{ProviderInfo, git_repo},
+};
+use anyhow::{Context, Result};
+use chrono::Utc;
+use csaf_walker::model::metadata::{ProviderMetadata, Role};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// Runs the full pipeline (sync, validate, report) for a provider with job status tracking.
@@ -162,6 +165,8 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         tokio::task::spawn_blocking(move || git_repo::commit_all(&repo, &worktree, &msg)).await??;
     }
 
+    persist_provider_metadata(state, domain, &worktree_dir).await;
+
     state.update_job_phase(domain, "validate").await;
     let total = crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;
 
@@ -288,5 +293,48 @@ fn cleanup_worktree(worktree_dir: &PathBuf) {
             "Failed to clean up worktree {}: {e}",
             worktree_dir.display()
         );
+    }
+}
+
+/// Reads provider-metadata.json from the worktree and persists aggregator-relevant fields.
+async fn persist_provider_metadata(state: &Arc<AppState>, domain: &str, worktree_dir: &Path) {
+    let metadata_path = worktree_dir
+        .join(DIR_METADATA)
+        .join("provider-metadata.json");
+    let data = match tokio::fs::read_to_string(&metadata_path).await {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    let metadata: ProviderMetadata = match serde_json::from_str(&data) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("{domain}: failed to parse provider-metadata.json: {e}");
+            return;
+        }
+    };
+
+    let role_str = match metadata.role {
+        Role::Publisher => "csaf_publisher",
+        Role::Provider => "csaf_provider",
+        Role::TrustedProvider => "csaf_trusted_provider",
+    };
+
+    let info = ProviderInfo {
+        canonical_url: metadata.canonical_url.to_string(),
+        publisher_name: metadata.publisher.name.clone(),
+        publisher_category: serde_json::to_value(&metadata.publisher.category)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "other".to_string()),
+        publisher_namespace: metadata.publisher.namespace.clone(),
+        role: Some(role_str.to_string()),
+        list_on_aggregators: metadata.list_on_csaf_aggregators,
+        mirror_on_aggregators: metadata.mirror_on_csaf_aggregators,
+        last_updated: metadata.last_updated.to_rfc3339(),
+    };
+
+    if let Err(e) = state.storage.save_provider_info(domain, &info) {
+        tracing::warn!("{domain}: failed to persist provider info: {e}");
     }
 }

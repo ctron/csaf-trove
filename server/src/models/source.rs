@@ -15,6 +15,11 @@ pub struct Source {
     pub accept_v3_signatures: bool,
     /// Number of fetch retries on server errors (defaults to 5 if unset).
     pub retries: Option<usize>,
+    /// Whether to include this provider in the aggregator output.
+    ///
+    /// When `None`, the provider's own `list_on_CSAF_aggregators` /
+    /// `mirror_on_CSAF_aggregators` flags are used.
+    pub aggregator_include: Option<bool>,
 }
 
 fn default_true() -> bool {

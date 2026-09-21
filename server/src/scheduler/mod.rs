@@ -1,6 +1,6 @@
 pub mod runner;
 
-use crate::AppState;
+use crate::{AppState, pipeline::aggregator::generate_aggregator};
 use std::sync::Arc;
 use tokio::{sync::Semaphore, task::spawn_blocking, time::sleep};
 
@@ -21,6 +21,12 @@ pub async fn run(state: Arc<AppState>) {
 
     loop {
         sync_all(&state).await;
+
+        if state.config.aggregator.is_some()
+            && let Err(e) = generate_aggregator(&state).await
+        {
+            tracing::error!("Aggregator generation failed: {e:#}");
+        }
 
         tracing::info!(
             "Scheduled sync complete, sleeping for {}",

@@ -18,6 +18,8 @@ use crate::models::{
 };
 use anyhow::Result;
 
+pub use documents::ProviderInfo;
+
 /// Manages on-disk persistence for repos, state, results, and metrics.
 pub struct Storage {
     /// Directory containing bare git repos per provider.
@@ -315,6 +317,33 @@ impl Storage {
         };
         let doc = extract_metadata_from_json(&blob, commit_id, timestamp)?;
         Ok(Some(doc))
+    }
+
+    /// Saves provider metadata info for aggregator generation.
+    pub fn save_provider_info(&self, domain: &str, info: &ProviderInfo) -> Result<()> {
+        documents::save_provider_info(&self.results_dir, domain, info)
+    }
+
+    /// Loads provider metadata info for a single provider.
+    pub fn load_provider_info(&self, domain: &str) -> Result<Option<ProviderInfo>> {
+        documents::load_provider_info(&self.results_dir, domain)
+    }
+
+    /// Loads provider metadata info for all providers that have results directories.
+    pub fn load_all_provider_info(&self) -> Result<Vec<(String, ProviderInfo)>> {
+        let mut result = Vec::new();
+        let entries = std::fs::read_dir(&self.results_dir)?;
+        for entry in entries {
+            let entry = entry?;
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let key = entry.file_name().to_string_lossy().to_string();
+            if let Ok(Some(info)) = documents::load_provider_info(&self.results_dir, &key) {
+                result.push((key, info));
+            }
+        }
+        Ok(result)
     }
 }
 

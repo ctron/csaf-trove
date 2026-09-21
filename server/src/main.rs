@@ -56,6 +56,37 @@ pub struct Config {
     /// Inline provider sources (alternative to GitHub-managed sources).
     #[serde(default)]
     pub source: Vec<Source>,
+    /// Aggregator settings (omit to disable aggregator output).
+    pub aggregator: Option<AggregatorConfig>,
+}
+
+/// Aggregator configuration for generating `aggregator.json`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AggregatorConfig {
+    /// Aggregator category: `lister` or `aggregator` (mirror).
+    pub category: AggregatorCategory,
+    /// Human-readable name of this aggregator.
+    pub name: String,
+    /// URI namespace for this aggregator.
+    pub namespace: String,
+    /// Canonical URL where `aggregator.json` will be served.
+    pub canonical_url: String,
+    /// Optional contact details.
+    pub contact_details: Option<String>,
+    /// Optional issuing authority description.
+    pub issuing_authority: Option<String>,
+    /// Output directory for generated aggregator files (defaults to `<data_dir>/aggregator`).
+    pub output_dir: Option<PathBuf>,
+}
+
+/// Aggregator category per the CSAF specification.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AggregatorCategory {
+    /// Lists providers without hosting document copies.
+    Lister,
+    /// Mirrors documents from upstream providers.
+    Aggregator,
 }
 
 /// HTTP server configuration.
@@ -137,6 +168,15 @@ impl AppState {
     /// Returns the scratch directory for temporary worktrees.
     pub fn work_dir(&self) -> PathBuf {
         self.data_dir.join("work")
+    }
+
+    /// Returns the output directory for aggregator files.
+    pub fn aggregator_dir(&self) -> PathBuf {
+        self.config
+            .aggregator
+            .as_ref()
+            .and_then(|a| a.output_dir.clone())
+            .unwrap_or_else(|| self.data_dir.join("aggregator"))
     }
 
     /// Reloads provider sources from the sources directory on disk.
@@ -384,6 +424,10 @@ async fn main() -> Result<()> {
             .wrap(TracingLogger::default())
             .app_data(web::Data::from(server_state.clone()))
             .service(web::scope("/api").configure(api::config))
+            .service(
+                web::scope("/.well-known/csaf-aggregator")
+                    .route("/aggregator.json", web::get().to(api::aggregator::get)),
+            )
             .service(ResourceFiles::new("/", generated).resolve_not_found_to_root())
     })
     .bind(&listen)?
