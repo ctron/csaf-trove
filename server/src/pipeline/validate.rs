@@ -379,6 +379,7 @@ fn build_document_results(results: Vec<DocumentResult>) -> Vec<DocumentValidatio
                 csaf_version: doc.csaf_version,
                 revision_history: doc.revision_history,
                 version_count: None,
+                retrieval_error: None,
             }
         })
         .collect()

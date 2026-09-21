@@ -25,6 +25,13 @@ pub struct MetricsEntry {
     /// Signature metrics for this day.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signatures: Option<MetricsSignatureEntry>,
+    /// Number of documents with retrieval errors.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub retrieval_errors: u64,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
 }
 
 /// Profile-level validation counts for a metrics entry.

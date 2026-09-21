@@ -11,6 +11,9 @@ pub struct ProviderSummary {
     #[serde(default)]
     pub signatures: Option<SignatureSummary>,
     pub top_failing_tests: Vec<FailingTest>,
+    /// Number of documents with retrieval errors.
+    #[serde(default)]
+    pub retrieval_errors: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +71,9 @@ pub struct MetricsEntry {
     pub full: Option<MetricsProfileEntry>,
     #[serde(default)]
     pub signatures: Option<MetricsSignatureEntry>,
+    /// Number of documents with retrieval errors.
+    #[serde(default)]
+    pub retrieval_errors: u64,
 }
 
 /// Signature validation counts for a metrics entry.
@@ -140,6 +146,9 @@ pub struct DocumentValidation {
     /// Number of distinct git versions.
     #[serde(default)]
     pub version_count: Option<u32>,
+    /// Retrieval error message from the last sync attempt.
+    #[serde(default)]
+    pub retrieval_error: Option<String>,
 }
 
 /// A single entry in the CSAF revision history.

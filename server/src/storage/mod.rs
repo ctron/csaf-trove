@@ -271,6 +271,16 @@ impl Storage {
         Ok(Some(page))
     }
 
+    /// Persists retrieval errors as document entries with error information.
+    pub async fn save_retrieval_errors(
+        &self,
+        domain: &str,
+        errors: &[(String, String)],
+    ) -> Result<()> {
+        let db = self.db.get(domain).await?;
+        documents::save_retrieval_errors(&db, errors).await
+    }
+
     /// Loads a single document's validation results by tracking ID.
     pub async fn load_document(
         &self,

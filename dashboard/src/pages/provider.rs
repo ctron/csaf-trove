@@ -108,6 +108,7 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let summary = detail.summary;
     let tests = summary.top_failing_tests;
     let signatures = summary.signatures.clone();
+    let retrieval_errors = summary.retrieval_errors;
     let domain = summary.provider.clone();
     let sync_href = format!("/sync/{}", encode_path_segment(&domain));
 
@@ -133,6 +134,13 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                 </div>
 
                 {signatures.map(signature_section)}
+
+                {(retrieval_errors > 0).then(|| view! {
+                    <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                        <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">"Retrieval Errors"</p>
+                        <Badge variant=BadgeVariant::Danger>{retrieval_errors}" failed"</Badge>
+                    </div>
+                })}
             </div>
 
             // Validation card
@@ -276,6 +284,10 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                     active=Signal::derive(move || status_filter.get().as_deref() == Some("passing"))
                     on_click=Callback::new(move |_| { set_status_param.set(Some("passing".into())); set_offset_param.set(None); })
                 >"Passing"</Tab>
+                <Tab
+                    active=Signal::derive(move || status_filter.get().as_deref() == Some("errors"))
+                    on_click=Callback::new(move |_| { set_status_param.set(Some("errors".into())); set_offset_param.set(None); })
+                >"Errors"</Tab>
             </Tabs>
         </div>
 
@@ -303,6 +315,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     let href = format!("/providers/{}/documents/{}", encode_path_segment(&d), doc.tracking_id);
                                     let tid = doc.tracking_id.clone();
                                     let title = doc.title.clone();
+                                    let retrieval_err = doc.retrieval_error.clone();
                                     let (sig_variant, sig_label) = if doc.signature_error.is_some() {
                                         (BadgeVariant::Danger, "Invalid")
                                     } else if doc.signature_present {
@@ -312,7 +325,14 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     };
                                     view! {
                                         <tr>
-                                            <Td><a href={href}>{tid}</a></Td>
+                                            <Td>
+                                                <a href={href}>{tid}</a>
+                                                {retrieval_err.map(|e| view! {
+                                                    <span class="ml-2" title={e}>
+                                                        <Badge variant=BadgeVariant::Danger>"Error"</Badge>
+                                                    </span>
+                                                })}
+                                            </Td>
                                             <Td class="truncate max-w-xs">{title}</Td>
                                             <Td><DocProfileBadge detail=doc.profiles.basic /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.extended /></Td>

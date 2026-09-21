@@ -1,9 +1,11 @@
 use std::{fmt::Debug, path::Path, sync::Arc, time::SystemTime};
 
+use parking_lot::Mutex;
+
 use anyhow::Result;
 use csaf_walker::{
     common::{
-        fetcher::{Fetcher, FetcherOptions},
+        fetcher::Fetcher,
         progress::{Progress, ProgressBar},
         retrieve::RetrievalError,
     },
@@ -14,12 +16,22 @@ use csaf_walker::{
     walker::Walker,
 };
 use time::OffsetDateTime;
+use walker_common::utils::url::Urlify;
 
 use crate::{AppState, models::source::Source as AppSource};
 
 use super::store::{TroveStoreError, TroveStoreVisitor};
 
-/// Wraps [`TroveStoreVisitor`] to increment the synced document count after each advisory.
+/// A document that could not be retrieved during sync.
+#[derive(Debug, Clone)]
+pub struct RetrievalFailure {
+    /// URL of the document that failed to download.
+    pub url: String,
+    /// Human-readable error description.
+    pub error: String,
+}
+
+/// Wraps [`TroveStoreVisitor`] to increment the synced document count and collect retrieval errors.
 struct CountingStoreVisitor {
     /// Inner visitor that performs the actual storage.
     inner: TroveStoreVisitor,
@@ -27,20 +39,22 @@ struct CountingStoreVisitor {
     state: Arc<AppState>,
     /// Provider domain name.
     domain: String,
+    /// Collected retrieval failures (documents that could not be downloaded).
+    retrieval_errors: Arc<Mutex<Vec<RetrievalFailure>>>,
 }
 
 impl<S: Source + Debug> RetrievedVisitor<S> for CountingStoreVisitor
 where
     S::Error: 'static,
 {
-    type Error = TroveStoreError<S>;
+    type Error = TroveStoreError;
     type Context = ();
 
     async fn visit_context(
         &self,
         context: &RetrievalContext<'_>,
     ) -> Result<Self::Context, Self::Error> {
-        self.inner.visit_context(context).await
+        <TroveStoreVisitor as RetrievedVisitor<S>>::visit_context(&self.inner, context).await
     }
 
     async fn visit_advisory(
@@ -48,7 +62,19 @@ where
         context: &Self::Context,
         result: Result<RetrievedAdvisory, RetrievalError<DiscoveredAdvisory, S>>,
     ) -> Result<(), Self::Error> {
-        self.inner.visit_advisory(context, result).await?;
+        if let Err(err) = &result {
+            let url = err.url().to_string();
+            let error = format!("{err}");
+            tracing::warn!("Failed to retrieve {url}: {error}");
+            self.retrieval_errors
+                .lock()
+                .push(RetrievalFailure { url, error });
+            self.state.increment_job_synced(&self.domain).await;
+            return Ok(());
+        }
+
+        <TroveStoreVisitor as RetrievedVisitor<S>>::visit_advisory(&self.inner, context, result)
+            .await?;
         self.state.increment_job_synced(&self.domain).await;
         Ok(())
     }
@@ -85,11 +111,15 @@ impl Progress for JobProgress {
 }
 
 /// Downloads new and changed CSAF documents from a provider into the worktree.
+///
+/// Returns a list of documents that could not be retrieved (e.g. due to HTTP errors).
+/// These are collected instead of aborting the sync so that remaining documents can
+/// still be processed.
 pub async fn sync_provider(
     state: &Arc<AppState>,
     source: &AppSource,
     worktree_dir: &Path,
-) -> Result<()> {
+) -> Result<Vec<RetrievalFailure>> {
     let domain = &source.domain;
 
     let mut sync_state = state.storage.load_sync_state(domain).await?;
@@ -111,11 +141,13 @@ pub async fn sync_provider(
         tracing::info!("{domain}: starting full sync (no since_token)");
     }
 
-    let mut fetcher_options = FetcherOptions::default();
-    if let Some(retries) = source.retries {
-        fetcher_options = fetcher_options.retries(retries);
-    }
-    let fetcher = Fetcher::new(fetcher_options).await?;
+    // TODO: remove custom client once upstream csaf-walker sets a User-Agent in Fetcher::new
+    // (see: https://github.com/ctron/csaf-walker — fetcher omits User-Agent while sender sets it)
+    let client = reqwest::ClientBuilder::new()
+        .user_agent(concat!("csaf-trove/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let fetcher = Fetcher::from(client);
     let metadata = MetadataRetriever::new(domain);
 
     let mut http_options = HttpOptions::default();
@@ -123,12 +155,15 @@ pub async fn sync_provider(
         http_options = http_options.since(SystemTime::from(since));
     }
 
+    let retrieval_errors = Arc::new(Mutex::new(Vec::new()));
+
     let http_source = HttpSource::new(metadata, fetcher, http_options);
     let store = TroveStoreVisitor::new(worktree_dir);
     let counting_store = CountingStoreVisitor {
         inner: store,
         state: state.clone(),
         domain: domain.to_string(),
+        retrieval_errors: retrieval_errors.clone(),
     };
     let retriever = RetrievingVisitor::new(http_source.clone(), counting_store);
     let progress = JobProgress {
@@ -146,6 +181,19 @@ pub async fn sync_provider(
     sync_state.since_token = Some(OffsetDateTime::now_utc());
     state.storage.save_sync_state(&sync_state).await?;
 
-    tracing::info!("Sync complete for {domain}");
-    Ok(())
+    let errors = match Arc::try_unwrap(retrieval_errors) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => std::mem::take(&mut *arc.lock()),
+    };
+
+    if errors.is_empty() {
+        tracing::info!("Sync complete for {domain}");
+    } else {
+        tracing::warn!(
+            "Sync complete for {domain} with {} retrieval error(s)",
+            errors.len()
+        );
+    }
+
+    Ok(errors)
 }

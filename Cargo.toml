@@ -38,6 +38,7 @@ leptos = { version = "0.8", features = ["csr"] }
 leptos_router = "0.8"
 parking_lot = "0.12"
 percent-encoding = "2"
+reqwest = "0.13"
 rusqlite = { version = "0.35", features = ["bundled"] }
 sea-orm = { version = "2.0", features = ["sqlx-sqlite", "runtime-tokio-native-tls", "with-time"] }
 sea-orm-migration = { version = "2.0", features = ["sqlx-sqlite", "runtime-tokio-native-tls"] }

@@ -119,6 +119,7 @@ pub async fn save_documents(
             revision: Set(doc.revision.clone()),
             aggregate_severity: Set(doc.aggregate_severity.clone()),
             csaf_version: Set(doc.csaf_version.clone()),
+            retrieval_error: Set(doc.retrieval_error.clone()),
             ..Default::default()
         };
 
@@ -193,8 +194,12 @@ pub async fn load_documents_paginated(
                     .add(document::Column::BasicPassed.eq(0))
                     .add(document::Column::ExtendedPassed.eq(0))
                     .add(document::Column::FullPassed.eq(0))
-                    .add(document::Column::SignatureError.is_not_null()),
+                    .add(document::Column::SignatureError.is_not_null())
+                    .add(document::Column::RetrievalError.is_not_null()),
             );
+        }
+        Some("errors") => {
+            query = query.filter(document::Column::RetrievalError.is_not_null());
         }
         Some("passing") => {
             query = query.filter(
@@ -349,6 +354,7 @@ async fn load_failures_for_docs(
                 csaf_version: doc.csaf_version.clone(),
                 revision_history: revision_map.get(&doc.id).cloned().unwrap_or_default(),
                 version_count: None,
+                retrieval_error: doc.retrieval_error.clone(),
             }
         })
         .collect();
@@ -421,12 +427,13 @@ pub async fn build_summary_from_db(
                 SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END) AS fi,
                 SUM(CASE WHEN signature_present = 1 AND signature_error IS NULL THEN 1 ELSE 0 END) AS sv,
                 SUM(CASE WHEN signature_present = 1 AND signature_error IS NOT NULL THEN 1 ELSE 0 END) AS si,
-                SUM(CASE WHEN signature_present = 0 THEN 1 ELSE 0 END) AS sm
+                SUM(CASE WHEN signature_present = 0 THEN 1 ELSE 0 END) AS sm,
+                SUM(CASE WHEN retrieval_error IS NOT NULL THEN 1 ELSE 0 END) AS re
             FROM documents",
         ))
         .await?;
 
-    let (total, basic, extended, full, signatures) = match result {
+    let (total, basic, extended, full, signatures, retrieval_errors) = match result {
         Some(row) => {
             let total: i64 = row.try_get("", "total")?;
             let bv: Option<i64> = row.try_get("", "bv")?;
@@ -438,6 +445,7 @@ pub async fn build_summary_from_db(
             let sv: Option<i64> = row.try_get("", "sv")?;
             let si: Option<i64> = row.try_get("", "si")?;
             let sm: Option<i64> = row.try_get("", "sm")?;
+            let re: Option<i64> = row.try_get("", "re")?;
             (
                 total as u64,
                 build_profile_from_counts(bv.unwrap_or(0) as u64, bi.unwrap_or(0) as u64),
@@ -448,6 +456,7 @@ pub async fn build_summary_from_db(
                     invalid: si.unwrap_or(0) as u64,
                     missing: sm.unwrap_or(0) as u64,
                 },
+                re.unwrap_or(0) as u64,
             )
         }
         None => (
@@ -460,6 +469,7 @@ pub async fn build_summary_from_db(
                 invalid: 0,
                 missing: 0,
             },
+            0,
         ),
     };
 
@@ -519,6 +529,7 @@ pub async fn build_summary_from_db(
         },
         signatures: Some(signatures),
         top_failing_tests,
+        retrieval_errors,
     })
 }
 
@@ -662,6 +673,52 @@ pub async fn save_provider_info(db: &DatabaseConnection, info: &ProviderInfo) ->
         .exec(db)
         .await?;
 
+    Ok(())
+}
+
+/// Persists retrieval errors as document entries.
+///
+/// For each `(url, error)` pair, either updates the `retrieval_error` column on an
+/// existing document (matched by tracking ID derived from the URL) or inserts a stub
+/// row when no prior document exists.
+pub async fn save_retrieval_errors(
+    db: &DatabaseConnection,
+    errors: &[(String, String)],
+) -> Result<()> {
+    let txn = db.begin().await?;
+
+    for (url, error) in errors {
+        let tracking_id = url
+            .rsplit('/')
+            .next()
+            .unwrap_or(url)
+            .trim_end_matches(".json")
+            .to_string();
+
+        let existing = document::Entity::find()
+            .filter(document::Column::TrackingId.eq(&tracking_id))
+            .one(&txn)
+            .await?;
+
+        if let Some(doc) = existing {
+            let mut active: document::ActiveModel = doc.into();
+            active.retrieval_error = Set(Some(error.clone()));
+            active.update(&txn).await?;
+        } else {
+            document::ActiveModel {
+                tracking_id: Set(tracking_id),
+                title: Set("Retrieval failed".to_string()),
+                url: Set(url.clone()),
+                retrieval_error: Set(Some(error.clone())),
+                signature_present: Set(0),
+                ..Default::default()
+            }
+            .insert(&txn)
+            .await?;
+        }
+    }
+
+    txn.commit().await?;
     Ok(())
 }
 

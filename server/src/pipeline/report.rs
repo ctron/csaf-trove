@@ -59,6 +59,7 @@ pub async fn generate_report(state: &Arc<AppState>, source: &Source) -> Result<(
             invalid: s.invalid,
             missing: s.missing,
         }),
+        retrieval_errors: summary.retrieval_errors,
     };
 
     metrics.append(entry);

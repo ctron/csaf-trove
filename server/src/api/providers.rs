@@ -35,6 +35,7 @@ pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> 
                 },
                 signatures: None,
                 top_failing_tests: vec![],
+                retrieval_errors: 0,
             });
         }
     }

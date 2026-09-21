@@ -22,16 +22,10 @@ pub struct TroveStoreVisitor {
 
 /// Errors that can occur during storage.
 #[derive(Debug, thiserror::Error)]
-pub enum TroveStoreError<S: Source> {
+pub enum TroveStoreError {
     /// Failed to store a document or metadata.
     #[error("{0:#}")]
     Store(#[from] StoreError),
-    /// Failed to retrieve an advisory from the source.
-    #[error("retrieval of {} failed: {inner}", inner.url())]
-    Retrieval {
-        /// The underlying retrieval error.
-        inner: Box<RetrievalError<DiscoveredAdvisory, S>>,
-    },
     /// General I/O or processing error.
     #[error("{0:#}")]
     Io(anyhow::Error),
@@ -105,7 +99,7 @@ impl<S: Source + Debug> RetrievedVisitor<S> for TroveStoreVisitor
 where
     S::Error: 'static,
 {
-    type Error = TroveStoreError<S>;
+    type Error = TroveStoreError;
     type Context = ();
 
     async fn visit_context(
@@ -126,15 +120,12 @@ where
         _context: &Self::Context,
         result: Result<RetrievedAdvisory, RetrievalError<DiscoveredAdvisory, S>>,
     ) -> Result<(), Self::Error> {
-        let advisory = match result {
-            Ok(adv) => adv,
-            Err(err) => {
-                tracing::warn!("Failed to retrieve advisory {}: {err}", err.url());
-                return Err(TroveStoreError::Retrieval {
-                    inner: Box::new(err),
-                });
-            }
-        };
+        let advisory = result.map_err(|e| {
+            TroveStoreError::Io(anyhow::anyhow!(
+                "unexpected retrieval error (should be handled upstream): {}",
+                e.url()
+            ))
+        })?;
 
         let file = self.advisory_path(&advisory.url).ok_or_else(|| {
             TroveStoreError::Io(anyhow::anyhow!(

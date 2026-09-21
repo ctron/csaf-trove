@@ -33,6 +33,13 @@ pub struct ProviderSummary {
     pub signatures: Option<SignatureSummary>,
     /// Most frequently failing test IDs across all documents.
     pub top_failing_tests: Vec<FailingTest>,
+    /// Number of documents with retrieval errors.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub retrieval_errors: u64,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
 }
 
 /// Validation results per CSAF profile level.
@@ -124,6 +131,9 @@ pub struct DocumentValidation {
     /// Number of distinct git versions (commits where the document blob changed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_count: Option<u32>,
+    /// Retrieval error message from the last sync attempt, if the fetch failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval_error: Option<String>,
 }
 
 /// Per-profile failure information for a single document.

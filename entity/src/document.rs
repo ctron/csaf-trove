@@ -31,6 +31,8 @@ pub struct Model {
     pub revision: Option<String>,
     pub aggregate_severity: Option<String>,
     pub csaf_version: Option<String>,
+    /// Retrieval error message from the last sync attempt, if the fetch failed.
+    pub retrieval_error: Option<String>,
     #[sea_orm(has_many)]
     pub check_failures: HasMany<super::check_failure::Entity>,
     #[sea_orm(has_many)]
