@@ -1496,7 +1496,8 @@ dependencies = [
 [[package]]
 name = "csaf-walker"
 version = "0.18.1"
-source = "git+https://github.com/ctron/csaf-walker.git?branch=main#728d8e31521998fad554c7922dcfd614eb88945c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f3618c7a01265f1a35be39ae54d7ff9e468d6ea1f22fa87502ccb96b401305b"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6598,7 +6599,8 @@ dependencies = [
 [[package]]
 name = "walker-common"
 version = "0.18.1"
-source = "git+https://github.com/ctron/csaf-walker.git?branch=main#728d8e31521998fad554c7922dcfd614eb88945c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2c230c3e1e226854d3e7e59f63cfa7e8a5f043db8be7fd35b924bc67a317eb3"
 dependencies = [
  "anyhow",
  "async-trait",
