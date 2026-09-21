@@ -38,6 +38,7 @@ fn numeric_test_id_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
+/// Fetches the current document detail from the API.
 async fn fetch_document(domain: String, tracking_id: String) -> Result<DocumentValidation, String> {
     let resp = gloo_net::http::Request::get(&format!(
         "/api/providers/{}/document/{tracking_id}",
@@ -52,6 +53,7 @@ async fn fetch_document(domain: String, tracking_id: String) -> Result<DocumentV
     resp.json().await.map_err(|e| e.to_string())
 }
 
+/// Fetches the git version history for a document.
 async fn fetch_versions(
     domain: String,
     tracking_id: String,
@@ -69,6 +71,7 @@ async fn fetch_versions(
     resp.json().await.map_err(|e| e.to_string())
 }
 
+/// Fetches a historical version of a document by commit ID.
 async fn fetch_historical_document(
     domain: String,
     tracking_id: String,
@@ -113,6 +116,7 @@ fn format_timestamp(ts: i64) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
+/// Document detail page with Overview, Validation, Revision, and History tabs.
 #[component]
 pub fn DocumentPage() -> impl IntoView {
     let params = use_params_map();
@@ -166,54 +170,84 @@ pub fn DocumentPage() -> impl IntoView {
                 <BreadcrumbCurrent>{move || tracking_id()}</BreadcrumbCurrent>
             </Breadcrumb>
 
+            <ContentTabs>
+                <ContentTab
+                    active=Signal::derive(move || tab.get() == "overview")
+                    on_click=Callback::new(move |_| {
+                        set_tab.set("overview".into());
+                        set_selected_version.set(None);
+                    })
+                >"Overview"</ContentTab>
+                <ContentTab
+                    active=Signal::derive(move || tab.get() == "validation")
+                    on_click=Callback::new(move |_| {
+                        set_tab.set("validation".into());
+                        set_selected_version.set(None);
+                    })
+                >"Validation"</ContentTab>
+                <ContentTab
+                    active=Signal::derive(move || tab.get() == "revision")
+                    on_click=Callback::new(move |_| {
+                        set_tab.set("revision".into());
+                        set_selected_version.set(None);
+                    })
+                >"Revision"</ContentTab>
+                <ContentTab
+                    active=Signal::derive(move || tab.get() == "history")
+                    on_click=Callback::new(move |_| set_tab.set("history".into()))
+                >"History"</ContentTab>
+            </ContentTabs>
+
             {move || {
-                if selected_version.get().is_some() {
+                if tab.get() == "history" {
                     view! {
-                        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading version..."</p> }>
-                            {move || historical.get().map(|outer| match outer {
-                                Some(Ok(doc)) => view! { <HistoricalDocumentView doc=doc tab=tab set_tab=set_tab /> }.into_any(),
-                                Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
-                                None => view! { <span /> }.into_any(),
-                            })}
-                        </Suspense>
-                        <Suspense fallback=|| view! { <span /> }>
-                            {move || versions.get().map(|result| match result {
-                                Ok(vs) => view! {
-                                    <VersionSelector
-                                        versions=vs
-                                        selected=selected_version
-                                        on_select=set_selected_version
-                                    />
-                                }.into_any(),
-                                _ => view! { <span /> }.into_any(),
-                            })}
-                        </Suspense>
-                        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading diff..."</p> }>
-                            {move || diff.get().map(|outer| match outer {
-                                Some(Ok(lines)) => view! { <DiffView lines=lines /> }.into_any(),
-                                Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-sm py-4">"Diff unavailable: " {e}</p> }.into_any(),
-                                None => view! { <span /> }.into_any(),
-                            })}
-                        </Suspense>
+                        {move || {
+                            if selected_version.get().is_some() {
+                                view! {
+                                    <button
+                                        class="text-sm text-blue-600 dark:text-blue-400 hover:underline mb-4 cursor-pointer"
+                                        on:click=move |_| set_selected_version.set(None)
+                                    >
+                                        "← Back to version list"
+                                    </button>
+                                    <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading version..."</p> }>
+                                        {move || historical.get().map(|outer| match outer {
+                                            Some(Ok(doc)) => view! { <HistoricalVersionDetail doc=doc /> }.into_any(),
+                                            Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
+                                            None => view! { <span /> }.into_any(),
+                                        })}
+                                    </Suspense>
+                                    <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading diff..."</p> }>
+                                        {move || diff.get().map(|outer| match outer {
+                                            Some(Ok(lines)) => view! { <DiffView lines=lines /> }.into_any(),
+                                            Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-sm py-4">"Diff unavailable: " {e}</p> }.into_any(),
+                                            None => view! { <span /> }.into_any(),
+                                        })}
+                                    </Suspense>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading versions..."</p> }>
+                                        {move || versions.get().map(|result| match result {
+                                            Ok(vs) => view! {
+                                                <VersionListTable
+                                                    versions=vs
+                                                    on_select=set_selected_version
+                                                />
+                                            }.into_any(),
+                                            Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
+                                        })}
+                                    </Suspense>
+                                }.into_any()
+                            }
+                        }}
                     }.into_any()
                 } else {
                     view! {
                         <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                             {move || detail.get().map(|result| match result {
-                                Ok(doc) => view! { <DocumentDetailView doc=doc tab=tab set_tab=set_tab /> }.into_any(),
+                                Ok(doc) => view! { <DocumentDetailContent doc=doc tab=tab /> }.into_any(),
                                 Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
-                            })}
-                        </Suspense>
-                        <Suspense fallback=|| view! { <span /> }>
-                            {move || versions.get().map(|result| match result {
-                                Ok(vs) => view! {
-                                    <VersionSelector
-                                        versions=vs
-                                        selected=selected_version
-                                        on_select=set_selected_version
-                                    />
-                                }.into_any(),
-                                _ => view! { <span /> }.into_any(),
                             })}
                         </Suspense>
                     }.into_any()
@@ -223,117 +257,96 @@ pub fn DocumentPage() -> impl IntoView {
     }
 }
 
+/// Renders the version history as a table with clickable rows.
 #[component]
-fn VersionSelector(
+fn VersionListTable(
     versions: Vec<DocumentVersionInfo>,
-    selected: ReadSignal<Option<String>>,
     on_select: WriteSignal<Option<String>>,
 ) -> impl IntoView {
+    if versions.is_empty() {
+        return view! {
+            <p class="text-gray-500 dark:text-gray-400 text-center py-12">"No version history available."</p>
+        }
+        .into_any();
+    }
     view! {
-        <div class="mb-2">
-            <label class="text-sm text-gray-500 dark:text-gray-400 mr-2">"Version: "</label>
-            <select
-                class="bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm cursor-pointer min-w-[300px]"
-                on:change=move |ev| {
-                    use wasm_bindgen::JsCast;
-                    let target = ev.target().unwrap();
-                    let val = target.unchecked_ref::<web_sys::HtmlSelectElement>().value();
-                    if val == "latest" {
-                        on_select.set(None);
-                    } else {
-                        on_select.set(Some(val));
-                    }
-                }
-            >
+        <Table>
+            <Thead>
+                <tr>
+                    <Th>"Date"</Th>
+                    <Th>"Message"</Th>
+                    <Th>" "</Th>
+                </tr>
+            </Thead>
+            <Tbody>
                 {versions.into_iter().map(|v| {
-                    let label = if v.is_latest {
-                        format!("{} (current)", format_timestamp(v.timestamp))
+                    let date = format_timestamp(v.timestamp);
+                    let message = v.message.lines().next().unwrap_or("").to_string();
+                    let is_latest = v.is_latest;
+                    let commit_id = v.commit_id.clone();
+                    let row_class = if is_latest {
+                        ""
                     } else {
-                        format_timestamp(v.timestamp)
-                    };
-                    let value = if v.is_latest {
-                        "latest".to_string()
-                    } else {
-                        v.commit_id.clone()
-                    };
-                    let value_for_closure = value.clone();
-                    let is_selected = move || {
-                        match selected.get() {
-                            None => value_for_closure == "latest",
-                            Some(ref id) => *id == value_for_closure,
-                        }
+                        "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50"
                     };
                     view! {
-                        <option value={value} selected=is_selected>
-                            {label}
-                        </option>
+                        <tr
+                            class=row_class
+                            on:click=move |_| {
+                                if !is_latest {
+                                    on_select.set(Some(commit_id.clone()));
+                                }
+                            }
+                        >
+                            <Td>{date}</Td>
+                            <Td>{message}</Td>
+                            <Td>
+                                {is_latest.then(|| view! {
+                                    <Badge variant=BadgeVariant::Success>"Current"</Badge>
+                                })}
+                            </Td>
+                        </tr>
                     }
                 }).collect::<Vec<_>>()}
-            </select>
-        </div>
+            </Tbody>
+        </Table>
     }
+    .into_any()
 }
 
+/// Displays metadata for a historical document version.
 #[component]
-fn HistoricalDocumentView(
-    doc: HistoricalDocument,
-    tab: ReadSignal<String>,
-    set_tab: WriteSignal<String>,
-) -> impl IntoView {
-    let timestamp = doc.timestamp;
-    let doc = StoredValue::new(doc);
-
+fn HistoricalVersionDetail(doc: HistoricalDocument) -> impl IntoView {
     view! {
         <Alert variant=AlertVariant::Warning>
-            "Showing version from " {format_timestamp(timestamp)}
+            "Showing version from " {format_timestamp(doc.timestamp)}
             ". Validation results are only available for the current version."
         </Alert>
 
-        <ContentTabs>
-            <ContentTab
-                active=Signal::derive(move || tab.get() != "history")
-                on_click=Callback::new(move |_| set_tab.set("overview".into()))
-            >"Overview"</ContentTab>
-            <ContentTab
-                active=Signal::derive(move || tab.get() == "history")
-                on_click=Callback::new(move |_| set_tab.set("history".into()))
-            >"History"</ContentTab>
-        </ContentTabs>
+        <SubHeading>"Document"</SubHeading>
+        <Table>
+            <Tbody>
+                <MetadataRow label="Title" value=Some(doc.title) />
+                <MetadataRow label="Category" value=doc.category />
+                <MetadataRow label="Publisher" value=doc.publisher_name />
+                <MetadataRow label="Severity" value=doc.aggregate_severity />
+                <MetadataRow label="CSAF Version" value=doc.csaf_version />
+            </Tbody>
+        </Table>
 
-        {move || {
-            let d = doc.get_value();
-            if tab.get() == "history" {
-                view! {
-                    <RevisionHistoryTable entries=d.revision_history />
-                }.into_any()
-            } else {
-                view! {
-                    <SubHeading>"Document"</SubHeading>
-                    <Table>
-                        <Tbody>
-                            <MetadataRow label="Title" value=Some(d.title) />
-                            <MetadataRow label="Category" value=d.category />
-                            <MetadataRow label="Publisher" value=d.publisher_name />
-                            <MetadataRow label="Severity" value=d.aggregate_severity />
-                            <MetadataRow label="CSAF Version" value=d.csaf_version />
-                        </Tbody>
-                    </Table>
-
-                    <SubHeading>"Tracking"</SubHeading>
-                    <Table>
-                        <Tbody>
-                            <MetadataRow label="Status" value=d.status />
-                            <MetadataRow label="Version" value=d.revision />
-                            <MetadataRow label="Initial Release" value=d.initial_release_date />
-                            <MetadataRow label="Current Release" value=d.current_release_date />
-                        </Tbody>
-                    </Table>
-                }.into_any()
-            }
-        }}
+        <SubHeading>"Tracking"</SubHeading>
+        <Table>
+            <Tbody>
+                <MetadataRow label="Status" value=doc.status />
+                <MetadataRow label="Version" value=doc.revision />
+                <MetadataRow label="Initial Release" value=doc.initial_release_date />
+                <MetadataRow label="Current Release" value=doc.current_release_date />
+            </Tbody>
+        </Table>
     }
 }
 
+/// Renders line-by-line diff between a version and its next newer version.
 #[component]
 fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
     let additions = lines
@@ -371,30 +384,12 @@ fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
     }
 }
 
+/// Renders document content for the Overview, Validation, and Revision tabs.
 #[component]
-fn DocumentDetailView(
-    doc: DocumentValidation,
-    tab: ReadSignal<String>,
-    set_tab: WriteSignal<String>,
-) -> impl IntoView {
+fn DocumentDetailContent(doc: DocumentValidation, tab: ReadSignal<String>) -> impl IntoView {
     let doc = StoredValue::new(doc);
 
     view! {
-        <ContentTabs>
-            <ContentTab
-                active=Signal::derive(move || tab.get() == "overview")
-                on_click=Callback::new(move |_| set_tab.set("overview".into()))
-            >"Overview"</ContentTab>
-            <ContentTab
-                active=Signal::derive(move || tab.get() == "validation")
-                on_click=Callback::new(move |_| set_tab.set("validation".into()))
-            >"Validation"</ContentTab>
-            <ContentTab
-                active=Signal::derive(move || tab.get() == "history")
-                on_click=Callback::new(move |_| set_tab.set("history".into()))
-            >"History"</ContentTab>
-        </ContentTabs>
-
         {move || {
             let t = tab.get();
             let d = doc.get_value();
@@ -404,7 +399,7 @@ fn DocumentDetailView(
                     <ProfileSection title="Extended" detail=d.profiles.extended />
                     <ProfileSection title="Full" detail=d.profiles.full />
                 }.into_any()
-            } else if t == "history" {
+            } else if t == "revision" {
                 view! {
                     <RevisionHistoryTable entries=d.revision_history />
                 }.into_any()
@@ -456,6 +451,7 @@ fn DocumentDetailView(
     }
 }
 
+/// Renders a validation profile section with pass/fail badge and failing tests.
 #[component]
 fn ProfileSection(
     title: &'static str,
@@ -522,6 +518,7 @@ fn ProfileSection(
     }
 }
 
+/// Renders a single metadata key-value row.
 #[component]
 fn MetadataRow(label: &'static str, value: Option<String>) -> impl IntoView {
     value.map(|v| {
@@ -534,6 +531,7 @@ fn MetadataRow(label: &'static str, value: Option<String>) -> impl IntoView {
     })
 }
 
+/// Renders the CSAF document revision history as a table.
 #[component]
 fn RevisionHistoryTable(entries: Vec<RevisionEntry>) -> impl IntoView {
     if entries.is_empty() {
