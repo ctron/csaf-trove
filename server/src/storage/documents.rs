@@ -1,235 +1,128 @@
-use std::path::Path;
+use std::collections::HashMap;
 
 use anyhow::Result;
-use rusqlite::Connection;
-
-use csaf_trove_common::Paginated;
-
-use crate::models::{
-    result::{
-        DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
-        FailingTest, ProfileResults, ProfileSummary, ProviderSummary, RevisionEntry,
-        SignatureSummary,
-    },
-    source::sanitize_domain,
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Statement,
+    TransactionTrait,
 };
 
-/// Opens (or creates) the SQLite database for a provider's document results.
-fn open_db(results_dir: &Path, domain: &str) -> Result<Connection> {
-    let dir = results_dir.join(sanitize_domain(domain));
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("documents.db");
-    let conn = Connection::open(path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-    create_tables(&conn)?;
-    Ok(conn)
+use csaf_trove_common::Paginated;
+use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
+
+use crate::models::result::{
+    DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
+    FailingTest, ProfileResults, ProfileSummary, ProviderSummary, RevisionEntry, SignatureSummary,
+};
+
+/// Persisted provider metadata fields for aggregator generation.
+#[derive(Debug, Clone)]
+pub struct ProviderInfo {
+    /// Canonical URL of the provider's `provider-metadata.json`.
+    pub canonical_url: String,
+    /// Publisher name.
+    pub publisher_name: String,
+    /// Publisher category (e.g. `"vendor"`).
+    pub publisher_category: String,
+    /// Publisher namespace URI.
+    pub publisher_namespace: String,
+    /// Role of the issuing party (e.g. `"csaf_provider"`).
+    pub role: Option<String>,
+    /// Whether the provider consents to being listed by aggregators.
+    pub list_on_aggregators: bool,
+    /// Whether the provider consents to being mirrored by aggregators.
+    pub mirror_on_aggregators: bool,
+    /// When the provider metadata was last updated.
+    pub last_updated: String,
 }
 
-/// Creates the schema if it does not already exist and migrates older schemas.
-fn create_tables(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS documents (
-            id INTEGER PRIMARY KEY,
-            tracking_id TEXT NOT NULL,
-            title TEXT NOT NULL,
-            url TEXT NOT NULL,
-            basic_passed INTEGER,
-            basic_error_count INTEGER,
-            basic_warning_count INTEGER,
-            basic_info_count INTEGER,
-            extended_passed INTEGER,
-            extended_error_count INTEGER,
-            extended_warning_count INTEGER,
-            extended_info_count INTEGER,
-            full_passed INTEGER,
-            full_error_count INTEGER,
-            full_warning_count INTEGER,
-            full_info_count INTEGER,
-            signature_present INTEGER NOT NULL,
-            signature_error TEXT,
-            category TEXT,
-            publisher_name TEXT,
-            initial_release_date TEXT,
-            current_release_date TEXT,
-            status TEXT,
-            revision TEXT,
-            aggregate_severity TEXT,
-            csaf_version TEXT
-        );
-        CREATE TABLE IF NOT EXISTS check_failures (
-            id INTEGER PRIMARY KEY,
-            document_id INTEGER NOT NULL REFERENCES documents(id),
-            profile TEXT NOT NULL,
-            test_id TEXT NOT NULL,
-            message TEXT NOT NULL,
-            severity TEXT NOT NULL DEFAULT 'error'
-        );
-        CREATE TABLE IF NOT EXISTS revision_history (
-            id INTEGER PRIMARY KEY,
-            document_id INTEGER NOT NULL REFERENCES documents(id),
-            version TEXT NOT NULL,
-            date TEXT NOT NULL,
-            summary TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_documents_tracking_id ON documents(tracking_id);
-        CREATE INDEX IF NOT EXISTS idx_check_failures_document_id ON check_failures(document_id);
-        CREATE INDEX IF NOT EXISTS idx_revision_history_document_id ON revision_history(document_id);",
-    )?;
-    migrate_add_metadata_columns(conn)?;
-    migrate_add_severity_columns(conn)?;
-    migrate_add_sync_runs(conn)?;
-    migrate_add_provider_info(conn)?;
-    Ok(())
+/// Returns the number of documents stored for a provider.
+pub async fn document_count(db: &DatabaseConnection) -> Result<u64> {
+    let count = document::Entity::find().count(db).await?;
+    Ok(count)
 }
 
-/// Creates the sync_runs history table (idempotent).
-fn migrate_add_sync_runs(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS sync_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            documents_changed INTEGER NOT NULL
-        )",
-    )?;
-    Ok(())
+/// Returns the URL for a document by tracking ID.
+pub async fn document_url(db: &DatabaseConnection, tracking_id: &str) -> Result<Option<String>> {
+    let result: Option<(String,)> = document::Entity::find()
+        .filter(document::Column::TrackingId.eq(tracking_id))
+        .select_only()
+        .column(document::Column::Url)
+        .into_tuple()
+        .one(db)
+        .await?;
+    Ok(result.map(|(url,)| url))
 }
 
-/// Adds metadata columns to an existing documents table (idempotent).
-fn migrate_add_metadata_columns(conn: &Connection) -> Result<()> {
-    let columns = [
-        "category",
-        "publisher_name",
-        "initial_release_date",
-        "current_release_date",
-        "status",
-        "revision",
-        "aggregate_severity",
-        "csaf_version",
-    ];
-    for col in &columns {
-        let sql = format!("ALTER TABLE documents ADD COLUMN {col} TEXT");
-        match conn.execute_batch(&sql) {
-            Ok(()) => {}
-            Err(e) if e.to_string().contains("duplicate column") => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
-
-/// Adds severity-related columns to existing tables (idempotent).
-fn migrate_add_severity_columns(conn: &Connection) -> Result<()> {
-    let doc_columns = [
-        "basic_warning_count",
-        "basic_info_count",
-        "extended_warning_count",
-        "extended_info_count",
-        "full_warning_count",
-        "full_info_count",
-    ];
-    for col in &doc_columns {
-        let sql = format!("ALTER TABLE documents ADD COLUMN {col} INTEGER");
-        match conn.execute_batch(&sql) {
-            Ok(()) => {}
-            Err(e) if e.to_string().contains("duplicate column") => {}
-            Err(e) => return Err(e.into()),
-        }
-    }
-
-    let sql = "ALTER TABLE check_failures ADD COLUMN severity TEXT NOT NULL DEFAULT 'error'";
-    match conn.execute_batch(sql) {
-        Ok(()) => {}
-        Err(e) if e.to_string().contains("duplicate column") => {}
-        Err(e) => return Err(e.into()),
-    }
-
-    Ok(())
-}
-
-/// Upserts document validation results for a provider, preserving documents not in the batch.
-pub fn save_documents(
-    results_dir: &Path,
-    domain: &str,
+/// Upserts document validation results for a provider, preserving documents
+/// not in the batch.
+pub async fn save_documents(
+    db: &DatabaseConnection,
     documents: &[DocumentValidation],
 ) -> Result<u64> {
-    let conn = open_db(results_dir, domain)?;
-
-    let mut del_fail_stmt = conn.prepare(
-        "DELETE FROM check_failures WHERE document_id IN (
-            SELECT id FROM documents WHERE tracking_id = ?1
-        )",
-    )?;
-    let mut del_rev_stmt = conn.prepare(
-        "DELETE FROM revision_history WHERE document_id IN (
-            SELECT id FROM documents WHERE tracking_id = ?1
-        )",
-    )?;
-    let mut del_doc_stmt = conn.prepare("DELETE FROM documents WHERE tracking_id = ?1")?;
-
-    let mut doc_stmt = conn.prepare(
-        "INSERT INTO documents (
-            tracking_id, title, url,
-            basic_passed, basic_error_count, basic_warning_count, basic_info_count,
-            extended_passed, extended_error_count, extended_warning_count, extended_info_count,
-            full_passed, full_error_count, full_warning_count, full_info_count,
-            signature_present, signature_error,
-            category, publisher_name,
-            initial_release_date, current_release_date,
-            status, revision, aggregate_severity, csaf_version
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-                  ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
-                  ?22, ?23, ?24, ?25)",
-    )?;
-
-    let mut fail_stmt = conn.prepare(
-        "INSERT INTO check_failures (document_id, profile, test_id, message, severity)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )?;
-
-    let mut rev_stmt = conn.prepare(
-        "INSERT INTO revision_history (document_id, version, date, summary)
-         VALUES (?1, ?2, ?3, ?4)",
-    )?;
-
-    let tx = conn.unchecked_transaction()?;
+    let txn = db.begin().await?;
 
     for doc in documents {
-        del_fail_stmt.execute(rusqlite::params![doc.tracking_id])?;
-        del_rev_stmt.execute(rusqlite::params![doc.tracking_id])?;
-        del_doc_stmt.execute(rusqlite::params![doc.tracking_id])?;
+        let existing_ids: Vec<i64> = document::Entity::find()
+            .filter(document::Column::TrackingId.eq(&doc.tracking_id))
+            .select_only()
+            .column(document::Column::Id)
+            .into_tuple()
+            .all(&txn)
+            .await?;
+
+        if !existing_ids.is_empty() {
+            check_failure::Entity::delete_many()
+                .filter(check_failure::Column::DocumentId.is_in(existing_ids.clone()))
+                .exec(&txn)
+                .await?;
+
+            revision_history::Entity::delete_many()
+                .filter(revision_history::Column::DocumentId.is_in(existing_ids))
+                .exec(&txn)
+                .await?;
+
+            document::Entity::delete_many()
+                .filter(document::Column::TrackingId.eq(&doc.tracking_id))
+                .exec(&txn)
+                .await?;
+        }
+
         let (bp, bec, bwc, bic) = profile_to_cols(doc.profiles.basic.as_ref());
         let (ep, eec, ewc, eic) = profile_to_cols(doc.profiles.extended.as_ref());
         let (fp, fec, fwc, fic) = profile_to_cols(doc.profiles.full.as_ref());
 
-        doc_stmt.execute(rusqlite::params![
-            doc.tracking_id,
-            doc.title,
-            doc.url,
-            bp,
-            bec,
-            bwc,
-            bic,
-            ep,
-            eec,
-            ewc,
-            eic,
-            fp,
-            fec,
-            fwc,
-            fic,
-            doc.signature_present as i32,
-            doc.signature_error,
-            doc.category,
-            doc.publisher_name,
-            doc.initial_release_date,
-            doc.current_release_date,
-            doc.status,
-            doc.revision,
-            doc.aggregate_severity,
-            doc.csaf_version,
-        ])?;
+        let new_doc = document::ActiveModel {
+            tracking_id: Set(doc.tracking_id.clone()),
+            title: Set(doc.title.clone()),
+            url: Set(doc.url.clone()),
+            basic_passed: Set(bp),
+            basic_error_count: Set(bec),
+            basic_warning_count: Set(bwc),
+            basic_info_count: Set(bic),
+            extended_passed: Set(ep),
+            extended_error_count: Set(eec),
+            extended_warning_count: Set(ewc),
+            extended_info_count: Set(eic),
+            full_passed: Set(fp),
+            full_error_count: Set(fec),
+            full_warning_count: Set(fwc),
+            full_info_count: Set(fic),
+            signature_present: Set(doc.signature_present as i32),
+            signature_error: Set(doc.signature_error.clone()),
+            category: Set(doc.category.clone()),
+            publisher_name: Set(doc.publisher_name.clone()),
+            initial_release_date: Set(doc.initial_release_date.clone()),
+            current_release_date: Set(doc.current_release_date.clone()),
+            status: Set(doc.status.clone()),
+            revision: Set(doc.revision.clone()),
+            aggregate_severity: Set(doc.aggregate_severity.clone()),
+            csaf_version: Set(doc.csaf_version.clone()),
+            ..Default::default()
+        };
 
-        let doc_id = tx.last_insert_rowid();
+        let inserted = new_doc.insert(&txn).await?;
+        let doc_id = inserted.id;
 
         for (profile, detail) in [
             ("basic", &doc.profiles.basic),
@@ -237,301 +130,182 @@ pub fn save_documents(
             ("full", &doc.profiles.full),
         ] {
             if let Some(d) = detail {
-                for f in &d.failing_tests {
-                    fail_stmt.execute(rusqlite::params![
-                        doc_id, profile, f.test_id, f.message, f.severity
-                    ])?;
+                let failures: Vec<check_failure::ActiveModel> = d
+                    .failing_tests
+                    .iter()
+                    .map(|f| check_failure::ActiveModel {
+                        document_id: Set(doc_id),
+                        profile: Set(profile.to_string()),
+                        test_id: Set(f.test_id.clone()),
+                        message: Set(f.message.clone()),
+                        severity: Set(f.severity.clone()),
+                        ..Default::default()
+                    })
+                    .collect();
+
+                if !failures.is_empty() {
+                    check_failure::Entity::insert_many(failures)
+                        .exec(&txn)
+                        .await?;
                 }
             }
         }
 
-        for r in &doc.revision_history {
-            rev_stmt.execute(rusqlite::params![doc_id, r.number, r.date, r.summary])?;
+        let revisions: Vec<revision_history::ActiveModel> = doc
+            .revision_history
+            .iter()
+            .map(|r| revision_history::ActiveModel {
+                document_id: Set(doc_id),
+                version: Set(r.number.clone()),
+                date: Set(r.date.clone()),
+                summary: Set(r.summary.clone()),
+                ..Default::default()
+            })
+            .collect();
+
+        if !revisions.is_empty() {
+            revision_history::Entity::insert_many(revisions)
+                .exec(&txn)
+                .await?;
         }
     }
 
-    tx.commit()?;
+    txn.commit().await?;
 
-    let total: u64 = conn.query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0))?;
-
+    let total = document::Entity::find().count(db).await?;
     Ok(total)
 }
 
-/// Returns the number of documents stored for a provider, or 0 if the database does not exist.
-pub fn document_count(results_dir: &Path, domain: &str) -> Result<u64> {
-    let db_path = results_dir
-        .join(sanitize_domain(domain))
-        .join("documents.db");
-    if !db_path.exists() {
-        return Ok(0);
-    }
-    let conn = Connection::open(db_path)?;
-    match conn.query_row("SELECT COUNT(*) FROM documents", [], |row| row.get(0)) {
-        Ok(count) => Ok(count),
-        Err(_) => Ok(0),
-    }
-}
-
 /// Loads a paginated, optionally filtered list of document validation results.
-pub fn load_documents_paginated(
-    results_dir: &Path,
-    domain: &str,
+pub async fn load_documents_paginated(
+    db: &DatabaseConnection,
     offset: u64,
     limit: u64,
     status_filter: Option<&str>,
-) -> Result<Option<Paginated<DocumentValidation>>> {
-    let db_path = results_dir
-        .join(sanitize_domain(domain))
-        .join("documents.db");
-    if !db_path.exists() {
-        return Ok(Some(Paginated {
-            items: vec![],
-            total: 0,
-            offset,
-            limit,
-        }));
+) -> Result<Paginated<DocumentValidation>> {
+    let mut query = document::Entity::find();
+
+    match status_filter {
+        Some("failing") => {
+            query = query.filter(
+                Condition::any()
+                    .add(document::Column::BasicPassed.eq(0))
+                    .add(document::Column::ExtendedPassed.eq(0))
+                    .add(document::Column::FullPassed.eq(0))
+                    .add(document::Column::SignatureError.is_not_null()),
+            );
+        }
+        Some("passing") => {
+            query = query.filter(
+                Condition::all()
+                    .add(
+                        Condition::any()
+                            .add(document::Column::BasicPassed.is_null())
+                            .add(document::Column::BasicPassed.eq(1)),
+                    )
+                    .add(
+                        Condition::any()
+                            .add(document::Column::ExtendedPassed.is_null())
+                            .add(document::Column::ExtendedPassed.eq(1)),
+                    )
+                    .add(
+                        Condition::any()
+                            .add(document::Column::FullPassed.is_null())
+                            .add(document::Column::FullPassed.eq(1)),
+                    )
+                    .add(document::Column::SignatureError.is_null()),
+            );
+        }
+        _ => {}
     }
-    let conn = Connection::open(&db_path)?;
 
-    let table_exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !table_exists {
-        return Ok(Some(Paginated {
-            items: vec![],
-            total: 0,
-            offset,
-            limit,
-        }));
-    }
+    let total = query.clone().count(db).await?;
 
-    let where_clause = status_where_clause(status_filter);
+    let docs = query
+        .order_by_asc(document::Column::TrackingId)
+        .offset(offset)
+        .limit(limit)
+        .all(db)
+        .await?;
 
-    let total: u64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM documents {where_clause}"),
-        [],
-        |row| row.get(0),
-    )?;
+    let items = load_failures_for_docs(db, &docs).await?;
 
-    let mut stmt = conn.prepare(&format!(
-        "SELECT id, tracking_id, title, url,
-                basic_passed, basic_error_count, basic_warning_count, basic_info_count,
-                extended_passed, extended_error_count, extended_warning_count, extended_info_count,
-                full_passed, full_error_count, full_warning_count, full_info_count,
-                signature_present, signature_error,
-                category, publisher_name,
-                initial_release_date, current_release_date,
-                status, revision, aggregate_severity, csaf_version
-         FROM documents {where_clause}
-         ORDER BY tracking_id
-         LIMIT ?1 OFFSET ?2"
-    ))?;
-
-    let rows = stmt.query_map(rusqlite::params![limit, offset], map_document_row)?;
-
-    let doc_rows: Vec<DocumentRow> = rows.collect::<Result<_, _>>()?;
-    let items = load_failures_for_docs(&conn, &doc_rows)?;
-
-    Ok(Some(Paginated {
+    Ok(Paginated {
         items,
         total,
         offset,
         limit,
-    }))
-}
-
-/// Returns the URL for a document by tracking ID.
-pub fn document_url(results_dir: &Path, domain: &str, tracking_id: &str) -> Result<Option<String>> {
-    let db_path = results_dir
-        .join(sanitize_domain(domain))
-        .join("documents.db");
-    if !db_path.exists() {
-        return Ok(None);
-    }
-    let conn = Connection::open(db_path)?;
-    match conn.query_row(
-        "SELECT url FROM documents WHERE tracking_id = ?1",
-        [tracking_id],
-        |row| row.get(0),
-    ) {
-        Ok(url) => Ok(Some(url)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Loads a single document by tracking ID with all its check failures.
-pub fn load_document(
-    results_dir: &Path,
-    domain: &str,
-    tracking_id: &str,
-) -> Result<Option<DocumentValidation>> {
-    let db_path = results_dir
-        .join(sanitize_domain(domain))
-        .join("documents.db");
-    if !db_path.exists() {
-        return Ok(None);
-    }
-    let conn = Connection::open(db_path)?;
-
-    let row = conn.query_row(
-        "SELECT id, tracking_id, title, url,
-                basic_passed, basic_error_count, basic_warning_count, basic_info_count,
-                extended_passed, extended_error_count, extended_warning_count, extended_info_count,
-                full_passed, full_error_count, full_warning_count, full_info_count,
-                signature_present, signature_error,
-                category, publisher_name,
-                initial_release_date, current_release_date,
-                status, revision, aggregate_severity, csaf_version
-         FROM documents WHERE tracking_id = ?1",
-        [tracking_id],
-        map_document_row,
-    );
-
-    match row {
-        Ok(doc_row) => {
-            let items = load_failures_for_docs(&conn, &[doc_row])?;
-            Ok(items.into_iter().next())
-        }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Intermediate row from the documents table.
-struct DocumentRow {
-    id: i64,
-    tracking_id: String,
-    title: String,
-    url: String,
-    basic_passed: Option<i32>,
-    basic_error_count: Option<i64>,
-    basic_warning_count: Option<i64>,
-    basic_info_count: Option<i64>,
-    extended_passed: Option<i32>,
-    extended_error_count: Option<i64>,
-    extended_warning_count: Option<i64>,
-    extended_info_count: Option<i64>,
-    full_passed: Option<i32>,
-    full_error_count: Option<i64>,
-    full_warning_count: Option<i64>,
-    full_info_count: Option<i64>,
-    signature_present: bool,
-    signature_error: Option<String>,
-    category: Option<String>,
-    publisher_name: Option<String>,
-    initial_release_date: Option<String>,
-    current_release_date: Option<String>,
-    status: Option<String>,
-    revision: Option<String>,
-    aggregate_severity: Option<String>,
-    csaf_version: Option<String>,
-}
-
-/// Maps a database row into a `DocumentRow`.
-fn map_document_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DocumentRow> {
-    Ok(DocumentRow {
-        id: row.get(0)?,
-        tracking_id: row.get(1)?,
-        title: row.get(2)?,
-        url: row.get(3)?,
-        basic_passed: row.get(4)?,
-        basic_error_count: row.get(5)?,
-        basic_warning_count: row.get(6)?,
-        basic_info_count: row.get(7)?,
-        extended_passed: row.get(8)?,
-        extended_error_count: row.get(9)?,
-        extended_warning_count: row.get(10)?,
-        extended_info_count: row.get(11)?,
-        full_passed: row.get(12)?,
-        full_error_count: row.get(13)?,
-        full_warning_count: row.get(14)?,
-        full_info_count: row.get(15)?,
-        signature_present: row.get::<_, i32>(16)? != 0,
-        signature_error: row.get(17)?,
-        category: row.get(18)?,
-        publisher_name: row.get(19)?,
-        initial_release_date: row.get(20)?,
-        current_release_date: row.get(21)?,
-        status: row.get(22)?,
-        revision: row.get(23)?,
-        aggregate_severity: row.get(24)?,
-        csaf_version: row.get(25)?,
     })
 }
 
-/// Loads check failures for a batch of document rows and assembles `DocumentValidation` values.
-fn load_failures_for_docs(
-    conn: &Connection,
-    doc_rows: &[DocumentRow],
+/// Loads a single document by tracking ID with all its check failures.
+pub async fn load_document(
+    db: &DatabaseConnection,
+    tracking_id: &str,
+) -> Result<Option<DocumentValidation>> {
+    let doc = document::Entity::find()
+        .filter(document::Column::TrackingId.eq(tracking_id))
+        .one(db)
+        .await?;
+
+    let Some(doc) = doc else {
+        return Ok(None);
+    };
+
+    let items = load_failures_for_docs(db, &[doc]).await?;
+    Ok(items.into_iter().next())
+}
+
+/// Loads check failures and revision history for a batch of documents and
+/// assembles `DocumentValidation` values.
+async fn load_failures_for_docs(
+    db: &DatabaseConnection,
+    doc_models: &[document::Model],
 ) -> Result<Vec<DocumentValidation>> {
-    if doc_rows.is_empty() {
+    if doc_models.is_empty() {
         return Ok(vec![]);
     }
 
-    let ids: Vec<i64> = doc_rows.iter().map(|r| r.id).collect();
-    let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let ids: Vec<i64> = doc_models.iter().map(|d| d.id).collect();
 
-    let mut stmt = conn.prepare(&format!(
-        "SELECT document_id, profile, test_id, message, severity
-         FROM check_failures
-         WHERE document_id IN ({placeholders})
-         ORDER BY document_id, id"
-    ))?;
+    let failures = check_failure::Entity::find()
+        .filter(check_failure::Column::DocumentId.is_in(ids.clone()))
+        .order_by_asc(check_failure::Column::DocumentId)
+        .order_by_asc(check_failure::Column::Id)
+        .all(db)
+        .await?;
 
-    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
-
-    let mut failures: std::collections::HashMap<i64, Vec<(String, String, String, String)>> =
-        std::collections::HashMap::new();
-    for row in rows {
-        let (doc_id, profile, test_id, message, severity) = row?;
-        failures
-            .entry(doc_id)
+    let mut failure_map: HashMap<i64, Vec<(String, String, String, String)>> = HashMap::new();
+    for f in failures {
+        failure_map
+            .entry(f.document_id)
             .or_default()
-            .push((profile, test_id, message, severity));
+            .push((f.profile, f.test_id, f.message, f.severity));
     }
 
-    let mut rev_stmt = conn.prepare(&format!(
-        "SELECT document_id, version, date, summary
-         FROM revision_history
-         WHERE document_id IN ({placeholders})
-         ORDER BY document_id, id"
-    ))?;
+    let revisions = revision_history::Entity::find()
+        .filter(revision_history::Column::DocumentId.is_in(ids))
+        .order_by_asc(revision_history::Column::DocumentId)
+        .order_by_asc(revision_history::Column::Id)
+        .all(db)
+        .await?;
 
-    let rev_rows = rev_stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-        ))
-    })?;
-
-    let mut revisions: std::collections::HashMap<i64, Vec<RevisionEntry>> =
-        std::collections::HashMap::new();
-    for row in rev_rows {
-        let (doc_id, number, date, summary) = row?;
-        revisions.entry(doc_id).or_default().push(RevisionEntry {
-            number,
-            date,
-            summary,
-        });
+    let mut revision_map: HashMap<i64, Vec<RevisionEntry>> = HashMap::new();
+    for r in revisions {
+        revision_map
+            .entry(r.document_id)
+            .or_default()
+            .push(RevisionEntry {
+                number: r.version,
+                date: r.date,
+                summary: r.summary,
+            });
     }
 
-    let items = doc_rows
+    let items = doc_models
         .iter()
         .map(|doc| {
-            let doc_failures = failures.get(&doc.id);
+            let doc_failures = failure_map.get(&doc.id);
             DocumentValidation {
                 tracking_id: doc.tracking_id.clone(),
                 title: doc.title.clone(),
@@ -563,7 +337,7 @@ fn load_failures_for_docs(
                     ),
                 },
                 signature_error: doc.signature_error.clone(),
-                signature_present: doc.signature_present,
+                signature_present: doc.signature_present != 0,
                 category: doc.category.clone(),
                 publisher_name: doc.publisher_name.clone(),
                 initial_release_date: doc.initial_release_date.clone(),
@@ -572,7 +346,7 @@ fn load_failures_for_docs(
                 revision: doc.revision.clone(),
                 aggregate_severity: doc.aggregate_severity.clone(),
                 csaf_version: doc.csaf_version.clone(),
-                revision_history: revisions.get(&doc.id).cloned().unwrap_or_default(),
+                revision_history: revision_map.get(&doc.id).cloned().unwrap_or_default(),
                 version_count: None,
             }
         })
@@ -628,110 +402,109 @@ fn cols_to_profile(
     })
 }
 
-/// Builds the SQL WHERE clause for the status filter.
-fn status_where_clause(filter: Option<&str>) -> String {
-    match filter {
-        Some("failing") => "WHERE basic_passed = 0 OR extended_passed = 0 OR full_passed = 0 \
-             OR signature_error IS NOT NULL"
-            .to_string(),
-        Some("passing") => "WHERE (basic_passed IS NULL OR basic_passed = 1) \
-             AND (extended_passed IS NULL OR extended_passed = 1) \
-             AND (full_passed IS NULL OR full_passed = 1) \
-             AND signature_error IS NULL"
-            .to_string(),
-        _ => String::new(),
-    }
-}
-
 /// Computes a `ProviderSummary` from all documents in the database.
-pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<ProviderSummary> {
-    let db_path = results_dir
-        .join(sanitize_domain(domain))
-        .join("documents.db");
-    if !db_path.exists() {
-        return Ok(ProviderSummary {
-            provider: domain.to_string(),
-            publisher_name: None,
-            validated_at: chrono::Utc::now(),
-            document_count: 0,
-            profiles: ProfileResults {
-                basic: None,
-                extended: None,
-                full: None,
-            },
-            signatures: None,
-            top_failing_tests: vec![],
-        });
-    }
-    let conn = Connection::open(db_path)?;
+pub async fn build_summary_from_db(
+    db: &DatabaseConnection,
+    domain: &str,
+) -> Result<ProviderSummary> {
+    let result = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN basic_passed = 1 THEN 1 ELSE 0 END) AS bv,
+                SUM(CASE WHEN basic_passed = 0 THEN 1 ELSE 0 END) AS bi,
+                SUM(CASE WHEN extended_passed = 1 THEN 1 ELSE 0 END) AS ev,
+                SUM(CASE WHEN extended_passed = 0 THEN 1 ELSE 0 END) AS ei,
+                SUM(CASE WHEN full_passed = 1 THEN 1 ELSE 0 END) AS fv,
+                SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END) AS fi,
+                SUM(CASE WHEN signature_present = 1 AND signature_error IS NULL THEN 1 ELSE 0 END) AS sv,
+                SUM(CASE WHEN signature_present = 1 AND signature_error IS NOT NULL THEN 1 ELSE 0 END) AS si,
+                SUM(CASE WHEN signature_present = 0 THEN 1 ELSE 0 END) AS sm
+            FROM documents",
+        ))
+        .await?;
 
-    let (total, basic, extended, full, signatures) = conn.query_row(
-        "SELECT
-            COUNT(*) AS total,
-            SUM(CASE WHEN basic_passed = 1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN basic_passed = 0 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN extended_passed = 1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN extended_passed = 0 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN full_passed = 1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN signature_present = 1 AND signature_error IS NULL THEN 1 ELSE 0 END),
-            SUM(CASE WHEN signature_present = 1 AND signature_error IS NOT NULL THEN 1 ELSE 0 END),
-            SUM(CASE WHEN signature_present = 0 THEN 1 ELSE 0 END)
-         FROM documents",
-        [],
-        |row| {
-            let total: u64 = row.get(0)?;
-            let bv: Option<u64> = row.get(1)?;
-            let bi: Option<u64> = row.get(2)?;
-            let ev: Option<u64> = row.get(3)?;
-            let ei: Option<u64> = row.get(4)?;
-            let fv: Option<u64> = row.get(5)?;
-            let fi: Option<u64> = row.get(6)?;
-            let sv: Option<u64> = row.get(7)?;
-            let si: Option<u64> = row.get(8)?;
-            let sm: Option<u64> = row.get(9)?;
-            Ok((
-                total,
-                build_profile_from_counts(bv.unwrap_or(0), bi.unwrap_or(0)),
-                build_profile_from_counts(ev.unwrap_or(0), ei.unwrap_or(0)),
-                build_profile_from_counts(fv.unwrap_or(0), fi.unwrap_or(0)),
+    let (total, basic, extended, full, signatures) = match result {
+        Some(row) => {
+            let total: i64 = row.try_get("", "total")?;
+            let bv: Option<i64> = row.try_get("", "bv")?;
+            let bi: Option<i64> = row.try_get("", "bi")?;
+            let ev: Option<i64> = row.try_get("", "ev")?;
+            let ei: Option<i64> = row.try_get("", "ei")?;
+            let fv: Option<i64> = row.try_get("", "fv")?;
+            let fi: Option<i64> = row.try_get("", "fi")?;
+            let sv: Option<i64> = row.try_get("", "sv")?;
+            let si: Option<i64> = row.try_get("", "si")?;
+            let sm: Option<i64> = row.try_get("", "sm")?;
+            (
+                total as u64,
+                build_profile_from_counts(bv.unwrap_or(0) as u64, bi.unwrap_or(0) as u64),
+                build_profile_from_counts(ev.unwrap_or(0) as u64, ei.unwrap_or(0) as u64),
+                build_profile_from_counts(fv.unwrap_or(0) as u64, fi.unwrap_or(0) as u64),
                 SignatureSummary {
-                    valid: sv.unwrap_or(0),
-                    invalid: si.unwrap_or(0),
-                    missing: sm.unwrap_or(0),
+                    valid: sv.unwrap_or(0) as u64,
+                    invalid: si.unwrap_or(0) as u64,
+                    missing: sm.unwrap_or(0) as u64,
                 },
+            )
+        }
+        None => (
+            0,
+            build_profile_from_counts(0, 0),
+            build_profile_from_counts(0, 0),
+            build_profile_from_counts(0, 0),
+            SignatureSummary {
+                valid: 0,
+                invalid: 0,
+                missing: 0,
+            },
+        ),
+    };
+
+    let top_failing_tests: Vec<FailingTest> = {
+        let rows = db
+            .query_all_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT test_id, COUNT(*) AS cnt, severity
+                 FROM check_failures
+                 GROUP BY test_id, severity
+                 ORDER BY cnt DESC
+                 LIMIT 10",
             ))
-        },
-    )?;
+            .await?;
 
-    let mut fail_stmt = conn.prepare(
-        "SELECT test_id, COUNT(*) AS cnt, severity
-         FROM check_failures
-         GROUP BY test_id, severity
-         ORDER BY cnt DESC
-         LIMIT 10",
-    )?;
-    let top_failing_tests: Vec<FailingTest> = fail_stmt
-        .query_map([], |row| {
-            Ok(FailingTest {
-                test_id: row.get(0)?,
-                count: row.get(1)?,
-                severity: row.get(2)?,
+        rows.iter()
+            .map(|row| {
+                Ok(FailingTest {
+                    test_id: row.try_get("", "test_id")?,
+                    count: {
+                        let c: i64 = row.try_get("", "cnt")?;
+                        c as u64
+                    },
+                    severity: row.try_get("", "severity")?,
+                })
             })
-        })?
-        .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<_>, sea_orm::DbErr>>()?
+    };
 
-    let publisher_name: Option<String> = conn
-        .query_row(
-            "SELECT publisher_name FROM documents
-             WHERE publisher_name IS NOT NULL
-             GROUP BY publisher_name
-             ORDER BY COUNT(*) DESC
-             LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
+    let publisher_name: Option<String> = {
+        let row = db
+            .query_one_raw(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT publisher_name FROM documents
+                 WHERE publisher_name IS NOT NULL
+                 GROUP BY publisher_name
+                 ORDER BY COUNT(*) DESC
+                 LIMIT 1",
+            ))
+            .await?;
+
+        match row {
+            Some(r) => r.try_get("", "publisher_name")?,
+            None => None,
+        }
+    };
 
     Ok(ProviderSummary {
         provider: domain.to_string(),
@@ -746,150 +519,6 @@ pub fn build_summary_from_db(results_dir: &Path, domain: &str) -> Result<Provide
         signatures: Some(signatures),
         top_failing_tests,
     })
-}
-
-/// Records a completed sync run with the number of documents that changed.
-pub fn save_sync_run(
-    results_dir: &Path,
-    domain: &str,
-    timestamp: &chrono::DateTime<chrono::Utc>,
-    documents_changed: u64,
-) -> Result<()> {
-    let conn = open_db(results_dir, domain)?;
-    conn.execute(
-        "INSERT INTO sync_runs (timestamp, documents_changed) VALUES (?1, ?2)",
-        rusqlite::params![timestamp.to_rfc3339(), documents_changed],
-    )?;
-    Ok(())
-}
-
-/// Loads the most recent sync runs for a provider.
-pub fn load_sync_runs(
-    results_dir: &Path,
-    domain: &str,
-    max_entries: usize,
-) -> Result<Vec<csaf_trove_common::CommitInfo>> {
-    let db_path = results_dir
-        .join(sanitize_domain(domain))
-        .join("documents.db");
-    if !db_path.exists() {
-        return Ok(vec![]);
-    }
-    let conn = Connection::open(db_path)?;
-
-    let table_exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_runs')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !table_exists {
-        return Ok(vec![]);
-    }
-
-    let mut stmt = conn.prepare(
-        "SELECT id, timestamp, documents_changed
-         FROM sync_runs
-         ORDER BY id DESC
-         LIMIT ?1",
-    )?;
-    let rows = stmt.query_map([max_entries], |row| {
-        let id: i64 = row.get(0)?;
-        let ts_str: String = row.get(1)?;
-        let docs: u64 = row.get(2)?;
-        Ok((id, ts_str, docs))
-    })?;
-
-    let mut entries = Vec::new();
-    for row in rows {
-        let (id, ts_str, docs) = row?;
-        let timestamp = chrono::DateTime::parse_from_rfc3339(&ts_str)
-            .map(|dt| {
-                time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
-                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
-            })
-            .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-        entries.push(csaf_trove_common::CommitInfo {
-            id: id.to_string(),
-            message: String::new(),
-            timestamp,
-            files_changed: docs as usize,
-        });
-    }
-    Ok(entries)
-}
-
-/// Loads a paginated list of sync runs for a provider.
-pub fn load_sync_runs_paginated(
-    results_dir: &Path,
-    domain: &str,
-    offset: u64,
-    limit: u64,
-) -> Result<Option<Paginated<csaf_trove_common::CommitInfo>>> {
-    let db_path = results_dir
-        .join(sanitize_domain(domain))
-        .join("documents.db");
-    if !db_path.exists() {
-        return Ok(Some(Paginated {
-            items: vec![],
-            total: 0,
-            offset,
-            limit,
-        }));
-    }
-    let conn = Connection::open(db_path)?;
-
-    let table_exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_runs')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !table_exists {
-        return Ok(Some(Paginated {
-            items: vec![],
-            total: 0,
-            offset,
-            limit,
-        }));
-    }
-
-    let total: u64 = conn.query_row("SELECT COUNT(*) FROM sync_runs", [], |row| row.get(0))?;
-
-    let mut stmt = conn.prepare(
-        "SELECT id, timestamp, documents_changed
-         FROM sync_runs
-         ORDER BY id DESC
-         LIMIT ?1 OFFSET ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
-        let id: i64 = row.get(0)?;
-        let ts_str: String = row.get(1)?;
-        let docs: u64 = row.get(2)?;
-        Ok((id, ts_str, docs))
-    })?;
-
-    let mut items = Vec::new();
-    for row in rows {
-        let (id, ts_str, docs) = row?;
-        let timestamp = chrono::DateTime::parse_from_rfc3339(&ts_str)
-            .map(|dt| {
-                time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
-                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
-            })
-            .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-        items.push(csaf_trove_common::CommitInfo {
-            id: id.to_string(),
-            message: String::new(),
-            timestamp,
-            files_changed: docs as usize,
-        });
-    }
-
-    Ok(Some(Paginated {
-        items,
-        total,
-        offset,
-        limit,
-    }))
 }
 
 /// Builds a `ProfileSummary` from valid and invalid counts.
@@ -907,92 +536,142 @@ fn build_profile_from_counts(valid: u64, invalid: u64) -> ProfileSummary {
     }
 }
 
-/// Persisted provider metadata fields for aggregator generation.
-#[derive(Debug, Clone)]
-pub struct ProviderInfo {
-    /// Canonical URL of the provider's `provider-metadata.json`.
-    pub canonical_url: String,
-    /// Publisher name.
-    pub publisher_name: String,
-    /// Publisher category (e.g. `"vendor"`).
-    pub publisher_category: String,
-    /// Publisher namespace URI.
-    pub publisher_namespace: String,
-    /// Role of the issuing party (e.g. `"csaf_provider"`).
-    pub role: Option<String>,
-    /// Whether the provider consents to being listed by aggregators.
-    pub list_on_aggregators: bool,
-    /// Whether the provider consents to being mirrored by aggregators.
-    pub mirror_on_aggregators: bool,
-    /// When the provider metadata was last updated.
-    pub last_updated: String,
-}
-
-/// Creates the `provider_info` table (idempotent).
-fn migrate_add_provider_info(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS provider_info (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            canonical_url TEXT NOT NULL,
-            publisher_name TEXT NOT NULL,
-            publisher_category TEXT NOT NULL,
-            publisher_namespace TEXT NOT NULL,
-            role TEXT,
-            list_on_aggregators INTEGER NOT NULL DEFAULT 1,
-            mirror_on_aggregators INTEGER NOT NULL DEFAULT 1,
-            last_updated TEXT NOT NULL
-        )",
-    )?;
+/// Records a completed sync run with the number of documents that changed.
+pub async fn save_sync_run(
+    db: &DatabaseConnection,
+    timestamp: &chrono::DateTime<chrono::Utc>,
+    documents_changed: u64,
+) -> Result<()> {
+    sync_run::ActiveModel {
+        timestamp: Set(timestamp.to_rfc3339()),
+        documents_changed: Set(documents_changed as i64),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?;
     Ok(())
 }
 
+/// Loads the most recent sync runs for a provider.
+pub async fn load_sync_runs(
+    db: &DatabaseConnection,
+    max_entries: u64,
+) -> Result<Vec<csaf_trove_common::CommitInfo>> {
+    let rows = sync_run::Entity::find()
+        .order_by_desc(sync_run::Column::Id)
+        .limit(max_entries)
+        .all(db)
+        .await?;
+
+    let entries = rows
+        .into_iter()
+        .map(|row| {
+            let timestamp = chrono::DateTime::parse_from_rfc3339(&row.timestamp)
+                .map(|dt| {
+                    time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
+                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+                })
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            csaf_trove_common::CommitInfo {
+                id: row.id.to_string(),
+                message: String::new(),
+                timestamp,
+                files_changed: row.documents_changed as usize,
+            }
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Loads a paginated list of sync runs for a provider.
+pub async fn load_sync_runs_paginated(
+    db: &DatabaseConnection,
+    offset: u64,
+    limit: u64,
+) -> Result<Paginated<csaf_trove_common::CommitInfo>> {
+    let total = sync_run::Entity::find().count(db).await?;
+
+    let rows = sync_run::Entity::find()
+        .order_by_desc(sync_run::Column::Id)
+        .offset(offset)
+        .limit(limit)
+        .all(db)
+        .await?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let timestamp = chrono::DateTime::parse_from_rfc3339(&row.timestamp)
+                .map(|dt| {
+                    time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
+                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+                })
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            csaf_trove_common::CommitInfo {
+                id: row.id.to_string(),
+                message: String::new(),
+                timestamp,
+                files_changed: row.documents_changed as usize,
+            }
+        })
+        .collect();
+
+    Ok(Paginated {
+        items,
+        total,
+        offset,
+        limit,
+    })
+}
+
 /// Upserts provider metadata info for aggregator generation.
-pub fn save_provider_info(results_dir: &Path, domain: &str, info: &ProviderInfo) -> Result<()> {
-    let conn = open_db(results_dir, domain)?;
-    conn.execute(
-        "INSERT OR REPLACE INTO provider_info (
-            id, canonical_url, publisher_name, publisher_category,
-            publisher_namespace, role, list_on_aggregators,
-            mirror_on_aggregators, last_updated
-        ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![
-            info.canonical_url,
-            info.publisher_name,
-            info.publisher_category,
-            info.publisher_namespace,
-            info.role,
-            info.list_on_aggregators,
-            info.mirror_on_aggregators,
-            info.last_updated,
-        ],
-    )?;
+pub async fn save_provider_info(db: &DatabaseConnection, info: &ProviderInfo) -> Result<()> {
+    let model = provider_info::ActiveModel {
+        id: Set(1),
+        canonical_url: Set(info.canonical_url.clone()),
+        publisher_name: Set(info.publisher_name.clone()),
+        publisher_category: Set(info.publisher_category.clone()),
+        publisher_namespace: Set(info.publisher_namespace.clone()),
+        role: Set(info.role.clone()),
+        list_on_aggregators: Set(info.list_on_aggregators as i32),
+        mirror_on_aggregators: Set(info.mirror_on_aggregators as i32),
+        last_updated: Set(info.last_updated.clone()),
+    };
+
+    provider_info::Entity::insert(model)
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::column(provider_info::Column::Id)
+                .update_columns([
+                    provider_info::Column::CanonicalUrl,
+                    provider_info::Column::PublisherName,
+                    provider_info::Column::PublisherCategory,
+                    provider_info::Column::PublisherNamespace,
+                    provider_info::Column::Role,
+                    provider_info::Column::ListOnAggregators,
+                    provider_info::Column::MirrorOnAggregators,
+                    provider_info::Column::LastUpdated,
+                ])
+                .to_owned(),
+        )
+        .exec(db)
+        .await?;
+
     Ok(())
 }
 
 /// Loads the persisted provider metadata info, if available.
-pub fn load_provider_info(results_dir: &Path, domain: &str) -> Result<Option<ProviderInfo>> {
-    let conn = open_db(results_dir, domain)?;
-    let mut stmt = conn.prepare(
-        "SELECT canonical_url, publisher_name, publisher_category,
-                publisher_namespace, role, list_on_aggregators,
-                mirror_on_aggregators, last_updated
-         FROM provider_info WHERE id = 1",
-    )?;
-    let result = stmt.query_row([], |row| {
-        Ok(ProviderInfo {
-            canonical_url: row.get(0)?,
-            publisher_name: row.get(1)?,
-            publisher_category: row.get(2)?,
-            publisher_namespace: row.get(3)?,
-            role: row.get(4)?,
-            list_on_aggregators: row.get(5)?,
-            mirror_on_aggregators: row.get(6)?,
-            last_updated: row.get(7)?,
-        })
-    });
-    match result {
-        Ok(info) => Ok(Some(info)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
+pub async fn load_provider_info(db: &DatabaseConnection) -> Result<Option<ProviderInfo>> {
+    let row = provider_info::Entity::find_by_id(1).one(db).await?;
+
+    Ok(row.map(|r| ProviderInfo {
+        canonical_url: r.canonical_url,
+        publisher_name: r.publisher_name,
+        publisher_category: r.publisher_category,
+        publisher_namespace: r.publisher_namespace,
+        role: r.role,
+        list_on_aggregators: r.list_on_aggregators != 0,
+        mirror_on_aggregators: r.mirror_on_aggregators != 0,
+        last_updated: r.last_updated,
+    }))
 }

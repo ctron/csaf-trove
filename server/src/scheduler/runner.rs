@@ -117,6 +117,7 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
     if let Err(e) = state
         .storage
         .save_sync_run(domain, &now, job.documents_synced)
+        .await
     {
         tracing::warn!("Failed to save sync run for {domain}: {e}");
     }
@@ -133,7 +134,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     }
 
     let sync_state = state.storage.load_sync_state(domain).await?;
-    let db_count = state.storage.document_count(domain)?;
+    let db_count = state.storage.document_count(domain).await?;
     let incremental = sync_state.since_token.is_some() && db_count > 0;
 
     if incremental {
@@ -334,7 +335,7 @@ async fn persist_provider_metadata(state: &Arc<AppState>, domain: &str, worktree
         last_updated: metadata.last_updated.to_rfc3339(),
     };
 
-    if let Err(e) = state.storage.save_provider_info(domain, &info) {
+    if let Err(e) = state.storage.save_provider_info(domain, &info).await {
         tracing::warn!("{domain}: failed to persist provider info: {e}");
     }
 }

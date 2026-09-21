@@ -27,7 +27,7 @@ pub async fn generate_aggregator(state: &Arc<AppState>) -> Result<()> {
     tokio::fs::create_dir_all(&output_dir).await?;
 
     let sources = state.sources.read().await;
-    let all_info = state.storage.load_all_provider_info()?;
+    let all_info = state.storage.load_all_provider_info().await?;
 
     let category_str = match config.category {
         AggregatorCategory::Lister => "lister",

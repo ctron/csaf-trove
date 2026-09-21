@@ -95,7 +95,7 @@ pub async fn sync_provider(
     let mut sync_state = state.storage.load_sync_state(domain).await?;
 
     if sync_state.since_token.is_some() {
-        let db_count = state.storage.document_count(domain)?;
+        let db_count = state.storage.document_count(domain).await?;
         if db_count == 0 {
             tracing::warn!(
                 "{domain}: document database is empty but since_token is set; \

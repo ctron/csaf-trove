@@ -1,0 +1,7 @@
+[package]
+name = "csaf-trove-entity"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sea-orm = { workspace = true }

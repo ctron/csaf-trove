@@ -13,6 +13,8 @@ chrono = { workspace = true }
 clap = { workspace = true }
 csaf-rs = { workspace = true }
 csaf-trove-common = { workspace = true }
+csaf-trove-entity = { workspace = true }
+csaf-trove-migration = { workspace = true }
 csaf-walker = { workspace = true, features = ["csaf", "crypto-openssl"] }
 git2 = { workspace = true }
 hex = { workspace = true }
@@ -20,7 +22,7 @@ hmac = { workspace = true }
 humantime = { workspace = true }
 humantime-serde = { workspace = true }
 parking_lot = { workspace = true }
-rusqlite = { workspace = true }
+sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }
@@ -38,6 +40,7 @@ walkdir = { workspace = true }
 walker-common = { workspace = true }
 
 [dev-dependencies]
+rusqlite = { workspace = true }
 tempfile = { workspace = true }
 
 [build-dependencies]

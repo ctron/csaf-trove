@@ -123,7 +123,7 @@ pub async fn validate_provider(
     }));
     let validation_options = Arc::new(ValidationOptions::new());
 
-    let db_count_before = state.storage.document_count(domain).unwrap_or(0);
+    let db_count_before = state.storage.document_count(domain).await.unwrap_or(0);
 
     let batch_state: Arc<Mutex<ValidationBatchState>> =
         Arc::new(Mutex::new(ValidationBatchState {
@@ -246,7 +246,7 @@ pub async fn validate_provider(
                         };
 
                         if let Some(drained) = batch_to_flush {
-                            flush_batch(&state.storage, &domain, drained)?;
+                            flush_batch(&state.storage, &domain, drained).await?;
                         }
 
                         state.increment_job_validated(&domain).await;
@@ -293,7 +293,7 @@ pub async fn validate_provider(
                         };
 
                         if let Some(drained) = batch_to_flush {
-                            flush_batch(&state.storage, &domain, drained)?;
+                            flush_batch(&state.storage, &domain, drained).await?;
                         }
 
                         state.increment_job_validated(&domain).await;
@@ -329,11 +329,11 @@ pub async fn validate_provider(
         );
     }
 
-    flush_batch(&state.storage, domain, remaining)?;
+    flush_batch(&state.storage, domain, remaining).await?;
 
-    let total_documents = state.storage.document_count(domain)?;
+    let total_documents = state.storage.document_count(domain).await?;
 
-    let summary = state.storage.build_summary_from_db(domain)?;
+    let summary = state.storage.build_summary_from_db(domain).await?;
     state.storage.save_summary(domain, &summary).await?;
 
     tracing::info!(
@@ -343,12 +343,12 @@ pub async fn validate_provider(
 }
 
 /// Converts a batch of results to `DocumentValidation` and writes them to the database.
-fn flush_batch(storage: &Storage, domain: &str, batch: Vec<DocumentResult>) -> Result<()> {
+async fn flush_batch(storage: &Storage, domain: &str, batch: Vec<DocumentResult>) -> Result<()> {
     if batch.is_empty() {
         return Ok(());
     }
     let documents = build_document_results(batch);
-    storage.save_documents(domain, &documents)?;
+    storage.save_documents(domain, &documents).await?;
     Ok(())
 }
 

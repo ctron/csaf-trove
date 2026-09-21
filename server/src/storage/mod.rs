@@ -1,3 +1,4 @@
+pub mod db;
 pub mod documents;
 pub mod git_repo;
 pub mod results;
@@ -20,6 +21,8 @@ use anyhow::Result;
 
 pub use documents::ProviderInfo;
 
+use db::DbPool;
+
 /// Manages on-disk persistence for repos, state, results, and metrics.
 pub struct Storage {
     /// Directory containing bare git repos per provider.
@@ -30,16 +33,20 @@ pub struct Storage {
     results_dir: PathBuf,
     /// Directory containing per-provider metrics time series.
     metrics_dir: PathBuf,
+    /// Per-provider SQLite connection pool.
+    db: DbPool,
 }
 
 impl Storage {
     /// Creates a new storage layer, ensuring all directories exist.
     pub fn new(data_dir: &Path) -> Result<Self> {
+        let results_dir = data_dir.join("results");
         let storage = Self {
             repos_dir: data_dir.join("repos"),
             state_dir: data_dir.join("state"),
-            results_dir: data_dir.join("results"),
+            results_dir: results_dir.clone(),
             metrics_dir: data_dir.join("metrics"),
+            db: DbPool::new(results_dir),
         };
         std::fs::create_dir_all(&storage.repos_dir)?;
         std::fs::create_dir_all(&storage.state_dir)?;
@@ -95,7 +102,7 @@ impl Storage {
     pub async fn provider_detail(&self, domain: &str) -> Result<Option<ProviderDetail>> {
         let summary = results::load_summary(&self.results_dir, domain).await?;
         let metrics = self.load_metrics(domain).await.ok();
-        let history = self.provider_history(domain)?.unwrap_or_default();
+        let history = self.provider_history(domain).await?.unwrap_or_default();
 
         let Some(summary) = summary else {
             return Ok(None);
@@ -109,11 +116,14 @@ impl Storage {
     }
 
     /// Returns recent sync run history for a provider from the database.
-    pub fn provider_history(
+    pub async fn provider_history(
         &self,
         domain: &str,
     ) -> Result<Option<Vec<csaf_trove_common::CommitInfo>>> {
-        let runs = documents::load_sync_runs(&self.results_dir, domain, 50)?;
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(None);
+        };
+        let runs = documents::load_sync_runs(&db, 50).await?;
         if runs.is_empty() {
             return Ok(None);
         }
@@ -121,13 +131,14 @@ impl Storage {
     }
 
     /// Records a completed sync run with the number of documents changed.
-    pub fn save_sync_run(
+    pub async fn save_sync_run(
         &self,
         domain: &str,
         timestamp: &chrono::DateTime<chrono::Utc>,
         documents_changed: u64,
     ) -> Result<()> {
-        documents::save_sync_run(&self.results_dir, domain, timestamp, documents_changed)
+        let db = self.db.get(domain).await?;
+        documents::save_sync_run(&db, timestamp, documents_changed).await
     }
 
     /// Loads the sync state for a provider, creating a default if absent.
@@ -172,72 +183,91 @@ impl Storage {
     }
 
     /// Returns the number of documents stored for a provider.
-    pub fn document_count(&self, domain: &str) -> Result<u64> {
-        documents::document_count(&self.results_dir, domain)
+    pub async fn document_count(&self, domain: &str) -> Result<u64> {
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(0);
+        };
+        documents::document_count(&db).await
     }
 
     /// Upserts per-document validation results, returning the total document count.
-    pub fn save_documents(&self, domain: &str, docs: &[DocumentValidation]) -> Result<u64> {
-        documents::save_documents(&self.results_dir, domain, docs)
+    pub async fn save_documents(&self, domain: &str, docs: &[DocumentValidation]) -> Result<u64> {
+        let db = self.db.get(domain).await?;
+        documents::save_documents(&db, docs).await
     }
 
     /// Builds a provider summary from all documents in the database.
-    pub fn build_summary_from_db(&self, domain: &str) -> Result<ProviderSummary> {
-        documents::build_summary_from_db(&self.results_dir, domain)
+    pub async fn build_summary_from_db(&self, domain: &str) -> Result<ProviderSummary> {
+        let db = self.db.get(domain).await?;
+        documents::build_summary_from_db(&db, domain).await
     }
 
     /// Returns paginated sync run history for a provider from the database.
-    pub fn provider_history_paginated(
+    pub async fn provider_history_paginated(
         &self,
         domain: &str,
         offset: u64,
         limit: u64,
     ) -> Result<Option<Paginated<csaf_trove_common::CommitInfo>>> {
-        documents::load_sync_runs_paginated(&self.results_dir, domain, offset, limit)
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(Some(Paginated {
+                items: vec![],
+                total: 0,
+                offset,
+                limit,
+            }));
+        };
+        let page = documents::load_sync_runs_paginated(&db, offset, limit).await?;
+        Ok(Some(page))
     }
 
     /// Loads paginated document validation results for a provider.
-    pub fn load_documents_paginated(
+    pub async fn load_documents_paginated(
         &self,
         domain: &str,
         offset: u64,
         limit: u64,
         status_filter: Option<&str>,
     ) -> Result<Option<Paginated<DocumentValidation>>> {
-        let mut page = documents::load_documents_paginated(
-            &self.results_dir,
-            domain,
-            offset,
-            limit,
-            status_filter,
-        )?;
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(Some(Paginated {
+                items: vec![],
+                total: 0,
+                offset,
+                limit,
+            }));
+        };
 
-        if let Some(ref mut page) = page {
-            let repo_path = self.repo_path(domain);
-            if !page.items.is_empty() && repo_path.exists() {
-                let urls: Vec<&str> = page.items.iter().map(|d| d.url.as_str()).collect();
-                if let Ok(counts) = git_repo::document_version_counts(&repo_path, &urls) {
-                    for doc in &mut page.items {
-                        doc.version_count = counts.get(&doc.url).copied();
-                    }
+        let mut page =
+            documents::load_documents_paginated(&db, offset, limit, status_filter).await?;
+
+        let repo_path = self.repo_path(domain);
+        if !page.items.is_empty() && repo_path.exists() {
+            let urls: Vec<&str> = page.items.iter().map(|d| d.url.as_str()).collect();
+            if let Ok(counts) = git_repo::document_version_counts(&repo_path, &urls) {
+                for doc in &mut page.items {
+                    doc.version_count = counts.get(&doc.url).copied();
                 }
             }
         }
 
-        Ok(page)
+        Ok(Some(page))
     }
 
     /// Loads a single document's validation results by tracking ID.
-    pub fn load_document(
+    pub async fn load_document(
         &self,
         domain: &str,
         tracking_id: &str,
     ) -> Result<Option<DocumentValidation>> {
-        documents::load_document(&self.results_dir, domain, tracking_id)
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(None);
+        };
+        documents::load_document(&db, tracking_id).await
     }
 
     /// Returns the version history for a specific document in a provider's repo.
-    pub fn document_versions(
+    pub async fn document_versions(
         &self,
         domain: &str,
         tracking_id: &str,
@@ -246,7 +276,10 @@ impl Storage {
         if !repo_path.exists() {
             return Ok(None);
         }
-        let Some(url) = documents::document_url(&self.results_dir, domain, tracking_id)? else {
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(None);
+        };
+        let Some(url) = documents::document_url(&db, tracking_id).await? else {
             return Ok(None);
         };
         let versions = git_repo::document_versions(&repo_path, &url, 50)?;
@@ -263,7 +296,7 @@ impl Storage {
     }
 
     /// Computes a structured diff between a document version and its next newer version.
-    pub fn diff_document_versions(
+    pub async fn diff_document_versions(
         &self,
         domain: &str,
         tracking_id: &str,
@@ -274,7 +307,11 @@ impl Storage {
             tracing::debug!("diff: repo not found for {domain}");
             return Ok(None);
         }
-        let Some(url) = documents::document_url(&self.results_dir, domain, tracking_id)? else {
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            tracing::debug!("diff: no db for {domain}");
+            return Ok(None);
+        };
+        let Some(url) = documents::document_url(&db, tracking_id).await? else {
             tracing::debug!("diff: no URL for {domain}/{tracking_id}");
             return Ok(None);
         };
@@ -298,7 +335,7 @@ impl Storage {
     }
 
     /// Reads a historical version of a document from git and extracts its metadata.
-    pub fn read_historical_document(
+    pub async fn read_historical_document(
         &self,
         domain: &str,
         tracking_id: &str,
@@ -308,7 +345,10 @@ impl Storage {
         if !repo_path.exists() {
             return Ok(None);
         }
-        let Some(url) = documents::document_url(&self.results_dir, domain, tracking_id)? else {
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(None);
+        };
+        let Some(url) = documents::document_url(&db, tracking_id).await? else {
             return Ok(None);
         };
         let Some((blob, timestamp)) = git_repo::read_document_blob(&repo_path, &url, commit_id)?
@@ -320,17 +360,21 @@ impl Storage {
     }
 
     /// Saves provider metadata info for aggregator generation.
-    pub fn save_provider_info(&self, domain: &str, info: &ProviderInfo) -> Result<()> {
-        documents::save_provider_info(&self.results_dir, domain, info)
+    pub async fn save_provider_info(&self, domain: &str, info: &ProviderInfo) -> Result<()> {
+        let db = self.db.get(domain).await?;
+        documents::save_provider_info(&db, info).await
     }
 
     /// Loads provider metadata info for a single provider.
-    pub fn load_provider_info(&self, domain: &str) -> Result<Option<ProviderInfo>> {
-        documents::load_provider_info(&self.results_dir, domain)
+    pub async fn load_provider_info(&self, domain: &str) -> Result<Option<ProviderInfo>> {
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(None);
+        };
+        documents::load_provider_info(&db).await
     }
 
     /// Loads provider metadata info for all providers that have results directories.
-    pub fn load_all_provider_info(&self) -> Result<Vec<(String, ProviderInfo)>> {
+    pub async fn load_all_provider_info(&self) -> Result<Vec<(String, ProviderInfo)>> {
         let mut result = Vec::new();
         let entries = std::fs::read_dir(&self.results_dir)?;
         for entry in entries {
@@ -339,7 +383,9 @@ impl Storage {
                 continue;
             }
             let key = entry.file_name().to_string_lossy().to_string();
-            if let Ok(Some(info)) = documents::load_provider_info(&self.results_dir, &key) {
+            if let Ok(Some(db)) = self.db.get_if_exists(&key).await
+                && let Ok(Some(info)) = documents::load_provider_info(&db).await
+            {
                 result.push((key, info));
             }
         }

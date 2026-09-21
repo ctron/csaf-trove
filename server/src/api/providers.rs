@@ -78,7 +78,8 @@ pub async fn history(
 
     let page = state
         .storage
-        .provider_history_paginated(&domain, offset, limit)?
+        .provider_history_paginated(&domain, offset, limit)
+        .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(page))
 }
@@ -107,7 +108,8 @@ pub async fn documents(
 
     let page = state
         .storage
-        .load_documents_paginated(&domain, offset, limit, status)?
+        .load_documents_paginated(&domain, offset, limit, status)
+        .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(page))
 }
@@ -158,7 +160,8 @@ pub async fn document_detail(
     let (domain, tracking_id) = path.into_inner();
     let doc = state
         .storage
-        .load_document(&domain, &tracking_id)?
+        .load_document(&domain, &tracking_id)
+        .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(doc))
 }
@@ -171,7 +174,8 @@ pub async fn document_versions(
     let (domain, tracking_id) = path.into_inner();
     let versions = state
         .storage
-        .document_versions(&domain, &tracking_id)?
+        .document_versions(&domain, &tracking_id)
+        .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(versions))
 }
@@ -184,7 +188,8 @@ pub async fn document_version_detail(
     let (domain, tracking_id, commit_id) = path.into_inner();
     let doc = state
         .storage
-        .read_historical_document(&domain, &tracking_id, &commit_id)?
+        .read_historical_document(&domain, &tracking_id, &commit_id)
+        .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(doc))
 }
@@ -197,7 +202,8 @@ pub async fn document_diff(
     let (domain, tracking_id, commit_id) = path.into_inner();
     let diff = state
         .storage
-        .diff_document_versions(&domain, &tracking_id, &commit_id)?
+        .diff_document_versions(&domain, &tracking_id, &commit_id)
+        .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(diff))
 }
