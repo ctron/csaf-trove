@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use anyhow::{Context, Result};
 use git2::{Oid, Repository, Signature, Tree};
@@ -137,6 +140,34 @@ fn blob_oid_at_path(tree: &Tree<'_>, path: &str) -> Result<Option<Oid>> {
     }
 }
 
+/// Collects blob OIDs for multiple paths in a single tree walk.
+///
+/// Given a set of git paths we're interested in, walks the tree once and
+/// returns a map from path to OID. This is O(tree_size) regardless of how
+/// many paths we're looking for, much faster than calling `blob_oid_at_path`
+/// repeatedly for large flat directories.
+fn collect_blob_oids(tree: &Tree<'_>, paths: &HashSet<String>) -> HashMap<String, Oid> {
+    let mut result = HashMap::new();
+
+    tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
+        if entry.kind() == Some(git2::ObjectType::Blob) {
+            let full_path = if dir.is_empty() {
+                entry.name().unwrap_or("").to_string()
+            } else {
+                format!("{}{}", dir, entry.name().unwrap_or(""))
+            };
+
+            if paths.contains(&full_path) {
+                result.insert(full_path, entry.id());
+            }
+        }
+        git2::TreeWalkResult::Ok
+    })
+    .ok();
+
+    result
+}
+
 /// Converts a document URL to its git tree path: `<domain>/<url_path>`.
 ///
 /// The worktree (and thus the git tree) stores files as
@@ -247,6 +278,9 @@ pub fn document_version_counts(repo_path: &Path, urls: &[&str]) -> Result<HashMa
         return Ok(HashMap::new());
     }
 
+    // Build a HashSet of git paths for efficient tree walking
+    let git_paths: HashSet<String> = paths.iter().map(|(_, p)| p.clone()).collect();
+
     let mut revwalk = repo.revwalk()?;
     revwalk.push(head.target().context("HEAD has no target")?)?;
 
@@ -258,8 +292,11 @@ pub fn document_version_counts(repo_path: &Path, urls: &[&str]) -> Result<HashMa
         let commit = repo.find_commit(oid)?;
         let tree = commit.tree()?;
 
+        // Walk tree once per commit, collect all blob OIDs we care about
+        let current_oids = collect_blob_oids(&tree, &git_paths);
+
         for (url, git_path) in &paths {
-            let current_oid = blob_oid_at_path(&tree, git_path)?;
+            let current_oid = current_oids.get(git_path).copied();
             let prev = prev_oids.get(url.as_str()).copied().flatten();
 
             let changed = match (current_oid, prev) {
