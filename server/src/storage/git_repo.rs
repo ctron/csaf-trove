@@ -443,10 +443,8 @@ mod tests {
 
     #[test]
     fn read_head_blob_returns_content() {
-        let (_dir, bare_path) = create_test_repo(&[(
-            "metadata/provider-metadata.json",
-            b"{\"distributions\":[]}",
-        )]);
+        let (_dir, bare_path) =
+            create_test_repo(&[("metadata/provider-metadata.json", b"{\"distributions\":[]}")]);
         let result = read_head_blob(&bare_path, "metadata/provider-metadata.json").unwrap();
         assert_eq!(result, Some(b"{\"distributions\":[]}".to_vec()));
     }

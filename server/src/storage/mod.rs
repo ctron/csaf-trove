@@ -123,10 +123,7 @@ impl Storage {
     }
 
     /// Reads provider-metadata.json from the bare repo and computes per-distribution health.
-    async fn compute_distribution_health(
-        &self,
-        domain: &str,
-    ) -> Result<Vec<DistributionHealth>> {
+    async fn compute_distribution_health(&self, domain: &str) -> Result<Vec<DistributionHealth>> {
         let repo_path = self.repo_path(domain);
         if !repo_path.exists() {
             return Ok(vec![]);
@@ -156,7 +153,10 @@ impl Storage {
             return Ok(vec![]);
         };
 
-        let dist_errors = self.load_distribution_errors(domain).await.unwrap_or_default();
+        let dist_errors = self
+            .load_distribution_errors(domain)
+            .await
+            .unwrap_or_default();
 
         let mut results = Vec::new();
         for entry in &entries {
@@ -341,8 +341,7 @@ impl Storage {
             }));
         };
 
-        let page =
-            documents::load_documents_paginated(&db, offset, limit, status_filter).await?;
+        let page = documents::load_documents_paginated(&db, offset, limit, status_filter).await?;
         Ok(Some(page))
     }
 

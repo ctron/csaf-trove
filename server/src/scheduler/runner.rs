@@ -158,15 +158,15 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
             .await??;
     }
 
-    let sync_result =
-        match crate::pipeline::sync::sync_provider(state, source, &worktree_dir).await {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!("Sync failed for {domain}: {e:#}");
-                cleanup_worktree(&worktree_dir).await;
-                return Err(e);
-            }
-        };
+    let sync_result = match crate::pipeline::sync::sync_provider(state, source, &worktree_dir).await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Sync failed for {domain}: {e:#}");
+            cleanup_worktree(&worktree_dir).await;
+            return Err(e);
+        }
+    };
 
     state.update_job_phase(domain, "commit").await;
     {

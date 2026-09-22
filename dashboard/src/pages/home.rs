@@ -1,6 +1,3 @@
-use leptos::prelude::*;
-use time::format_description::{self, well_known::Rfc3339};
-use time::OffsetDateTime;
 use crate::components::{
     profile_badge::ProfileBadge,
     section_heading::SectionHeading,
@@ -8,12 +5,17 @@ use crate::components::{
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{ProviderSummary, encode_path_segment};
+use leptos::prelude::*;
+use time::OffsetDateTime;
+use time::format_description::{self, well_known::Rfc3339};
 
 fn format_validated_at(s: &str) -> String {
     OffsetDateTime::parse(s, &Rfc3339)
         .ok()
         .and_then(|dt| {
-            let fmt = format_description::parse_borrowed::<2>("[year]-[month]-[day] [hour]:[minute] UTC").ok()?;
+            let fmt =
+                format_description::parse_borrowed::<2>("[year]-[month]-[day] [hour]:[minute] UTC")
+                    .ok()?;
             dt.format(&fmt).ok()
         })
         .unwrap_or_else(|| s.to_string())

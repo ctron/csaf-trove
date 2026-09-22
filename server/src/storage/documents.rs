@@ -611,7 +611,9 @@ pub async fn distribution_health(
     .one(db)
     .await?;
 
-    Ok(row.map(|r| r.into_tuple()).unwrap_or((0, 0, None, None, None)))
+    Ok(row
+        .map(|r| r.into_tuple())
+        .unwrap_or((0, 0, None, None, None)))
 }
 
 /// Records a completed sync run with the number of documents that changed.
