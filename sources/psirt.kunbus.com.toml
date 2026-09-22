@@ -1,1 +1,6 @@
 domain = "psirt.kunbus.com"
+skip_directories = [
+    "https://psirt.kunbus.com/.well-known/csaf/amber",
+    "https://psirt.kunbus.com/.well-known/csaf/green",
+    "https://psirt.kunbus.com/.well-known/csaf/red",
+]

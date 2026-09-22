@@ -294,14 +294,8 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                 </Thead>
                 <Tbody>
                     {distributions.into_iter().map(|d| {
-                        let kind_variant = match d.kind.as_str() {
-                            "rolie" => BadgeVariant::Info,
-                            "directory+rolie" => BadgeVariant::Info,
-                            _ => BadgeVariant::Neutral,
-                        };
                         let kind_label = match d.kind.as_str() {
                             "rolie" => "ROLIE",
-                            "directory+rolie" => "Dir + ROLIE",
                             _ => "Directory",
                         };
                         let tlp_badges = d.tlp_labels.iter().map(|tlp| {
@@ -313,16 +307,8 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                 <Badge variant=BadgeVariant::Neutral>"Skipped"</Badge>
                             }.into_any()
                         } else if let Some(error) = d.distribution_error.clone() {
-                            let err_variant = if d.retrieval_errors > 0 {
-                                BadgeVariant::Danger
-                            } else {
-                                BadgeVariant::Success
-                            };
                             view! {
-                                <div class="flex flex-col gap-1">
-                                    <Badge variant=BadgeVariant::Danger>{error}</Badge>
-                                    <Badge variant=err_variant>{d.retrieval_errors}</Badge>
-                                </div>
+                                <Badge variant=BadgeVariant::Danger>{error}</Badge>
                             }.into_any()
                         } else {
                             let err_variant = if d.retrieval_errors > 0 {
@@ -339,7 +325,7 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                 <Td>
                                     <div class="flex items-center gap-2">
                                         <span class="font-medium text-gray-700 dark:text-gray-300">{d.label.clone()}</span>
-                                        <Badge variant=kind_variant>{kind_label}</Badge>
+                                        <Badge variant=BadgeVariant::Info>{kind_label}</Badge>
                                         {tlp_badges}
                                     </div>
                                 </Td>

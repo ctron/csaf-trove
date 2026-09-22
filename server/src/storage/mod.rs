@@ -517,6 +517,9 @@ struct DistributionEntry {
 }
 
 /// Extracts distribution entries from the `distributions` array in provider-metadata.json.
+///
+/// Each ROLIE feed and each directory URL becomes its own entry so that
+/// per-feed errors and TLP labels are shown individually in the dashboard.
 fn extract_distribution_entries(distributions: &[serde_json::Value]) -> Vec<DistributionEntry> {
     let mut entries = Vec::new();
 
@@ -542,43 +545,38 @@ fn extract_distribution_entries(distributions: &[serde_json::Value]) -> Vec<Dist
             })
             .unwrap_or_default();
 
-        let has_dir = dir_url.is_some();
-        let has_rolie = !rolie_feeds.is_empty();
+        if let Some(ref dir) = dir_url {
+            let prefix = normalize_url_prefix(dir);
+            let label = url::Url::parse(dir)
+                .ok()
+                .map(|u| u.path().to_string())
+                .unwrap_or_else(|| dir.clone());
+            entries.push(DistributionEntry {
+                label,
+                kind: "directory".to_string(),
+                url: dir.clone(),
+                prefix,
+                tlp_labels: vec![],
+                feed_urls: vec![],
+            });
+        }
 
-        let kind = match (has_dir, has_rolie) {
-            (true, true) => "directory+rolie",
-            (true, false) => "directory",
-            (false, true) => "rolie",
-            (false, false) => continue,
-        };
-
-        let (url, prefix) = if let Some(ref dir) = dir_url {
-            (dir.clone(), normalize_url_prefix(dir))
-        } else {
-            let feed_url = rolie_feeds[0].0;
-            (feed_url.to_string(), rolie_feed_to_prefix(feed_url))
-        };
-
-        let label = url::Url::parse(&url)
-            .ok()
-            .map(|u| u.path().to_string())
-            .unwrap_or_else(|| url.clone());
-
-        let tlp_labels: Vec<String> = rolie_feeds
-            .iter()
-            .filter_map(|(_, tlp)| tlp.map(|t| t.to_uppercase()))
-            .collect();
-
-        let feed_urls: Vec<String> = rolie_feeds.iter().map(|(u, _)| u.to_string()).collect();
-
-        entries.push(DistributionEntry {
-            label,
-            kind: kind.to_string(),
-            url,
-            prefix,
-            tlp_labels,
-            feed_urls,
-        });
+        for (feed_url, tlp) in &rolie_feeds {
+            let prefix = rolie_feed_to_prefix(feed_url);
+            let label = url::Url::parse(feed_url)
+                .ok()
+                .map(|u| u.path().to_string())
+                .unwrap_or_else(|| feed_url.to_string());
+            let tlp_labels = tlp.iter().map(|t| t.to_uppercase()).collect();
+            entries.push(DistributionEntry {
+                label,
+                kind: "rolie".to_string(),
+                url: feed_url.to_string(),
+                prefix,
+                tlp_labels,
+                feed_urls: vec![feed_url.to_string()],
+            });
+        }
     }
 
     entries
