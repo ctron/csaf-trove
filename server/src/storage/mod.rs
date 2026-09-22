@@ -12,8 +12,8 @@ use time::OffsetDateTime;
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
-        DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, ProviderDetail,
-        ProviderSummary, RevisionEntry,
+        DiffLineInfo, DistributionHealth, DocumentValidation, DocumentVersionInfo,
+        HistoricalDocument, ProviderDetail, ProviderSummary, RevisionEntry,
     },
     source::sanitize_domain,
     state::SyncState,
@@ -109,11 +109,70 @@ impl Storage {
             return Ok(None);
         };
 
+        let distributions = self
+            .compute_distribution_health(domain)
+            .await
+            .unwrap_or_default();
+
         Ok(Some(ProviderDetail {
             summary,
             metrics,
             history,
+            distributions,
         }))
+    }
+
+    /// Reads provider-metadata.json from the bare repo and computes per-distribution health.
+    async fn compute_distribution_health(
+        &self,
+        domain: &str,
+    ) -> Result<Vec<DistributionHealth>> {
+        let repo_path = self.repo_path(domain);
+        if !repo_path.exists() {
+            return Ok(vec![]);
+        }
+
+        let blob = tokio::task::spawn_blocking(move || {
+            git_repo::read_head_blob(&repo_path, "metadata/provider-metadata.json")
+        })
+        .await??;
+
+        let Some(blob) = blob else {
+            return Ok(vec![]);
+        };
+
+        let metadata: serde_json::Value = serde_json::from_slice(&blob)?;
+        let dist_array = match metadata.get("distributions").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return Ok(vec![]),
+        };
+
+        let entries = extract_distribution_entries(dist_array);
+        if entries.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(vec![]);
+        };
+
+        let mut results = Vec::new();
+        for (label, kind, url, prefix) in &entries {
+            let (document_count, retrieval_errors, basic, extended, full) =
+                documents::distribution_health(&db, prefix).await?;
+            results.push(DistributionHealth {
+                label: label.clone(),
+                kind: kind.clone(),
+                url: url.clone(),
+                document_count,
+                retrieval_errors,
+                basic_pass_rate: basic,
+                extended_pass_rate: extended,
+                full_pass_rate: full,
+            });
+        }
+
+        Ok(results)
     }
 
     /// Returns recent sync run history for a provider from the database.
@@ -416,6 +475,77 @@ impl Storage {
             }
         }
         Ok(result)
+    }
+}
+
+/// Extracts (label, kind, url, prefix) entries from the `distributions` array in
+/// provider-metadata.json. One entry per distribution object.
+fn extract_distribution_entries(
+    distributions: &[serde_json::Value],
+) -> Vec<(String, String, String, String)> {
+    let mut entries = Vec::new();
+
+    for dist in distributions {
+        let dir_url = dist
+            .get("directory_url")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let rolie_feeds: Vec<&str> = dist
+            .get("rolie")
+            .and_then(|r| r.get("feeds"))
+            .and_then(|f| f.as_array())
+            .map(|feeds| {
+                feeds
+                    .iter()
+                    .filter_map(|f| f.get("url").and_then(|u| u.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let has_dir = dir_url.is_some();
+        let has_rolie = !rolie_feeds.is_empty();
+
+        let kind = match (has_dir, has_rolie) {
+            (true, true) => "directory+rolie",
+            (true, false) => "directory",
+            (false, true) => "rolie",
+            (false, false) => continue,
+        };
+
+        let (url, prefix) = if let Some(ref dir) = dir_url {
+            (dir.clone(), normalize_url_prefix(dir))
+        } else {
+            let feed = rolie_feeds[0];
+            (feed.to_string(), rolie_feed_to_prefix(feed))
+        };
+
+        let label = url::Url::parse(&url)
+            .ok()
+            .map(|u| u.path().to_string())
+            .unwrap_or_else(|| url.clone());
+
+        entries.push((label, kind.to_string(), url, prefix));
+    }
+
+    entries
+}
+
+/// Normalizes a directory URL to use as a LIKE prefix, ensuring trailing slash.
+fn normalize_url_prefix(url: &str) -> String {
+    if url.ends_with('/') {
+        url.to_string()
+    } else {
+        format!("{url}/")
+    }
+}
+
+/// Derives a URL prefix from a ROLIE feed URL by taking the parent directory.
+fn rolie_feed_to_prefix(feed_url: &str) -> String {
+    if let Some(pos) = feed_url.rfind('/') {
+        let prefix = &feed_url[..=pos];
+        prefix.to_string()
+    } else {
+        feed_url.to_string()
     }
 }
 

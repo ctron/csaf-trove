@@ -10,12 +10,12 @@ use crate::components::{
     content_tabs::{ContentTab, ContentTabs},
     doc_profile_badge::DocProfileBadge,
     pagination::Pagination,
-    progress_bar::{ProgressBar, color_for_pass_rate},
+    progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate},
     table::{Table, Tbody, Td, Th, Thead},
     tabs::{Tab, Tabs},
 };
 use crate::models::{
-    PaginatedDocuments, ProfileSummary, ProviderDetail, SignatureSummary, encode_path_segment,
+    DistributionHealth, PaginatedDocuments, ProfileSummary, ProviderDetail, encode_path_segment,
 };
 
 /// Fetches provider detail from the API.
@@ -88,15 +88,25 @@ fn profile_row(label: &'static str, profile: Option<ProfileSummary>) -> impl Int
     }
 }
 
-/// Renders the optional signature summary section inside the overview card.
-fn signature_section(sig: SignatureSummary) -> impl IntoView {
+/// A single problem badge entry for [`HealthRow`].
+struct HealthBadge {
+    count: u64,
+    label: &'static str,
+    variant: BadgeVariant,
+}
+
+/// A bordered health row: shows a green ok count plus any non-zero problem badges.
+#[component]
+fn HealthRow(label: &'static str, ok_count: u64, badges: Vec<HealthBadge>) -> impl IntoView {
+    let problems: Vec<_> = badges.into_iter().filter(|b| b.count > 0).collect();
     view! {
         <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
-            <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">"Signatures"</p>
             <div class="flex items-center gap-3">
-                <Badge variant=BadgeVariant::Success>{sig.valid}" valid"</Badge>
-                <Badge variant=BadgeVariant::Danger>{sig.invalid}" invalid"</Badge>
-                <Badge variant=BadgeVariant::Warning>{sig.missing}" missing"</Badge>
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
+                <Badge variant=BadgeVariant::Success>{ok_count}" ok"</Badge>
+                {problems.into_iter().map(|b| view! {
+                    <Badge variant=b.variant>{b.count}" "{b.label}</Badge>
+                }).collect_view()}
             </div>
         </div>
     }
@@ -106,8 +116,8 @@ fn signature_section(sig: SignatureSummary) -> impl IntoView {
 #[component]
 fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let summary = detail.summary;
+    let distributions = detail.distributions;
     let tests = summary.top_failing_tests;
-    let signatures = summary.signatures.clone();
     let retrieval_errors = summary.retrieval_errors;
     let domain = summary.provider.clone();
     let sync_href = format!("/sync/{}", encode_path_segment(&domain));
@@ -128,19 +138,22 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                         <p><span class="text-gray-500 dark:text-gray-500">"Publisher: "</span><span class="text-gray-700 dark:text-gray-300">{name}</span></p>
                     })}
                     <p><span class="text-gray-500 dark:text-gray-500">"Last synced: "</span><span class="text-gray-700 dark:text-gray-300">{summary.validated_at}</span></p>
-                    <p>
-                        <a href={sync_href} class="text-blue-600 dark:text-blue-400 hover:underline">"Sync History \u{2192}"</a>
-                    </p>
                 </div>
 
-                {signatures.map(signature_section)}
-
-                {(retrieval_errors > 0).then(|| view! {
-                    <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
-                        <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">"Retrieval Errors"</p>
-                        <Badge variant=BadgeVariant::Danger>{retrieval_errors}" failed"</Badge>
-                    </div>
+                {summary.signatures.map(|sig| view! {
+                    <HealthRow label="Signatures" ok_count=sig.valid badges=vec![
+                        HealthBadge { count: sig.invalid, label: "invalid", variant: BadgeVariant::Danger },
+                        HealthBadge { count: sig.missing, label: "missing", variant: BadgeVariant::Warning },
+                    ] />
                 })}
+
+                <HealthRow label="Retrieval" ok_count={summary.document_count - retrieval_errors} badges=vec![
+                    HealthBadge { count: retrieval_errors, label: "failed", variant: BadgeVariant::Danger },
+                ] />
+
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                    <a href={sync_href} class="text-sm text-blue-600 dark:text-blue-400 hover:underline">"Sync History \u{2192}"</a>
+                </div>
             </div>
 
             // Validation card
@@ -151,6 +164,11 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                 {profile_row("Full", summary.profiles.full)}
             </div>
         </div>
+
+        // Distribution health card (only when distributions are available)
+        {(!distributions.is_empty()).then(|| view! {
+            <DistributionsCard distributions=distributions />
+        })}
 
         // Content tabs
         <ContentTabs>
@@ -220,6 +238,81 @@ fn FailingTestsView(tests: Vec<crate::models::FailingTest>) -> impl IntoView {
         </Table>
     }
     .into_any()
+}
+
+/// Renders a pass rate as a colored badge or "n/a".
+fn rate_badge(rate: Option<f64>) -> impl IntoView {
+    match rate {
+        Some(r) => {
+            let pct = r * 100.0;
+            let variant = match color_for_pass_rate(r) {
+                ProgressColor::Emerald => BadgeVariant::Success,
+                ProgressColor::Amber => BadgeVariant::Warning,
+                ProgressColor::Red => BadgeVariant::Danger,
+            };
+            view! { <Badge variant=variant>{format!("{pct:.1}%")}</Badge> }.into_any()
+        }
+        None => view! {
+            <span class="text-gray-400 dark:text-gray-500">"n/a"</span>
+        }
+        .into_any(),
+    }
+}
+
+/// Renders a table card showing per-distribution health metrics.
+#[component]
+fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
+    view! {
+        <div class="bg-white rounded-lg shadow-md dark:bg-gray-800 p-6 mb-6">
+            <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-4">"Distributions"</h2>
+            <Table>
+                <Thead>
+                    <tr>
+                        <Th>"Distribution"</Th>
+                        <Th>"Documents"</Th>
+                        <Th>"Basic"</Th>
+                        <Th>"Extended"</Th>
+                        <Th>"Full"</Th>
+                        <Th>"Errors"</Th>
+                    </tr>
+                </Thead>
+                <Tbody>
+                    {distributions.into_iter().map(|d| {
+                        let kind_variant = match d.kind.as_str() {
+                            "rolie" => BadgeVariant::Info,
+                            "directory+rolie" => BadgeVariant::Info,
+                            _ => BadgeVariant::Neutral,
+                        };
+                        let kind_label = match d.kind.as_str() {
+                            "rolie" => "ROLIE",
+                            "directory+rolie" => "Dir + ROLIE",
+                            _ => "Directory",
+                        };
+                        let err_variant = if d.retrieval_errors > 0 {
+                            BadgeVariant::Danger
+                        } else {
+                            BadgeVariant::Success
+                        };
+                        view! {
+                            <tr>
+                                <Td>
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-medium text-gray-700 dark:text-gray-300">{d.label.clone()}</span>
+                                        <Badge variant=kind_variant>{kind_label}</Badge>
+                                    </div>
+                                </Td>
+                                <Td>{d.document_count}</Td>
+                                <Td>{rate_badge(d.basic_pass_rate)}</Td>
+                                <Td>{rate_badge(d.extended_pass_rate)}</Td>
+                                <Td>{rate_badge(d.full_pass_rate)}</Td>
+                                <Td><Badge variant=err_variant>{d.retrieval_errors}</Badge></Td>
+                            </tr>
+                        }
+                    }).collect::<Vec<_>>()}
+                </Tbody>
+            </Table>
+        </div>
+    }
 }
 
 /// Fetches paginated documents from the API.

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Statement,
-    TransactionTrait,
+    EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    Statement, TransactionTrait,
 };
 
 use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
@@ -546,6 +546,71 @@ fn build_profile_from_counts(valid: u64, invalid: u64) -> ProfileSummary {
         invalid,
         pass_rate,
     }
+}
+
+/// Raw row shape for the distribution health aggregation query.
+#[derive(Debug, sea_orm::FromQueryResult)]
+struct DistributionHealthRow {
+    total: i64,
+    bv: Option<i64>,
+    bi: Option<i64>,
+    ev: Option<i64>,
+    ei: Option<i64>,
+    fv: Option<i64>,
+    fi: Option<i64>,
+    re: Option<i64>,
+}
+
+impl DistributionHealthRow {
+    fn pass_rate(valid: Option<i64>, invalid: Option<i64>) -> Option<f64> {
+        let v = valid.unwrap_or(0) as u64;
+        let i = invalid.unwrap_or(0) as u64;
+        let total = v + i;
+        if total > 0 {
+            Some(v as f64 / total as f64)
+        } else {
+            None
+        }
+    }
+
+    fn into_tuple(self) -> (u64, u64, Option<f64>, Option<f64>, Option<f64>) {
+        (
+            self.total as u64,
+            self.re.unwrap_or(0) as u64,
+            Self::pass_rate(self.bv, self.bi),
+            Self::pass_rate(self.ev, self.ei),
+            Self::pass_rate(self.fv, self.fi),
+        )
+    }
+}
+
+/// Computes health metrics for documents whose URL starts with the given prefix.
+///
+/// Returns `(document_count, retrieval_errors, basic_pass_rate, extended_pass_rate, full_pass_rate)`.
+pub async fn distribution_health(
+    db: &DatabaseConnection,
+    url_prefix: &str,
+) -> Result<(u64, u64, Option<f64>, Option<f64>, Option<f64>)> {
+    let like_pattern = format!("{url_prefix}%");
+    let row = DistributionHealthRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN basic_passed = 1 THEN 1 ELSE 0 END) AS bv,
+            SUM(CASE WHEN basic_passed = 0 THEN 1 ELSE 0 END) AS bi,
+            SUM(CASE WHEN extended_passed = 1 THEN 1 ELSE 0 END) AS ev,
+            SUM(CASE WHEN extended_passed = 0 THEN 1 ELSE 0 END) AS ei,
+            SUM(CASE WHEN full_passed = 1 THEN 1 ELSE 0 END) AS fv,
+            SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END) AS fi,
+            SUM(CASE WHEN retrieval_error IS NOT NULL THEN 1 ELSE 0 END) AS re
+        FROM documents
+        WHERE url LIKE ?1",
+        [like_pattern.into()],
+    ))
+    .one(db)
+    .await?;
+
+    Ok(row.map(|r| r.into_tuple()).unwrap_or((0, 0, None, None, None)))
 }
 
 /// Records a completed sync run with the number of documents that changed.

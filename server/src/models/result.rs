@@ -13,6 +13,33 @@ pub struct ProviderDetail {
     /// Recent sync history from git commits.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<CommitInfo>,
+    /// Per-distribution health breakdown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub distributions: Vec<DistributionHealth>,
+}
+
+/// Health metrics for a single distribution (directory or ROLIE feed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistributionHealth {
+    /// Human-readable label (typically the URL path).
+    pub label: String,
+    /// Kind: `"directory"`, `"rolie"`, or `"directory+rolie"`.
+    pub kind: String,
+    /// Distribution URL (directory_url or feed URL).
+    pub url: String,
+    /// Number of documents matched to this distribution.
+    pub document_count: u64,
+    /// Number of documents with retrieval errors.
+    pub retrieval_errors: u64,
+    /// Basic profile pass rate (0.0–1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basic_pass_rate: Option<f64>,
+    /// Extended profile pass rate (0.0–1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extended_pass_rate: Option<f64>,
+    /// Full profile pass rate (0.0–1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_pass_rate: Option<f64>,
 }
 
 /// Validation summary for a single CSAF provider.

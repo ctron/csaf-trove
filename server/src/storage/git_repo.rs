@@ -98,6 +98,23 @@ fn push_to_bare(worktree_repo: &Repository) -> Result<()> {
     Ok(())
 }
 
+/// Reads a blob from the HEAD commit of a bare repo at the given tree path.
+///
+/// Returns `None` if the repo has no HEAD or the path does not exist in the tree.
+pub fn read_head_blob(repo_path: &Path, tree_path: &str) -> Result<Option<Vec<u8>>> {
+    let repo = Repository::open_bare(repo_path)?;
+    let Ok(head) = repo.head() else {
+        return Ok(None);
+    };
+    let commit = head.peel_to_commit()?;
+    let tree = commit.tree()?;
+    let Some(oid) = blob_oid_at_path(&tree, tree_path)? else {
+        return Ok(None);
+    };
+    let blob = repo.find_blob(oid)?;
+    Ok(Some(blob.content().to_vec()))
+}
+
 /// A version of a document as recorded in a git commit.
 #[derive(Debug, Serialize)]
 pub struct DocumentVersion {
@@ -385,6 +402,23 @@ mod tests {
         push_to_bare(&repo).unwrap();
 
         (dir, bare_path)
+    }
+
+    #[test]
+    fn read_head_blob_returns_content() {
+        let (_dir, bare_path) = create_test_repo(&[(
+            "metadata/provider-metadata.json",
+            b"{\"distributions\":[]}",
+        )]);
+        let result = read_head_blob(&bare_path, "metadata/provider-metadata.json").unwrap();
+        assert_eq!(result, Some(b"{\"distributions\":[]}".to_vec()));
+    }
+
+    #[test]
+    fn read_head_blob_returns_none_for_missing() {
+        let (_dir, bare_path) = create_test_repo(&[("example.com/doc.json", b"{}")]);
+        let result = read_head_blob(&bare_path, "metadata/provider-metadata.json").unwrap();
+        assert!(result.is_none());
     }
 
     #[test]

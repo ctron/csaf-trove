@@ -54,6 +54,23 @@ pub struct ProviderDetail {
     pub metrics: Option<MetricsTimeSeries>,
     #[serde(default)]
     pub history: Vec<csaf_trove_common::CommitInfo>,
+    #[serde(default)]
+    pub distributions: Vec<DistributionHealth>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistributionHealth {
+    pub label: String,
+    pub kind: String,
+    pub url: String,
+    pub document_count: u64,
+    pub retrieval_errors: u64,
+    #[serde(default)]
+    pub basic_pass_rate: Option<f64>,
+    #[serde(default)]
+    pub extended_pass_rate: Option<f64>,
+    #[serde(default)]
+    pub full_pass_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

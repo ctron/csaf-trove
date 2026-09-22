@@ -6,3 +6,4 @@ dashboard/dist/
 /.idea/
 /.mcp.json
 /.codegraph
+/local-config.toml
