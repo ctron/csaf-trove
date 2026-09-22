@@ -211,7 +211,12 @@ pub async fn sync_provider(
                     tracing::warn!("Skipping {label} distribution {}: {error}", ctx.url());
                     de.lock().push(RetrievalFailure {
                         url: ctx.url().to_string(),
-                        error: format!("{error}"),
+                        error: format!(
+                            "Skipped: {}",
+                            format!("{error}")
+                                .trim_start_matches("Fetch error: ")
+                                .trim_start_matches("Client error: ")
+                        ),
                     });
                     Ok(())
                 }
