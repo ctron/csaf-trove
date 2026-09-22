@@ -100,7 +100,11 @@ impl Storage {
     }
 
     /// Returns the combined summary, metrics, and history for a provider.
-    pub async fn provider_detail(&self, domain: &str) -> Result<Option<ProviderDetail>> {
+    pub async fn provider_detail(
+        &self,
+        domain: &str,
+        skip_directories: &[String],
+    ) -> Result<Option<ProviderDetail>> {
         let summary = results::load_summary(&self.results_dir, domain).await?;
         let metrics = self.load_metrics(domain).await.ok();
         let history = self.provider_history(domain).await?.unwrap_or_default();
@@ -110,7 +114,7 @@ impl Storage {
         };
 
         let distributions = self
-            .compute_distribution_health(domain)
+            .compute_distribution_health(domain, skip_directories)
             .await
             .unwrap_or_default();
 
@@ -123,7 +127,11 @@ impl Storage {
     }
 
     /// Reads provider-metadata.json from the bare repo and computes per-distribution health.
-    async fn compute_distribution_health(&self, domain: &str) -> Result<Vec<DistributionHealth>> {
+    async fn compute_distribution_health(
+        &self,
+        domain: &str,
+        skip_directories: &[String],
+    ) -> Result<Vec<DistributionHealth>> {
         let repo_path = self.repo_path(domain);
         if !repo_path.exists() {
             return Ok(vec![]);
@@ -165,8 +173,13 @@ impl Storage {
 
             let distribution_error = dist_errors
                 .iter()
-                .find(|e| entry.feed_urls.iter().any(|u| u == &e.url))
+                .find(|e| {
+                    entry.feed_urls.iter().any(|u| u == &e.url) || e.url == entry.url
+                })
                 .map(|e| e.error.clone());
+
+            let skipped =
+                entry.kind == "directory" && skip_directories.contains(&entry.url);
 
             results.push(DistributionHealth {
                 label: entry.label.clone(),
@@ -175,6 +188,7 @@ impl Storage {
                 tlp_labels: entry.tlp_labels.clone(),
                 document_count,
                 retrieval_errors,
+                skipped,
                 distribution_error,
                 basic_pass_rate: basic,
                 extended_pass_rate: extended,

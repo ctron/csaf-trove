@@ -72,6 +72,8 @@ pub struct DistributionHealth {
     pub document_count: u64,
     pub retrieval_errors: u64,
     #[serde(default)]
+    pub skipped: bool,
+    #[serde(default)]
     pub distribution_error: Option<String>,
     #[serde(default)]
     pub basic_pass_rate: Option<f64>,

@@ -14,6 +14,7 @@ use crate::components::{
     progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate},
     table::{Table, Tbody, Td, Th, Thead},
     tabs::{Tab, Tabs},
+    tlp_badge::TlpBadge,
 };
 use crate::models::{
     DistributionHealth, PaginatedDocuments, ProfileSummary, ProviderDetail, encode_path_segment,
@@ -304,22 +305,19 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                             _ => "Directory",
                         };
                         let tlp_badges = d.tlp_labels.iter().map(|tlp| {
-                            let variant = match tlp.as_str() {
-                                "WHITE" | "CLEAR" => BadgeVariant::Success,
-                                "GREEN" => BadgeVariant::Neutral,
-                                "AMBER" => BadgeVariant::Warning,
-                                "RED" => BadgeVariant::Danger,
-                                _ => BadgeVariant::Neutral,
-                            };
-                            let label = format!("TLP:{tlp}");
-                            view! { <Badge variant=variant>{label}</Badge> }
+                            let label = tlp.clone();
+                            view! { <TlpBadge label=label/> }
                         }).collect::<Vec<_>>();
-                        let err_variant = if d.retrieval_errors > 0 {
-                            BadgeVariant::Danger
-                        } else {
-                            BadgeVariant::Success
-                        };
-                        let error_cell = if let Some(error) = d.distribution_error.clone() {
+                        let error_cell = if d.skipped {
+                            view! {
+                                <Badge variant=BadgeVariant::Neutral>"Skipped"</Badge>
+                            }.into_any()
+                        } else if let Some(error) = d.distribution_error.clone() {
+                            let err_variant = if d.retrieval_errors > 0 {
+                                BadgeVariant::Danger
+                            } else {
+                                BadgeVariant::Success
+                            };
                             view! {
                                 <div class="flex flex-col gap-1">
                                     <Badge variant=BadgeVariant::Danger>{error}</Badge>
@@ -327,6 +325,11 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                 </div>
                             }.into_any()
                         } else {
+                            let err_variant = if d.retrieval_errors > 0 {
+                                BadgeVariant::Danger
+                            } else {
+                                BadgeVariant::Success
+                            };
                             view! {
                                 <Badge variant=err_variant>{d.retrieval_errors}</Badge>
                             }.into_any()

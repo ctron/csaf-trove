@@ -34,6 +34,9 @@ pub struct DistributionHealth {
     pub document_count: u64,
     /// Number of documents with retrieval errors.
     pub retrieval_errors: u64,
+    /// Whether this distribution was skipped by configuration.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skipped: bool,
     /// Distribution-level error (e.g. 403 on a restricted ROLIE feed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distribution_error: Option<String>,

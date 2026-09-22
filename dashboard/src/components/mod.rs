@@ -13,3 +13,4 @@ pub mod sparkline;
 pub mod table;
 pub mod tabs;
 pub mod theme_toggle;
+pub mod tlp_badge;

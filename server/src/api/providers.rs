@@ -50,9 +50,16 @@ pub async fn detail(
     domain: web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
     let domain = domain.into_inner();
+    let skip_directories = state
+        .sources
+        .read()
+        .await
+        .get(&domain)
+        .map(|s| s.skip_directories.clone())
+        .unwrap_or_default();
     let detail = state
         .storage
-        .provider_detail(&domain)
+        .provider_detail(&domain, &skip_directories)
         .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(detail))

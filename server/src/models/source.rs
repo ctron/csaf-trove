@@ -20,6 +20,13 @@ pub struct Source {
     /// When `None`, the provider's own `list_on_CSAF_aggregators` /
     /// `mirror_on_CSAF_aggregators` flags are used.
     pub aggregator_include: Option<bool>,
+    /// Directory distribution URLs to skip during sync.
+    ///
+    /// Each entry must be the exact `directory_url` from the provider metadata
+    /// (e.g. `https://psirt.kunbus.com/.well-known/csaf/amber`).
+    /// Matching directories are not fetched; they appear as "Skipped" in the dashboard.
+    #[serde(default)]
+    pub skip_directories: Vec<String>,
 }
 
 fn default_true() -> bool {

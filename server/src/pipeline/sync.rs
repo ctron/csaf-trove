@@ -181,10 +181,33 @@ pub async fn sync_provider(
     };
 
     let de = distribution_errors.clone();
-    Walker::new(http_source)
+    let skip_dirs = source.skip_directories.clone();
+    let mut walker = Walker::new(http_source);
+    if !skip_dirs.is_empty() {
+        walker = walker.with_distribution_filter(move |ctx: &DistributionContext| {
+            if let DistributionContext::Directory(url) = ctx {
+                let dominated = skip_dirs.iter().any(|s| s == url.as_str());
+                if dominated {
+                    tracing::info!("Skipping configured directory distribution {url}");
+                }
+                !dominated
+            } else {
+                true
+            }
+        });
+    }
+    walker
         .with_distribution_error_handler(move |ctx: &DistributionContext, error| {
-            match ctx.tlp_label() {
-                Some(label) if *label != TlpLabel::Clear => {
+            match ctx {
+                DistributionContext::Feed {
+                    tlp_label: Some(label),
+                    ..
+                } if *label == TlpLabel::Clear => Err(error),
+                _ => {
+                    let label = ctx
+                        .tlp_label()
+                        .map(|l| l.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
                     tracing::warn!("Skipping {label} distribution {}: {error}", ctx.url());
                     de.lock().push(RetrievalFailure {
                         url: ctx.url().to_string(),
@@ -192,7 +215,6 @@ pub async fn sync_provider(
                     });
                     Ok(())
                 }
-                _ => Err(error),
             }
         })
         .with_progress(progress)
