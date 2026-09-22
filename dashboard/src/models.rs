@@ -1,6 +1,10 @@
 use csaf_trove_common::SyncPoint;
 use serde::{Deserialize, Serialize};
 
+fn default_version_count() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSummary {
     pub provider: String,
@@ -161,8 +165,8 @@ pub struct DocumentValidation {
     #[serde(default)]
     pub revision_history: Vec<RevisionEntry>,
     /// Number of distinct git versions.
-    #[serde(default)]
-    pub version_count: Option<u32>,
+    #[serde(default = "default_version_count")]
+    pub version_count: u32,
     /// Retrieval error message from the last sync attempt.
     #[serde(default)]
     pub retrieval_error: Option<String>,

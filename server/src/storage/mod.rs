@@ -314,19 +314,8 @@ impl Storage {
             }));
         };
 
-        let mut page =
+        let page =
             documents::load_documents_paginated(&db, offset, limit, status_filter).await?;
-
-        let repo_path = self.repo_path(domain);
-        if !page.items.is_empty() && repo_path.exists() {
-            let urls: Vec<&str> = page.items.iter().map(|d| d.url.as_str()).collect();
-            if let Ok(counts) = git_repo::document_version_counts(&repo_path, &urls) {
-                for doc in &mut page.items {
-                    doc.version_count = counts.get(&doc.url).copied();
-                }
-            }
-        }
-
         Ok(Some(page))
     }
 

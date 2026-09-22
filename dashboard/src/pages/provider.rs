@@ -446,9 +446,10 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                             <Td><DocProfileBadge detail=doc.profiles.extended /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.full /></Td>
                                             <Td><Badge variant=sig_variant>{sig_label}</Badge></Td>
-                                            <Td>{match doc.version_count {
-                                                Some(n) if n > 1 => view! { <Badge variant=BadgeVariant::Neutral>{n}</Badge> }.into_any(),
-                                                _ => view! { <span /> }.into_any(),
+                                            <Td>{if doc.version_count > 1 {
+                                                view! { <Badge variant=BadgeVariant::Neutral>{doc.version_count}</Badge> }.into_any()
+                                            } else {
+                                                view! { <span /> }.into_any()
                                             }}</Td>
                                         </tr>
                                     }

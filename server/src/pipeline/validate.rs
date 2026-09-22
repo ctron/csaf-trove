@@ -34,7 +34,7 @@ use crate::{
         },
         source::Source,
     },
-    storage::Storage,
+    storage::{Storage, git_repo::document_version_counts},
 };
 
 #[derive(Debug)]
@@ -347,7 +347,20 @@ async fn flush_batch(storage: &Storage, domain: &str, batch: Vec<DocumentResult>
     if batch.is_empty() {
         return Ok(());
     }
-    let documents = build_document_results(batch);
+    let mut documents = build_document_results(batch);
+    // Compute version counts from git history
+    let repo_path = storage.repo_path(domain);
+    if repo_path.exists() {
+        let urls: Vec<String> = documents.iter().map(|d| d.url.clone()).collect();
+        let counts = tokio::task::spawn_blocking(move || {
+            let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
+            document_version_counts(&repo_path, &url_refs)
+        })
+        .await??;
+        for doc in &mut documents {
+            doc.version_count = counts.get(&doc.url).copied().unwrap_or(1);
+        }
+    }
     storage.save_documents(domain, &documents).await?;
     Ok(())
 }
@@ -378,7 +391,7 @@ fn build_document_results(results: Vec<DocumentResult>) -> Vec<DocumentValidatio
                 aggregate_severity: doc.aggregate_severity,
                 csaf_version: doc.csaf_version,
                 revision_history: doc.revision_history,
-                version_count: None,
+                version_count: 1,
                 retrieval_error: None,
             }
         })

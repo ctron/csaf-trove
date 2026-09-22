@@ -33,6 +33,9 @@ pub struct Model {
     pub csaf_version: Option<String>,
     /// Retrieval error message from the last sync attempt, if the fetch failed.
     pub retrieval_error: Option<String>,
+    /// Number of distinct versions of this document in the git history.
+    #[sea_orm(default_value = 1)]
+    pub version_count: i32,
     #[sea_orm(has_many)]
     pub check_failures: HasMany<super::check_failure::Entity>,
     #[sea_orm(has_many)]

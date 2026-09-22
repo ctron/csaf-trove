@@ -69,6 +69,10 @@ fn is_zero(v: &u64) -> bool {
     *v == 0
 }
 
+fn default_version_count() -> u32 {
+    1
+}
+
 /// Validation results per CSAF profile level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileResults {
@@ -156,8 +160,8 @@ pub struct DocumentValidation {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub revision_history: Vec<RevisionEntry>,
     /// Number of distinct git versions (commits where the document blob changed).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version_count: Option<u32>,
+    #[serde(default = "default_version_count")]
+    pub version_count: u32,
     /// Retrieval error message from the last sync attempt, if the fetch failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retrieval_error: Option<String>,

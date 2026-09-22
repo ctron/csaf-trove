@@ -120,6 +120,7 @@ pub async fn save_documents(
             aggregate_severity: Set(doc.aggregate_severity.clone()),
             csaf_version: Set(doc.csaf_version.clone()),
             retrieval_error: Set(doc.retrieval_error.clone()),
+            version_count: Set(doc.version_count as i32),
             ..Default::default()
         };
 
@@ -353,7 +354,7 @@ async fn load_failures_for_docs(
                 aggregate_severity: doc.aggregate_severity.clone(),
                 csaf_version: doc.csaf_version.clone(),
                 revision_history: revision_map.get(&doc.id).cloned().unwrap_or_default(),
-                version_count: None,
+                version_count: doc.version_count as u32,
                 retrieval_error: doc.retrieval_error.clone(),
             }
         })

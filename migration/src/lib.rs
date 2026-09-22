@@ -2,6 +2,7 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20240101_000001_create_initial_schema;
 mod m20240102_000002_add_retrieval_error;
+mod m20240103_000003_add_version_count;
 
 /// Migrator that applies all schema migrations in order.
 pub struct Migrator;
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20240101_000001_create_initial_schema::Migration),
             Box::new(m20240102_000002_add_retrieval_error::Migration),
+            Box::new(m20240103_000003_add_version_count::Migration),
         ]
     }
 }
