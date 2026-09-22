@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use csaf_trove_common::SyncPoint;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{auth::verify_bearer_token, error::ApiError};
@@ -174,11 +174,20 @@ pub async fn ws(
     Ok(response)
 }
 
+/// Query parameters for the sync trigger endpoint.
+#[derive(Debug, Deserialize)]
+pub struct TriggerQuery {
+    /// When `true`, clears the since-token to force a full re-sync.
+    #[serde(default)]
+    pub full: bool,
+}
+
 /// Triggers a manual sync for a single provider (requires Bearer token).
 pub async fn trigger(
     req: HttpRequest,
     state: web::Data<AppState>,
     domain: web::Path<String>,
+    query: web::Query<TriggerQuery>,
 ) -> Result<HttpResponse, ApiError> {
     let token = state.api_token.as_ref().ok_or(ApiError::Forbidden)?;
 
@@ -195,6 +204,13 @@ pub async fn trigger(
         .get(&domain)
         .cloned()
         .ok_or(ApiError::NotFound)?;
+
+    if query.full {
+        let mut sync_state = state.storage.load_sync_state(&domain).await?;
+        sync_state.since_token = None;
+        state.storage.save_sync_state(&sync_state).await?;
+        tracing::info!("{domain}: cleared since_token for full re-sync");
+    }
 
     let state = state.into_inner();
     let handle = tokio::runtime::Handle::current();
