@@ -72,6 +72,13 @@
     state: started
     daemon_reload: true
 
+- name: Allow service port through firewall
+  community.general.ufw:
+    rule: allow
+    port: "{{ csaf_trove_listen.split(':')[-1] }}"
+    proto: tcp
+  when: csaf_trove_firewall_enabled
+
 - name: Set up Caddy reverse proxy
   when: csaf_trove_caddy_enabled
   block:

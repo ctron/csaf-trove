@@ -35,6 +35,9 @@ csaf_trove_poll_interval: "5m"
 csaf_trove_sync_interval: "1d"
 csaf_trove_max_concurrent: 5
 
+# Firewall (UFW).
+csaf_trove_firewall_enabled: true
+
 # Caddy reverse proxy.
 csaf_trove_caddy_enabled: true
 
