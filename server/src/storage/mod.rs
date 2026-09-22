@@ -299,6 +299,12 @@ impl Storage {
         Ok(())
     }
 
+    /// Deletes all document rows for a provider (used before full re-validation).
+    pub async fn delete_all_documents(&self, domain: &str) -> Result<()> {
+        let db = self.db.get(domain).await?;
+        documents::delete_all_documents(&db).await
+    }
+
     /// Returns the number of documents stored for a provider.
     pub async fn document_count(&self, domain: &str) -> Result<u64> {
         let Some(db) = self.db.get_if_exists(domain).await? else {

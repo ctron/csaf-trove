@@ -186,6 +186,10 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
 
     persist_provider_metadata(state, domain, &worktree_dir).await;
 
+    if !incremental {
+        state.storage.delete_all_documents(domain).await?;
+    }
+
     state.update_job_phase(domain, "validate").await;
     let total = crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;
 

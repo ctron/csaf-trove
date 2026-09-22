@@ -37,6 +37,40 @@ pub struct ProviderInfo {
     pub last_updated: String,
 }
 
+/// Applies the lossy filename transformation from CSAF spec section 5.1:
+/// lowercase, then replace any character not in `[a-z0-9+-]` with `_`.
+fn lossy_tracking_id(tracking_id: &str) -> String {
+    tracking_id
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '+' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Extracts a synthetic tracking ID from a CSAF document URL by stripping
+/// the path and `.json` suffix.
+fn tracking_id_from_url(url: &str) -> String {
+    url.rsplit('/')
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches(".json")
+        .to_string()
+}
+
+/// Deletes all document rows (and their check failures and revision history) for a provider.
+pub async fn delete_all_documents(db: &DatabaseConnection) -> Result<()> {
+    check_failure::Entity::delete_many().exec(db).await?;
+    revision_history::Entity::delete_many().exec(db).await?;
+    document::Entity::delete_many().exec(db).await?;
+    Ok(())
+}
+
 /// Returns the number of documents stored for a provider.
 pub async fn document_count(db: &DatabaseConnection) -> Result<u64> {
     let count = document::Entity::find().count(db).await?;
@@ -64,8 +98,17 @@ pub async fn save_documents(
     let txn = db.begin().await?;
 
     for doc in documents {
+        let lossy_id = lossy_tracking_id(&doc.tracking_id);
+        let condition = if lossy_id != doc.tracking_id {
+            Condition::any()
+                .add(document::Column::TrackingId.eq(&doc.tracking_id))
+                .add(document::Column::TrackingId.eq(&lossy_id))
+        } else {
+            Condition::any().add(document::Column::TrackingId.eq(&doc.tracking_id))
+        };
+
         let existing_ids: Vec<i64> = document::Entity::find()
-            .filter(document::Column::TrackingId.eq(&doc.tracking_id))
+            .filter(condition.clone())
             .select_only()
             .column(document::Column::Id)
             .into_tuple()
@@ -84,7 +127,7 @@ pub async fn save_documents(
                 .await?;
 
             document::Entity::delete_many()
-                .filter(document::Column::TrackingId.eq(&doc.tracking_id))
+                .filter(condition)
                 .exec(&txn)
                 .await?;
         }
@@ -756,12 +799,7 @@ pub async fn save_retrieval_errors(
     let txn = db.begin().await?;
 
     for (url, error) in errors {
-        let tracking_id = url
-            .rsplit('/')
-            .next()
-            .unwrap_or(url)
-            .trim_end_matches(".json")
-            .to_string();
+        let tracking_id = tracking_id_from_url(url);
 
         let existing = document::Entity::find()
             .filter(document::Column::TrackingId.eq(&tracking_id))
