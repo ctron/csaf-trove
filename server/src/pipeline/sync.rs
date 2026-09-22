@@ -197,29 +197,27 @@ pub async fn sync_provider(
         });
     }
     walker
-        .with_distribution_error_handler(move |ctx: &DistributionContext, error| {
-            match ctx {
-                DistributionContext::Feed {
-                    tlp_label: Some(label),
-                    ..
-                } if *label == TlpLabel::Clear => Err(error),
-                _ => {
-                    let label = ctx
-                        .tlp_label()
-                        .map(|l| l.to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    tracing::warn!("Skipping {label} distribution {}: {error}", ctx.url());
-                    de.lock().push(RetrievalFailure {
-                        url: ctx.url().to_string(),
-                        error: format!(
-                            "Skipped: {}",
-                            format!("{error}")
-                                .trim_start_matches("Fetch error: ")
-                                .trim_start_matches("Client error: ")
-                        ),
-                    });
-                    Ok(())
-                }
+        .with_distribution_error_handler(move |ctx: &DistributionContext, error| match ctx {
+            DistributionContext::Feed {
+                tlp_label: Some(label),
+                ..
+            } if *label == TlpLabel::Clear => Err(error),
+            _ => {
+                let label = ctx
+                    .tlp_label()
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                tracing::warn!("Skipping {label} distribution {}: {error}", ctx.url());
+                de.lock().push(RetrievalFailure {
+                    url: ctx.url().to_string(),
+                    error: format!(
+                        "Skipped: {}",
+                        format!("{error}")
+                            .trim_start_matches("Fetch error: ")
+                            .trim_start_matches("Client error: ")
+                    ),
+                });
+                Ok(())
             }
         })
         .with_progress(progress)

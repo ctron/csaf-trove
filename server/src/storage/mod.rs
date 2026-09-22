@@ -173,13 +173,10 @@ impl Storage {
 
             let distribution_error = dist_errors
                 .iter()
-                .find(|e| {
-                    entry.feed_urls.iter().any(|u| u == &e.url) || e.url == entry.url
-                })
+                .find(|e| entry.feed_urls.iter().any(|u| u == &e.url) || e.url == entry.url)
                 .map(|e| e.error.clone());
 
-            let skipped =
-                entry.kind == "directory" && skip_directories.contains(&entry.url);
+            let skipped = entry.kind == "directory" && skip_directories.contains(&entry.url);
 
             results.push(DistributionHealth {
                 label: entry.label.clone(),
