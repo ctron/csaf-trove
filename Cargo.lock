@@ -1497,7 +1497,7 @@ dependencies = [
 [[package]]
 name = "csaf-walker"
 version = "0.19.0"
-source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftlp-distribution-filter#b76a73452c371401012c7461ed991987d98d6450"
+source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftolerant-auxiliary-fetch#34e974b202131393e34fa8e78d0609568bbdab1a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5195,7 +5195,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "sha1collisiondetection",
- "thiserror 2.0.20",
+ "thiserror 1.0.69",
  "xxhash-rust",
 ]
 
@@ -6621,7 +6621,7 @@ dependencies = [
 [[package]]
 name = "walker-common"
 version = "0.19.0"
-source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftlp-distribution-filter#b76a73452c371401012c7461ed991987d98d6450"
+source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftolerant-auxiliary-fetch#34e974b202131393e34fa8e78d0609568bbdab1a"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -184,7 +184,7 @@ pub async fn sync_provider(
     Walker::new(http_source)
         .with_distribution_error_handler(move |ctx: &DistributionContext, error| {
             match ctx.tlp_label() {
-                Some(label) if *label != TlpLabel::White => {
+                Some(label) if *label != TlpLabel::Clear => {
                     tracing::warn!(
                         "Skipping {label} distribution {}: {error}",
                         ctx.url()
