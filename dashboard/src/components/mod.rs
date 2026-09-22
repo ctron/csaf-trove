@@ -3,6 +3,7 @@ pub mod badge;
 pub mod breadcrumb;
 pub mod content_tabs;
 pub mod doc_profile_badge;
+pub mod empty_state;
 pub mod pagination;
 pub mod profile_badge;
 pub mod progress_bar;

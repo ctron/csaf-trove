@@ -9,6 +9,7 @@ use crate::components::{
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     content_tabs::{ContentTab, ContentTabs},
     doc_profile_badge::DocProfileBadge,
+    empty_state::EmptyState,
     pagination::Pagination,
     progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate},
     table::{Table, Tbody, Td, Th, Thead},
@@ -18,14 +19,20 @@ use crate::models::{
     DistributionHealth, PaginatedDocuments, ProfileSummary, ProviderDetail, encode_path_segment,
 };
 
-/// Fetches provider detail from the API.
-async fn fetch_provider(domain: String) -> Result<ProviderDetail, String> {
+/// Fetches provider detail from the API. Returns `None` for 404 (no sync yet).
+async fn fetch_provider(domain: String) -> Result<Option<ProviderDetail>, String> {
     let resp =
         gloo_net::http::Request::get(&format!("/api/providers/{}", encode_path_segment(&domain)))
             .send()
             .await
             .map_err(|e| e.to_string())?;
-    resp.json().await.map_err(|e| e.to_string())
+    if resp.status() == 404 {
+        return Ok(None);
+    }
+    if !resp.ok() {
+        return Err(format!("Failed to load provider (HTTP {})", resp.status()));
+    }
+    resp.json().await.map(Some).map_err(|e| e.to_string())
 }
 
 /// Provider detail page with grouped cards, content tabs, and documents table.
@@ -48,7 +55,15 @@ pub fn ProviderPage() -> impl IntoView {
 
             <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                 {move || detail.get().map(|result| match result {
-                    Ok(d) => view! { <ProviderDetailView detail=d /> }.into_any(),
+                    Ok(Some(d)) => view! { <ProviderDetailView detail=d /> }.into_any(),
+                    Ok(None) => view! {
+                        <EmptyState
+                            title="No data available yet".to_string()
+                            message="This provider has not been synced yet. Data will appear here after the first successful sync.".to_string()
+                            action_href=format!("/sync/{}", encode_path_segment(&domain()))
+                            action_label="View Sync Status".to_string()
+                        />
+                    }.into_any(),
                     Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                 })}
             </Suspense>
