@@ -67,8 +67,12 @@ pub struct DistributionHealth {
     pub label: String,
     pub kind: String,
     pub url: String,
+    #[serde(default)]
+    pub tlp_labels: Vec<String>,
     pub document_count: u64,
     pub retrieval_errors: u64,
+    #[serde(default)]
+    pub distribution_error: Option<String>,
     #[serde(default)]
     pub basic_pass_rate: Option<f64>,
     #[serde(default)]

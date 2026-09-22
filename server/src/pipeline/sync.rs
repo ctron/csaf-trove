@@ -9,8 +9,9 @@ use csaf_walker::{
         progress::{Progress, ProgressBar},
         retrieve::RetrievalError,
     },
-    discover::DiscoveredAdvisory,
+    discover::{DiscoveredAdvisory, DistributionContext},
     metadata::MetadataRetriever,
+    model::metadata::TlpLabel,
     retrieve::{RetrievalContext, RetrievedAdvisory, RetrievedVisitor, RetrievingVisitor},
     source::{HttpOptions, HttpSource, Source},
     walker::Walker,
@@ -23,12 +24,20 @@ use crate::{AppState, models::source::Source as AppSource};
 use super::store::{TroveStoreError, TroveStoreVisitor};
 
 /// A document that could not be retrieved during sync.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetrievalFailure {
     /// URL of the document that failed to download.
     pub url: String,
     /// Human-readable error description.
     pub error: String,
+}
+
+/// Result of a successful sync run.
+pub struct SyncResult {
+    /// Documents that could not be retrieved.
+    pub retrieval_errors: Vec<RetrievalFailure>,
+    /// Distribution feeds that could not be loaded (e.g. 403 on restricted TLP feeds).
+    pub distribution_errors: Vec<RetrievalFailure>,
 }
 
 /// Wraps [`TroveStoreVisitor`] to increment the synced document count and collect retrieval errors.
@@ -119,7 +128,7 @@ pub async fn sync_provider(
     state: &Arc<AppState>,
     source: &AppSource,
     worktree_dir: &Path,
-) -> Result<Vec<RetrievalFailure>> {
+) -> Result<SyncResult> {
     let domain = &source.domain;
 
     let mut sync_state = state.storage.load_sync_state(domain).await?;
@@ -155,6 +164,7 @@ pub async fn sync_provider(
     }
 
     let retrieval_errors = Arc::new(Mutex::new(Vec::new()));
+    let distribution_errors = Arc::new(Mutex::new(Vec::new()));
 
     let http_source = HttpSource::new(metadata, fetcher, http_options);
     let store = TroveStoreVisitor::new(worktree_dir);
@@ -170,7 +180,24 @@ pub async fn sync_provider(
         domain: domain.to_string(),
     };
 
+    let de = distribution_errors.clone();
     Walker::new(http_source)
+        .with_distribution_error_handler(move |ctx: &DistributionContext, error| {
+            match ctx.tlp_label() {
+                Some(label) if *label != TlpLabel::White => {
+                    tracing::warn!(
+                        "Skipping {label} distribution {}: {error}",
+                        ctx.url()
+                    );
+                    de.lock().push(RetrievalFailure {
+                        url: ctx.url().to_string(),
+                        error: format!("{error}"),
+                    });
+                    Ok(())
+                }
+                _ => Err(error),
+            }
+        })
         .with_progress(progress)
         .walk(retriever)
         .await
@@ -180,19 +207,29 @@ pub async fn sync_provider(
     sync_state.since_token = Some(OffsetDateTime::now_utc());
     state.storage.save_sync_state(&sync_state).await?;
 
-    let errors = match Arc::try_unwrap(retrieval_errors) {
+    let retrieval_errors = match Arc::try_unwrap(retrieval_errors) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => std::mem::take(&mut *arc.lock()),
+    };
+    let distribution_errors = match Arc::try_unwrap(distribution_errors) {
         Ok(mutex) => mutex.into_inner(),
         Err(arc) => std::mem::take(&mut *arc.lock()),
     };
 
-    if errors.is_empty() {
+    let total_errors = retrieval_errors.len() + distribution_errors.len();
+    if total_errors == 0 {
         tracing::info!("Sync complete for {domain}");
     } else {
         tracing::warn!(
-            "Sync complete for {domain} with {} retrieval error(s)",
-            errors.len()
+            "Sync complete for {domain} with {total_errors} error(s) \
+             ({} retrieval, {} distribution)",
+            retrieval_errors.len(),
+            distribution_errors.len(),
         );
     }
 
-    Ok(errors)
+    Ok(SyncResult {
+        retrieval_errors,
+        distribution_errors,
+    })
 }

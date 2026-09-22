@@ -156,16 +156,26 @@ impl Storage {
             return Ok(vec![]);
         };
 
+        let dist_errors = self.load_distribution_errors(domain).await.unwrap_or_default();
+
         let mut results = Vec::new();
-        for (label, kind, url, prefix) in &entries {
+        for entry in &entries {
             let (document_count, retrieval_errors, basic, extended, full) =
-                documents::distribution_health(&db, prefix).await?;
+                documents::distribution_health(&db, &entry.prefix).await?;
+
+            let distribution_error = dist_errors
+                .iter()
+                .find(|e| entry.feed_urls.iter().any(|u| u == &e.url))
+                .map(|e| e.error.clone());
+
             results.push(DistributionHealth {
-                label: label.clone(),
-                kind: kind.clone(),
-                url: url.clone(),
+                label: entry.label.clone(),
+                kind: entry.kind.clone(),
+                url: entry.url.clone(),
+                tlp_labels: entry.tlp_labels.clone(),
                 document_count,
                 retrieval_errors,
+                distribution_error,
                 basic_pass_rate: basic,
                 extended_pass_rate: extended,
                 full_pass_rate: full,
@@ -230,6 +240,23 @@ impl Storage {
     /// Persists the sync state for a provider.
     pub async fn save_sync_state(&self, state: &SyncState) -> Result<()> {
         state::save_sync_state(&self.state_dir, state).await
+    }
+
+    /// Persists distribution-level errors for a provider.
+    pub async fn save_distribution_errors(
+        &self,
+        domain: &str,
+        errors: &[crate::pipeline::sync::RetrievalFailure],
+    ) -> Result<()> {
+        state::save_distribution_errors(&self.state_dir, domain, errors).await
+    }
+
+    /// Loads distribution-level errors for a provider.
+    pub async fn load_distribution_errors(
+        &self,
+        domain: &str,
+    ) -> Result<Vec<crate::pipeline::sync::RetrievalFailure>> {
+        state::load_distribution_errors(&self.state_dir, domain).await
     }
 
     /// Persists a validation summary for a provider.
@@ -467,11 +494,17 @@ impl Storage {
     }
 }
 
-/// Extracts (label, kind, url, prefix) entries from the `distributions` array in
-/// provider-metadata.json. One entry per distribution object.
-fn extract_distribution_entries(
-    distributions: &[serde_json::Value],
-) -> Vec<(String, String, String, String)> {
+struct DistributionEntry {
+    label: String,
+    kind: String,
+    url: String,
+    prefix: String,
+    tlp_labels: Vec<String>,
+    feed_urls: Vec<String>,
+}
+
+/// Extracts distribution entries from the `distributions` array in provider-metadata.json.
+fn extract_distribution_entries(distributions: &[serde_json::Value]) -> Vec<DistributionEntry> {
     let mut entries = Vec::new();
 
     for dist in distributions {
@@ -479,14 +512,19 @@ fn extract_distribution_entries(
             .get("directory_url")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let rolie_feeds: Vec<&str> = dist
+
+        let rolie_feeds: Vec<(&str, Option<&str>)> = dist
             .get("rolie")
             .and_then(|r| r.get("feeds"))
             .and_then(|f| f.as_array())
             .map(|feeds| {
                 feeds
                     .iter()
-                    .filter_map(|f| f.get("url").and_then(|u| u.as_str()))
+                    .filter_map(|f| {
+                        let url = f.get("url").and_then(|u| u.as_str())?;
+                        let tlp = f.get("tlp_label").and_then(|t| t.as_str());
+                        Some((url, tlp))
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -504,8 +542,8 @@ fn extract_distribution_entries(
         let (url, prefix) = if let Some(ref dir) = dir_url {
             (dir.clone(), normalize_url_prefix(dir))
         } else {
-            let feed = rolie_feeds[0];
-            (feed.to_string(), rolie_feed_to_prefix(feed))
+            let feed_url = rolie_feeds[0].0;
+            (feed_url.to_string(), rolie_feed_to_prefix(feed_url))
         };
 
         let label = url::Url::parse(&url)
@@ -513,7 +551,21 @@ fn extract_distribution_entries(
             .map(|u| u.path().to_string())
             .unwrap_or_else(|| url.clone());
 
-        entries.push((label, kind.to_string(), url, prefix));
+        let tlp_labels: Vec<String> = rolie_feeds
+            .iter()
+            .filter_map(|(_, tlp)| tlp.map(|t| t.to_uppercase()))
+            .collect();
+
+        let feed_urls: Vec<String> = rolie_feeds.iter().map(|(u, _)| u.to_string()).collect();
+
+        entries.push(DistributionEntry {
+            label,
+            kind: kind.to_string(),
+            url,
+            prefix,
+            tlp_labels,
+            feed_urls,
+        });
     }
 
     entries

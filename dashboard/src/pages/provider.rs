@@ -303,10 +303,33 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                             "directory+rolie" => "Dir + ROLIE",
                             _ => "Directory",
                         };
+                        let tlp_badges = d.tlp_labels.iter().map(|tlp| {
+                            let variant = match tlp.as_str() {
+                                "WHITE" | "CLEAR" => BadgeVariant::Success,
+                                "GREEN" => BadgeVariant::Neutral,
+                                "AMBER" => BadgeVariant::Warning,
+                                "RED" => BadgeVariant::Danger,
+                                _ => BadgeVariant::Neutral,
+                            };
+                            let label = format!("TLP:{tlp}");
+                            view! { <Badge variant=variant>{label}</Badge> }
+                        }).collect::<Vec<_>>();
                         let err_variant = if d.retrieval_errors > 0 {
                             BadgeVariant::Danger
                         } else {
                             BadgeVariant::Success
+                        };
+                        let error_cell = if let Some(error) = d.distribution_error.clone() {
+                            view! {
+                                <div class="flex flex-col gap-1">
+                                    <Badge variant=BadgeVariant::Danger>{error}</Badge>
+                                    <Badge variant=err_variant>{d.retrieval_errors}</Badge>
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <Badge variant=err_variant>{d.retrieval_errors}</Badge>
+                            }.into_any()
                         };
                         view! {
                             <tr>
@@ -314,13 +337,14 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                     <div class="flex items-center gap-2">
                                         <span class="font-medium text-gray-700 dark:text-gray-300">{d.label.clone()}</span>
                                         <Badge variant=kind_variant>{kind_label}</Badge>
+                                        {tlp_badges}
                                     </div>
                                 </Td>
                                 <Td>{d.document_count}</Td>
                                 <Td>{rate_badge(d.basic_pass_rate)}</Td>
                                 <Td>{rate_badge(d.extended_pass_rate)}</Td>
                                 <Td>{rate_badge(d.full_pass_rate)}</Td>
-                                <Td><Badge variant=err_variant>{d.retrieval_errors}</Badge></Td>
+                                <Td>{error_cell}</Td>
                             </tr>
                         }
                     }).collect::<Vec<_>>()}

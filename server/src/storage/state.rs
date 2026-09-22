@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::models::{source::sanitize_domain, state::SyncState};
+use crate::{
+    models::{source::sanitize_domain, state::SyncState},
+    pipeline::sync::RetrievalFailure,
+};
 
 /// Loads sync state from disk, returning a default if the file does not exist.
 pub async fn load_sync_state(state_dir: &Path, domain: &str) -> Result<SyncState> {
@@ -24,6 +27,36 @@ pub async fn save_sync_state(state_dir: &Path, state: &SyncState) -> Result<()> 
     let data = serde_json::to_string_pretty(state)?;
     tokio::fs::write(&path, data).await?;
     Ok(())
+}
+
+/// Persists distribution-level errors to disk as JSON.
+pub async fn save_distribution_errors(
+    state_dir: &Path,
+    domain: &str,
+    errors: &[RetrievalFailure],
+) -> Result<()> {
+    let dir = state_dir.join(sanitize_domain(domain));
+    tokio::fs::create_dir_all(&dir).await?;
+    let path = dir.join("distribution-errors.json");
+    let data = serde_json::to_string_pretty(errors)?;
+    tokio::fs::write(&path, data).await?;
+    Ok(())
+}
+
+/// Loads distribution-level errors from disk, returning empty if the file does not exist.
+pub async fn load_distribution_errors(
+    state_dir: &Path,
+    domain: &str,
+) -> Result<Vec<RetrievalFailure>> {
+    let path = state_dir
+        .join(sanitize_domain(domain))
+        .join("distribution-errors.json");
+    if path.exists() {
+        let data = tokio::fs::read_to_string(&path).await?;
+        Ok(serde_json::from_str(&data)?)
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 /// Lists all persisted sync states from subdirectories.

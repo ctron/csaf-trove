@@ -27,10 +27,16 @@ pub struct DistributionHealth {
     pub kind: String,
     /// Distribution URL (directory_url or feed URL).
     pub url: String,
+    /// TLP labels of the ROLIE feeds in this distribution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tlp_labels: Vec<String>,
     /// Number of documents matched to this distribution.
     pub document_count: u64,
     /// Number of documents with retrieval errors.
     pub retrieval_errors: u64,
+    /// Distribution-level error (e.g. 403 on a restricted ROLIE feed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution_error: Option<String>,
     /// Basic profile pass rate (0.0–1.0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub basic_pass_rate: Option<f64>,

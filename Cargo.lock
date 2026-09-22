@@ -1496,9 +1496,8 @@ dependencies = [
 
 [[package]]
 name = "csaf-walker"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f3618c7a01265f1a35be39ae54d7ff9e468d6ea1f22fa87502ccb96b401305b"
+version = "0.19.0"
+source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftlp-distribution-filter#b76a73452c371401012c7461ed991987d98d6450"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1522,6 +1521,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "strum 0.27.2",
  "tempfile",
  "thiserror 2.0.20",
  "time",
@@ -5797,7 +5797,16 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.26.4",
+]
+
+[[package]]
+name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros 0.27.2",
 ]
 
 [[package]]
@@ -5816,6 +5825,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustversion",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
  "syn 2.0.119",
 ]
 
@@ -6599,9 +6620,8 @@ dependencies = [
 
 [[package]]
 name = "walker-common"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2c230c3e1e226854d3e7e59f63cfa7e8a5f043db8be7fd35b924bc67a317eb3"
+version = "0.19.0"
+source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftlp-distribution-filter#b76a73452c371401012c7461ed991987d98d6450"
 dependencies = [
  "anyhow",
  "async-trait",

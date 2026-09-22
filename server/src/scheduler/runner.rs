@@ -158,9 +158,9 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
             .await??;
     }
 
-    let retrieval_errors =
+    let sync_result =
         match crate::pipeline::sync::sync_provider(state, source, &worktree_dir).await {
-            Ok(errors) => errors,
+            Ok(result) => result,
             Err(e) => {
                 tracing::error!("Sync failed for {domain}: {e:#}");
                 cleanup_worktree(&worktree_dir).await;
@@ -196,13 +196,19 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         }
     }
 
-    if !retrieval_errors.is_empty() {
-        let pairs: Vec<(String, String)> = retrieval_errors
+    if !sync_result.retrieval_errors.is_empty() {
+        let pairs: Vec<(String, String)> = sync_result
+            .retrieval_errors
             .into_iter()
             .map(|e| (e.url, e.error))
             .collect();
         state.storage.save_retrieval_errors(domain, &pairs).await?;
     }
+
+    state
+        .storage
+        .save_distribution_errors(domain, &sync_result.distribution_errors)
+        .await?;
 
     state.update_job_phase(domain, "report").await;
     crate::pipeline::report::generate_report(state, source).await?;
