@@ -141,8 +141,7 @@ pub async fn sync_provider(
         tracing::info!("{domain}: starting full sync (no since_token)");
     }
 
-    // TODO: remove custom client once upstream csaf-walker sets a User-Agent in Fetcher::new
-    // (see: https://github.com/ctron/csaf-walker — fetcher omits User-Agent while sender sets it)
+    // TODO(#6): remove custom client once upstream csaf-walker sets a User-Agent in Fetcher::new
     let client = reqwest::ClientBuilder::new()
         .user_agent(concat!("csaf-trove/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(30))
