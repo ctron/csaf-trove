@@ -89,6 +89,8 @@ impl DbPool {
             .await?;
 
         Migrator::up(&conn, None).await?;
+        // TODO: drop after v0.1.5 — one-time backfill for test count columns added in v0.1.5
+        super::documents::backfill_test_counts(&conn).await?;
 
         Ok(conn)
     }

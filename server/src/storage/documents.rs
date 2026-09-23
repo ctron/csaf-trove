@@ -130,9 +130,9 @@ pub async fn save_documents(
                 .await?;
         }
 
-        let (bp, bec, bwc, bic) = profile_to_cols(doc.profiles.basic.as_ref());
-        let (ep, eec, ewc, eic) = profile_to_cols(doc.profiles.extended.as_ref());
-        let (fp, fec, fwc, fic) = profile_to_cols(doc.profiles.full.as_ref());
+        let (bp, bec, bwc, bic, btc, bfc) = profile_to_cols(doc.profiles.basic.as_ref());
+        let (ep, eec, ewc, eic, etc, efc) = profile_to_cols(doc.profiles.extended.as_ref());
+        let (fp, fec, fwc, fic, ftc, ffc) = profile_to_cols(doc.profiles.full.as_ref());
 
         let new_doc = document::ActiveModel {
             tracking_id: Set(doc.tracking_id.clone()),
@@ -142,14 +142,20 @@ pub async fn save_documents(
             basic_error_count: Set(bec),
             basic_warning_count: Set(bwc),
             basic_info_count: Set(bic),
+            basic_test_count: Set(btc),
+            basic_failing_test_count: Set(bfc),
             extended_passed: Set(ep),
             extended_error_count: Set(eec),
             extended_warning_count: Set(ewc),
             extended_info_count: Set(eic),
+            extended_test_count: Set(etc),
+            extended_failing_test_count: Set(efc),
             full_passed: Set(fp),
             full_error_count: Set(fec),
             full_warning_count: Set(fwc),
             full_info_count: Set(fic),
+            full_test_count: Set(ftc),
+            full_failing_test_count: Set(ffc),
             signature_present: Set(doc.signature_present as i32),
             signature_error: Set(doc.signature_error.clone()),
             category: Set(doc.category.clone()),
@@ -364,6 +370,8 @@ async fn load_failures_for_docs(
                         doc.basic_error_count,
                         doc.basic_warning_count,
                         doc.basic_info_count,
+                        doc.basic_test_count,
+                        doc.basic_failing_test_count,
                         doc_failures,
                         "basic",
                     ),
@@ -372,6 +380,8 @@ async fn load_failures_for_docs(
                         doc.extended_error_count,
                         doc.extended_warning_count,
                         doc.extended_info_count,
+                        doc.extended_test_count,
+                        doc.extended_failing_test_count,
                         doc_failures,
                         "extended",
                     ),
@@ -380,6 +390,8 @@ async fn load_failures_for_docs(
                         doc.full_error_count,
                         doc.full_warning_count,
                         doc.full_info_count,
+                        doc.full_test_count,
+                        doc.full_failing_test_count,
                         doc_failures,
                         "full",
                     ),
@@ -407,15 +419,24 @@ async fn load_failures_for_docs(
 /// Converts a `DocumentProfileDetail` into column values for the documents table.
 fn profile_to_cols(
     detail: Option<&DocumentProfileDetail>,
-) -> (Option<i32>, Option<i64>, Option<i64>, Option<i64>) {
+) -> (
+    Option<i32>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+) {
     match detail {
         Some(d) => (
             Some(d.passed as i32),
             Some(d.error_count as i64),
             Some(d.warning_count as i64),
             Some(d.info_count as i64),
+            Some(d.total_tests as i64),
+            Some(d.failing_test_count as i64),
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, None, None),
     }
 }
 
@@ -425,6 +446,8 @@ fn cols_to_profile(
     error_count: Option<i64>,
     warning_count: Option<i64>,
     info_count: Option<i64>,
+    test_count: Option<i64>,
+    failing_test_count: Option<i64>,
     failures: Option<&Vec<(String, String, String, String)>>,
     profile: &str,
 ) -> Option<DocumentProfileDetail> {
@@ -447,6 +470,8 @@ fn cols_to_profile(
         error_count: error_count.unwrap_or(0) as u64,
         warning_count: warning_count.unwrap_or(0) as u64,
         info_count: info_count.unwrap_or(0) as u64,
+        total_tests: test_count.unwrap_or(0) as u64,
+        failing_test_count: failing_test_count.unwrap_or(0) as u64,
         failing_tests,
     })
 }
@@ -461,12 +486,12 @@ pub async fn build_summary_from_db(
             DbBackend::Sqlite,
             "SELECT
                 COUNT(*) AS total,
-                SUM(CASE WHEN basic_passed = 1 THEN 1 ELSE 0 END) AS bv,
-                SUM(CASE WHEN basic_passed = 0 THEN 1 ELSE 0 END) AS bi,
-                SUM(CASE WHEN extended_passed = 1 THEN 1 ELSE 0 END) AS ev,
-                SUM(CASE WHEN extended_passed = 0 THEN 1 ELSE 0 END) AS ei,
-                SUM(CASE WHEN full_passed = 1 THEN 1 ELSE 0 END) AS fv,
-                SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END) AS fi,
+                SUM(COALESCE(basic_test_count, 0) - COALESCE(basic_failing_test_count, 0)) AS bv,
+                SUM(COALESCE(basic_failing_test_count, 0)) AS bi,
+                SUM(COALESCE(extended_test_count, 0) - COALESCE(extended_failing_test_count, 0)) AS ev,
+                SUM(COALESCE(extended_failing_test_count, 0)) AS ei,
+                SUM(COALESCE(full_test_count, 0) - COALESCE(full_failing_test_count, 0)) AS fv,
+                SUM(COALESCE(full_failing_test_count, 0)) AS fi,
                 SUM(CASE WHEN signature_present = 1 AND signature_error IS NULL THEN 1 ELSE 0 END) AS sv,
                 SUM(CASE WHEN signature_present = 1 AND signature_error IS NOT NULL THEN 1 ELSE 0 END) AS si,
                 SUM(CASE WHEN signature_present = 0 THEN 1 ELSE 0 END) AS sm,
@@ -639,12 +664,12 @@ pub async fn distribution_health(
         DbBackend::Sqlite,
         "SELECT
             COUNT(*) AS total,
-            SUM(CASE WHEN basic_passed = 1 THEN 1 ELSE 0 END) AS bv,
-            SUM(CASE WHEN basic_passed = 0 THEN 1 ELSE 0 END) AS bi,
-            SUM(CASE WHEN extended_passed = 1 THEN 1 ELSE 0 END) AS ev,
-            SUM(CASE WHEN extended_passed = 0 THEN 1 ELSE 0 END) AS ei,
-            SUM(CASE WHEN full_passed = 1 THEN 1 ELSE 0 END) AS fv,
-            SUM(CASE WHEN full_passed = 0 THEN 1 ELSE 0 END) AS fi,
+            SUM(COALESCE(basic_test_count, 0) - COALESCE(basic_failing_test_count, 0)) AS bv,
+            SUM(COALESCE(basic_failing_test_count, 0)) AS bi,
+            SUM(COALESCE(extended_test_count, 0) - COALESCE(extended_failing_test_count, 0)) AS ev,
+            SUM(COALESCE(extended_failing_test_count, 0)) AS ei,
+            SUM(COALESCE(full_test_count, 0) - COALESCE(full_failing_test_count, 0)) AS fv,
+            SUM(COALESCE(full_failing_test_count, 0)) AS fi,
             SUM(CASE WHEN retrieval_error IS NOT NULL THEN 1 ELSE 0 END) AS re
         FROM documents
         WHERE url LIKE ?1",
@@ -841,4 +866,58 @@ pub async fn load_provider_info(db: &DatabaseConnection) -> Result<Option<Provid
         mirror_on_aggregators: r.mirror_on_aggregators != 0,
         last_updated: r.last_updated,
     }))
+}
+
+/// Backfills `test_count` and `failing_test_count` columns for rows that
+/// predate the migration (i.e. where these columns are still NULL).
+pub async fn backfill_test_counts(db: &DatabaseConnection) -> Result<()> {
+    use csaf::validation::Validatable;
+    type Csaf20 = csaf::schema::csaf2_0::schema::CommonSecurityAdvisoryFramework;
+    type Csaf21 = csaf::schema::csaf2_1::schema::CommonSecurityAdvisoryFramework;
+
+    let row = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM documents WHERE basic_test_count IS NULL AND basic_passed IS NOT NULL",
+        ))
+        .await?;
+    let needs: i64 = row.map(|r| r.try_get("", "cnt").unwrap_or(0)).unwrap_or(0);
+    if needs == 0 {
+        return Ok(());
+    }
+
+    tracing::info!("Backfilling test counts for {needs} documents");
+
+    db.execute_unprepared(
+        "UPDATE documents SET
+            basic_failing_test_count = COALESCE((SELECT COUNT(DISTINCT test_id) FROM check_failures WHERE document_id = documents.id AND profile = 'basic'), 0),
+            extended_failing_test_count = COALESCE((SELECT COUNT(DISTINCT test_id) FROM check_failures WHERE document_id = documents.id AND profile = 'extended'), 0),
+            full_failing_test_count = COALESCE((SELECT COUNT(DISTINCT test_id) FROM check_failures WHERE document_id = documents.id AND profile = 'full'), 0)
+         WHERE basic_test_count IS NULL AND basic_passed IS NOT NULL",
+    )
+    .await?;
+
+    for (version_str, basic, extended, full) in [
+        (
+            "2.0",
+            Csaf20::tests_in_preset("basic").map_or(0, |v| v.len()),
+            Csaf20::tests_in_preset("extended").map_or(0, |v| v.len()),
+            Csaf20::tests_in_preset("full").map_or(0, |v| v.len()),
+        ),
+        (
+            "2.1",
+            Csaf21::tests_in_preset("basic").map_or(0, |v| v.len()),
+            Csaf21::tests_in_preset("extended").map_or(0, |v| v.len()),
+            Csaf21::tests_in_preset("full").map_or(0, |v| v.len()),
+        ),
+    ] {
+        db.execute_unprepared(&format!(
+            "UPDATE documents SET basic_test_count = {basic}, extended_test_count = {extended}, full_test_count = {full}
+             WHERE csaf_version = '{version_str}' AND basic_test_count IS NULL AND basic_passed IS NOT NULL",
+        ))
+        .await?;
+    }
+
+    tracing::info!("Test count backfill complete");
+    Ok(())
 }

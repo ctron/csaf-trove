@@ -214,6 +214,10 @@ pub struct DocumentProfileDetail {
     pub error_count: u64,
     pub warning_count: u64,
     pub info_count: u64,
+    #[serde(default)]
+    pub total_tests: u64,
+    #[serde(default)]
+    pub failing_test_count: u64,
     pub failing_tests: Vec<DocumentCheckFailure>,
 }
 

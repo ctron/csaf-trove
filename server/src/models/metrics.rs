@@ -37,9 +37,9 @@ fn is_zero(v: &u64) -> bool {
 /// Profile-level validation counts for a metrics entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsProfileEntry {
-    /// Documents passing all tests.
+    /// Total tests passed across all documents.
     pub valid: u64,
-    /// Documents failing at least one test.
+    /// Total tests failed across all documents.
     pub invalid: u64,
     /// Ratio of valid to total (0.0–1.0).
     pub pass_rate: f64,

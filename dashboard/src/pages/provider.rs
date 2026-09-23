@@ -80,7 +80,7 @@ fn profile_row(label: &'static str, profile: Option<ProfileSummary>) -> impl Int
             let pct = p.pass_rate * 100.0;
             let color = color_for_pass_rate(p.pass_rate);
             let rate_label = format!("{pct:.1}%");
-            let detail = format!("{} valid \u{00b7} {} invalid", p.valid, p.invalid);
+            let detail = format!("{} tests passed \u{00b7} {} tests failed", p.valid, p.invalid);
             view! {
                 <div class="mb-4 last:mb-0">
                     <div class="flex items-center justify-between mb-1">

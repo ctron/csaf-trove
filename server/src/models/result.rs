@@ -103,9 +103,9 @@ pub struct ProfileResults {
 /// Aggregate pass/fail counts for a single profile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileSummary {
-    /// Number of documents passing all tests in this profile.
+    /// Total tests passed across all documents in this profile.
     pub valid: u64,
-    /// Number of documents failing at least one test in this profile.
+    /// Total tests failed across all documents in this profile.
     pub invalid: u64,
     /// Ratio of valid to total (0.0–1.0).
     pub pass_rate: f64,
@@ -205,6 +205,12 @@ pub struct DocumentProfileDetail {
     pub warning_count: u64,
     /// Number of informational test failures.
     pub info_count: u64,
+    /// Total number of tests in this profile for the document's CSAF version.
+    #[serde(default)]
+    pub total_tests: u64,
+    /// Number of distinct test IDs that failed.
+    #[serde(default)]
+    pub failing_test_count: u64,
     /// Individual failing tests.
     pub failing_tests: Vec<DocumentCheckFailure>,
 }

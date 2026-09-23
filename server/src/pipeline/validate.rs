@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -42,6 +42,30 @@ use crate::{
     storage::{Storage, git_repo::document_version_counts},
 };
 
+#[derive(Debug, Clone, Copy)]
+enum CsafVersionTag {
+    V2_0,
+    V2_1,
+}
+
+fn csaf_version_tag(csaf: &Csaf) -> CsafVersionTag {
+    match csaf {
+        Csaf::V2_0(_) => CsafVersionTag::V2_0,
+        _ => CsafVersionTag::V2_1,
+    }
+}
+
+fn total_tests_for_profile(version: CsafVersionTag, profile: &str) -> u64 {
+    use csaf::validation::Validatable;
+    type Csaf20 = csaf::schema::csaf2_0::schema::CommonSecurityAdvisoryFramework;
+    type Csaf21 = csaf::schema::csaf2_1::schema::CommonSecurityAdvisoryFramework;
+    let count = match version {
+        CsafVersionTag::V2_0 => Csaf20::tests_in_preset(profile).map_or(0, |v| v.len()),
+        CsafVersionTag::V2_1 => Csaf21::tests_in_preset(profile).map_or(0, |v| v.len()),
+    };
+    count as u64
+}
+
 #[derive(Debug)]
 struct DocumentResult {
     /// CSAF tracking ID.
@@ -58,6 +82,8 @@ struct DocumentResult {
     infos: HashMap<String, Vec<CheckError>>,
     /// Profile names that passed.
     successes: Vec<String>,
+    /// CSAF version tag for computing test counts.
+    version_tag: Option<CsafVersionTag>,
     /// Signature/digest error message, if any.
     signature_error: Option<String>,
     /// Whether a signature file was present.
@@ -224,6 +250,8 @@ pub async fn validate_provider(
                             .map(|s| s.to_string())
                             .collect();
 
+                        let vtag = Some(csaf_version_tag(&verified.csaf));
+
                         let batch_to_flush = {
                             let mut b = batch.lock();
                             b.buffer.push(DocumentResult {
@@ -234,6 +262,7 @@ pub async fn validate_provider(
                                 warnings,
                                 infos,
                                 successes,
+                                version_tag: vtag,
                                 signature_error,
                                 signature_present,
                                 category: meta.category,
@@ -281,6 +310,7 @@ pub async fn validate_provider(
                                 warnings: HashMap::new(),
                                 infos: HashMap::new(),
                                 successes: vec![],
+                                version_tag: None,
                                 signature_error: Some(format!("Document error: {e}")),
                                 signature_present: false,
                                 category: None,
@@ -423,6 +453,11 @@ fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<Docum
     let infos = doc.infos.get(profile);
     let has_issues = errors.is_some() || warnings.is_some() || infos.is_some();
 
+    let total_tests = doc
+        .version_tag
+        .map(|v| total_tests_for_profile(v, profile))
+        .unwrap_or(0);
+
     if has_issues {
         let mut failing_tests = Vec::new();
 
@@ -454,6 +489,10 @@ fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<Docum
             }
         }
 
+        let distinct_failing: HashSet<&str> =
+            failing_tests.iter().map(|f| f.test_id.as_str()).collect();
+        let failing_test_count = distinct_failing.len() as u64;
+
         let error_count = errors.map_or(0, |e| e.len() as u64);
         let warning_count = warnings.map_or(0, |w| w.len() as u64);
         let info_count = infos.map_or(0, |i| i.len() as u64);
@@ -463,6 +502,8 @@ fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<Docum
             error_count,
             warning_count,
             info_count,
+            total_tests,
+            failing_test_count,
             failing_tests,
         })
     } else if doc.successes.iter().any(|s| s == profile) {
@@ -471,6 +512,8 @@ fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<Docum
             error_count: 0,
             warning_count: 0,
             info_count: 0,
+            total_tests,
+            failing_test_count: 0,
             failing_tests: vec![],
         })
     } else {
