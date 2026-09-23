@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 

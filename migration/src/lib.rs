@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 pub use sea_orm_migration::prelude::*;
 
 mod m20240101_000001_create_initial_schema;

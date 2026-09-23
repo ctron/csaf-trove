@@ -5,6 +5,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::SystemTime,
 };
 
 use anyhow::Result;
@@ -26,6 +27,7 @@ use csaf_walker::{
     walker::Walker,
 };
 use parking_lot::Mutex;
+use time::macros::datetime;
 
 use super::source::TroveFileSource;
 use crate::{
@@ -92,6 +94,13 @@ struct ValidationBatchState {
     total_count: u64,
 }
 
+fn build_validation_options(source: &Source) -> ValidationOptions {
+    if source.accept_v3_signatures {
+        ValidationOptions::new().validation_date(SystemTime::from(datetime!(2007-01-01 0:00 UTC)))
+    } else {
+        ValidationOptions::new()
+    }
+}
 /// Loads OpenPGP public keys from the provider metadata in the worktree.
 async fn load_keys(file_source: &TroveFileSource) -> Result<Vec<PublicKey>> {
     let metadata = file_source.load_metadata().await?;
@@ -125,7 +134,7 @@ pub async fn validate_provider(
         tracing::warn!("Failed to load keys for {domain}: {e}");
         vec![]
     }));
-    let validation_options = Arc::new(ValidationOptions::new());
+    let validation_options = Arc::new(build_validation_options(source));
 
     let db_count_before = state.storage.document_count(domain).await.unwrap_or(0);
 

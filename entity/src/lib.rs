@@ -1,3 +1,4 @@
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! SeaORM entity definitions for the csaf-trove database schema.
 
 pub mod check_failure;

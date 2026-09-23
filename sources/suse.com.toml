@@ -1,1 +1,3 @@
 domain = "suse.com"
+accept_v3_signatures = true
+note = "OpenPGP key uses SHA-1 self-signatures, requiring v3 signature policy"
