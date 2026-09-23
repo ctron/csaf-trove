@@ -26,7 +26,6 @@ use csaf_walker::{
     },
     walker::Walker,
 };
-use parking_lot::Mutex;
 use time::macros::datetime;
 use super::source::TroveFileSource;
 use crate::{
@@ -39,7 +38,6 @@ use crate::{
         source::Source,
     },
     pipeline::sync::JobProgress,
-    storage::{Storage, git_repo::document_version_counts},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -108,17 +106,6 @@ struct DocumentResult {
     revision_history: Vec<RevisionEntry>,
 }
 
-/// Number of documents to accumulate before flushing to the database.
-const VALIDATION_BATCH_SIZE: usize = 500;
-
-/// Accumulates validation results and flushes them to the database in batches.
-struct ValidationBatchState {
-    /// Buffer of results awaiting flush.
-    buffer: Vec<DocumentResult>,
-    /// Total number of documents processed.
-    total_count: u64,
-}
-
 fn build_validation_options(source: &Source) -> ValidationOptions {
     if source.accept_v3_signatures {
         ValidationOptions::new().validation_date(SystemTime::from(datetime!(2007-01-01 0:00 UTC)))
@@ -162,13 +149,8 @@ pub async fn validate_provider(
     let validation_options = Arc::new(build_validation_options(source));
 
     let db_count_before = state.storage.document_count(domain).await.unwrap_or(0);
-
-    let batch_state: Arc<Mutex<ValidationBatchState>> =
-        Arc::new(Mutex::new(ValidationBatchState {
-            buffer: Vec::with_capacity(VALIDATION_BATCH_SIZE),
-            total_count: 0,
-        }));
-    let batch_ref = batch_state.clone();
+    let total_count = Arc::new(AtomicU64::new(0));
+    let total_count_ref = total_count.clone();
 
     let checks: Vec<(String, Box<dyn Check>)> = vec![
         ("basic".into(), Box::new(CsafValidation::new("basic"))),
@@ -185,14 +167,14 @@ pub async fn validate_provider(
             VerifiedAdvisory<RetrievedAdvisory, String>,
             VerificationError<_, RetrievedAdvisory>,
         >| {
-            let batch = batch_ref.clone();
+            let total_count = total_count_ref.clone();
             let keys = keys.clone();
             let opts = validation_options.clone();
             let state = state_for_closure.clone();
             let domain = domain_for_closure.clone();
             let worktree = worktree_for_closure.clone();
             async move {
-                match result {
+                let doc = match result {
                     Ok(verified) => {
                         let tracking_id = verified.csaf.document().tracking().id().to_string();
                         let title = verified.csaf.document().title().to_string();
@@ -252,45 +234,27 @@ pub async fn validate_provider(
 
                         let vtag = Some(csaf_version_tag(&verified.csaf));
 
-                        let batch_to_flush = {
-                            let mut b = batch.lock();
-                            b.buffer.push(DocumentResult {
-                                tracking_id,
-                                title,
-                                url,
-                                failures,
-                                warnings,
-                                infos,
-                                successes,
-                                version_tag: vtag,
-                                signature_error,
-                                signature_present,
-                                category: meta.category,
-                                publisher_name: meta.publisher_name,
-                                initial_release_date: meta.initial_release_date,
-                                current_release_date: meta.current_release_date,
-                                status: meta.status,
-                                revision: meta.revision,
-                                aggregate_severity: meta.aggregate_severity,
-                                csaf_version: meta.csaf_version,
-                                revision_history: meta.revision_history,
-                            });
-                            b.total_count += 1;
-                            if b.buffer.len() >= VALIDATION_BATCH_SIZE {
-                                Some(std::mem::replace(
-                                    &mut b.buffer,
-                                    Vec::with_capacity(VALIDATION_BATCH_SIZE),
-                                ))
-                            } else {
-                                None
-                            }
-                        };
-
-                        if let Some(drained) = batch_to_flush {
-                            flush_batch(&state.storage, &domain, drained).await?;
+                        DocumentResult {
+                            tracking_id,
+                            title,
+                            url,
+                            failures,
+                            warnings,
+                            infos,
+                            successes,
+                            version_tag: vtag,
+                            signature_error,
+                            signature_present,
+                            category: meta.category,
+                            publisher_name: meta.publisher_name,
+                            initial_release_date: meta.initial_release_date,
+                            current_release_date: meta.current_release_date,
+                            status: meta.status,
+                            revision: meta.revision,
+                            aggregate_severity: meta.aggregate_severity,
+                            csaf_version: meta.csaf_version,
+                            revision_history: meta.revision_history,
                         }
-
-                        state.increment_job_validated(&domain).await;
                     }
                     Err(e) => {
                         let url = reconstruct_original_url(e.url(), &worktree);
@@ -300,47 +264,35 @@ pub async fn validate_provider(
                             .unwrap_or(&url)
                             .trim_end_matches(".json")
                             .to_string();
-                        let batch_to_flush = {
-                            let mut b = batch.lock();
-                            b.buffer.push(DocumentResult {
-                                tracking_id,
-                                title: format!("Parse error: {e}"),
-                                url,
-                                failures: HashMap::new(),
-                                warnings: HashMap::new(),
-                                infos: HashMap::new(),
-                                successes: vec![],
-                                version_tag: None,
-                                signature_error: Some(format!("Document error: {e}")),
-                                signature_present: false,
-                                category: None,
-                                publisher_name: None,
-                                initial_release_date: None,
-                                current_release_date: None,
-                                status: None,
-                                revision: None,
-                                aggregate_severity: None,
-                                csaf_version: None,
-                                revision_history: vec![],
-                            });
-                            b.total_count += 1;
-                            if b.buffer.len() >= VALIDATION_BATCH_SIZE {
-                                Some(std::mem::replace(
-                                    &mut b.buffer,
-                                    Vec::with_capacity(VALIDATION_BATCH_SIZE),
-                                ))
-                            } else {
-                                None
-                            }
-                        };
-
-                        if let Some(drained) = batch_to_flush {
-                            flush_batch(&state.storage, &domain, drained).await?;
+                        DocumentResult {
+                            tracking_id,
+                            title: format!("Parse error: {e}"),
+                            url,
+                            failures: HashMap::new(),
+                            warnings: HashMap::new(),
+                            infos: HashMap::new(),
+                            successes: vec![],
+                            version_tag: None,
+                            signature_error: Some(format!("Document error: {e}")),
+                            signature_present: false,
+                            category: None,
+                            publisher_name: None,
+                            initial_release_date: None,
+                            current_release_date: None,
+                            status: None,
+                            revision: None,
+                            aggregate_severity: None,
+                            csaf_version: None,
+                            revision_history: vec![],
                         }
-
-                        state.increment_job_validated(&domain).await;
                     }
-                }
+                };
+
+                let validation = build_document_validation(doc);
+                state.storage.save_documents(&domain, &[validation]).await?;
+                total_count.fetch_add(1, Ordering::Relaxed);
+                state.increment_job_validated(&domain).await;
+
                 Ok::<_, anyhow::Error>(())
             }
         },
@@ -365,10 +317,7 @@ pub async fn validate_provider(
         .await
         .map_err(|e| anyhow::anyhow!("Validation walker failed for {domain}: {e}"))?;
 
-    let (remaining, total_count) = {
-        let mut b = batch_state.lock();
-        (std::mem::take(&mut b.buffer), b.total_count)
-    };
+    let total_count = total_count.load(Ordering::Relaxed);
 
     if db_count_before > 0 && total_count < db_count_before / 2 {
         tracing::warn!(
@@ -377,7 +326,7 @@ pub async fn validate_provider(
         );
     }
 
-    flush_batch(&state.storage, domain, remaining).await?;
+    state.storage.update_version_counts(domain).await?;
 
     let total_documents = state.storage.document_count(domain).await?;
 
@@ -390,60 +339,31 @@ pub async fn validate_provider(
     Ok(total_documents)
 }
 
-/// Converts a batch of results to `DocumentValidation` and writes them to the database.
-async fn flush_batch(storage: &Storage, domain: &str, batch: Vec<DocumentResult>) -> Result<()> {
-    if batch.is_empty() {
-        return Ok(());
+fn build_document_validation(doc: DocumentResult) -> DocumentValidation {
+    let profiles = DocumentProfileResults {
+        basic: build_doc_profile_detail(&doc, "basic"),
+        extended: build_doc_profile_detail(&doc, "extended"),
+        full: build_doc_profile_detail(&doc, "full"),
+    };
+    DocumentValidation {
+        tracking_id: doc.tracking_id,
+        title: doc.title,
+        url: doc.url,
+        profiles,
+        signature_error: doc.signature_error,
+        signature_present: doc.signature_present,
+        category: doc.category,
+        publisher_name: doc.publisher_name,
+        initial_release_date: doc.initial_release_date,
+        current_release_date: doc.current_release_date,
+        status: doc.status,
+        revision: doc.revision,
+        aggregate_severity: doc.aggregate_severity,
+        csaf_version: doc.csaf_version,
+        revision_history: doc.revision_history,
+        version_count: 1,
+        retrieval_error: None,
     }
-    let mut documents = build_document_results(batch);
-    // Compute version counts from git history
-    let repo_path = storage.repo_path(domain);
-    if repo_path.exists() {
-        let urls: Vec<String> = documents.iter().map(|d| d.url.clone()).collect();
-        let counts = tokio::task::spawn_blocking(move || {
-            let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
-            document_version_counts(&repo_path, &url_refs)
-        })
-        .await??;
-        for doc in &mut documents {
-            doc.version_count = counts.get(&doc.url).copied().unwrap_or(1);
-        }
-    }
-    storage.save_documents(domain, &documents).await?;
-    Ok(())
-}
-
-/// Converts internal results into serializable document validation records.
-fn build_document_results(results: Vec<DocumentResult>) -> Vec<DocumentValidation> {
-    results
-        .into_iter()
-        .map(|doc| {
-            let profiles = DocumentProfileResults {
-                basic: build_doc_profile_detail(&doc, "basic"),
-                extended: build_doc_profile_detail(&doc, "extended"),
-                full: build_doc_profile_detail(&doc, "full"),
-            };
-            DocumentValidation {
-                tracking_id: doc.tracking_id,
-                title: doc.title,
-                url: doc.url,
-                profiles,
-                signature_error: doc.signature_error,
-                signature_present: doc.signature_present,
-                category: doc.category,
-                publisher_name: doc.publisher_name,
-                initial_release_date: doc.initial_release_date,
-                current_release_date: doc.current_release_date,
-                status: doc.status,
-                revision: doc.revision,
-                aggregate_severity: doc.aggregate_severity,
-                csaf_version: doc.csaf_version,
-                revision_history: doc.revision_history,
-                version_count: 1,
-                retrieval_error: None,
-            }
-        })
-        .collect()
 }
 
 /// Builds per-profile detail for a single document.

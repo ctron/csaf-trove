@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
     EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
     Statement, TransactionTrait,
 };
+use super::git_repo::document_version_counts;
 
 use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
 use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
@@ -919,5 +920,45 @@ pub async fn backfill_test_counts(db: &DatabaseConnection) -> Result<()> {
     }
 
     tracing::info!("Test count backfill complete");
+    Ok(())
+}
+
+/// Computes version counts from git history and bulk-updates the database.
+pub async fn update_version_counts(db: &DatabaseConnection, repo_path: &Path) -> Result<()> {
+    if !repo_path.exists() {
+        return Ok(());
+    }
+
+    let urls: Vec<String> = document::Entity::find()
+        .select_only()
+        .column(document::Column::Url)
+        .into_tuple()
+        .all(db)
+        .await?;
+
+    if urls.is_empty() {
+        return Ok(());
+    }
+
+    let repo = repo_path.to_path_buf();
+    let counts = tokio::task::spawn_blocking(move || {
+        let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
+        document_version_counts(&repo, &url_refs)
+    })
+    .await??;
+
+    let txn = db.begin().await?;
+    for (url, count) in &counts {
+        document::Entity::update_many()
+            .col_expr(
+                document::Column::VersionCount,
+                sea_orm::sea_query::Expr::value(*count as i32),
+            )
+            .filter(document::Column::Url.eq(url.as_str()))
+            .exec(&txn)
+            .await?;
+    }
+    txn.commit().await?;
+
     Ok(())
 }

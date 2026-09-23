@@ -315,6 +315,13 @@ impl Storage {
         documents::save_documents(&db, docs).await
     }
 
+    /// Computes version counts from git history and updates all documents.
+    pub async fn update_version_counts(&self, domain: &str) -> Result<()> {
+        let db = self.db.get(domain).await?;
+        let repo_path = self.repo_path(domain);
+        documents::update_version_counts(&db, &repo_path).await
+    }
+
     /// Builds a provider summary from all documents in the database.
     pub async fn build_summary_from_db(&self, domain: &str) -> Result<ProviderSummary> {
         let db = self.db.get(domain).await?;
