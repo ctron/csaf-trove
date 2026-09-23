@@ -205,15 +205,12 @@ pub async fn sync_provider(
     walker
         .with_distribution_error_handler(move |ctx: &DistributionContext, error| match ctx {
             DistributionContext::Feed {
-                tlp_label: Some(label),
+                tlp_label: TlpLabel::Clear,
                 ..
-            } if *label == TlpLabel::Clear => Err(error),
+            } => Err(error),
             _ => {
                 dt_err.fetch_sub(1, Ordering::Relaxed);
-                let label = ctx
-                    .tlp_label()
-                    .map(|l| l.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
+                let label = ctx.tlp_label().to_string();
                 tracing::warn!("Skipping {label} distribution {}: {error}", ctx.url());
                 de.lock().push(RetrievalFailure {
                     url: ctx.url().to_string(),

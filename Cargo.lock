@@ -1497,7 +1497,8 @@ dependencies = [
 [[package]]
 name = "csaf-walker"
 version = "0.19.0"
-source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftolerant-auxiliary-fetch#34e974b202131393e34fa8e78d0609568bbdab1a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d1dab2d259f07f8dd0a0c1adcf867aa85090582b6a4d63d0984d00fb3409953"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6621,7 +6622,8 @@ dependencies = [
 [[package]]
 name = "walker-common"
 version = "0.19.0"
-source = "git+https://github.com/scm-rs/csaf-walker.git?branch=feat%2Ftolerant-auxiliary-fetch#34e974b202131393e34fa8e78d0609568bbdab1a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d2ffa904d2bd1b7a05c261ac65f3e504bc2649f7f9e1b0943acc233a3e6a080"
 dependencies = [
  "anyhow",
  "async-trait",

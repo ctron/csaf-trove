@@ -504,6 +504,7 @@ fn try_reconstruct_url(file_url: &url::Url, worktree_dir: &Path) -> Option<Strin
 }
 
 /// Extracted CSAF document metadata.
+#[derive(Default)]
 struct DocumentMetadata {
     /// Document category.
     category: Option<String>,
@@ -570,6 +571,7 @@ fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
                 })
                 .collect(),
         },
+        _ => DocumentMetadata::default(),
     }
 }
 

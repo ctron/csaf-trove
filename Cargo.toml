@@ -25,7 +25,7 @@ csaf-rs = "0.5"
 csaf-trove-common = { path = "common" }
 csaf-trove-entity = { path = "entity" }
 csaf-trove-migration = { path = "migration" }
-csaf-walker = { git = "https://github.com/scm-rs/csaf-walker.git", branch = "feat/tolerant-auxiliary-fetch", default-features = false }
+csaf-walker = { version = "0.19", default-features = false }
 git2 = { version = "0.21", features = ["https"] }
 gloo-net = "0.7"
 gloo-timers = { version = "0.4", features = ["futures"] }
@@ -57,7 +57,7 @@ tracing-actix-web = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 walkdir = "2"
-walker-common = { git = "https://github.com/scm-rs/csaf-walker.git", branch = "feat/tolerant-auxiliary-fetch" }
+walker-common = "0.19"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"
