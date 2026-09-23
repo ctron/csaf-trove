@@ -12,6 +12,7 @@ use time::OffsetDateTime;
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum PipelinePhase {
+    Discover,
     Sync,
     Commit,
     Validate,

@@ -242,6 +242,10 @@ impl AppState {
     ) {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
+            if job.phase == Some(PipelinePhase::Discover) {
+                job.completed_phases.push(PipelinePhase::Discover);
+                job.phase = Some(PipelinePhase::Sync);
+            }
             job.documents_total += doc_count as u64;
             job.distributions_total = distributions_total;
             job.distribution_index += 1;

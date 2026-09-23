@@ -63,9 +63,10 @@ fn format_progress(job: &JobStatus) -> String {
         _ => job.documents_total,
     };
 
-    let is_active = matches!(job.phase, Some(PipelinePhase::Sync) | Some(PipelinePhase::Validate));
+    let has_distribution_progress =
+        matches!(job.phase, Some(PipelinePhase::Sync) | Some(PipelinePhase::Validate));
 
-    if is_active && job.distribution_index > 0 {
+    if has_distribution_progress && job.distribution_index > 0 {
         format!(
             "{} / {} ({} / {})",
             job.distribution_index,
@@ -222,14 +223,22 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     let phase_view = render_pipeline_phase(&job);
                                     let progress = format_progress(&job);
                                     let eta_display = if job.status == "running" {
-                                        job.eta.clone().unwrap_or_else(|| format_duration(job.duration_seconds))
+                                        job.eta.clone().unwrap_or_else(|| "-".to_string())
                                     } else {
-                                        format_duration(job.duration_seconds)
+                                        "-".to_string()
                                     };
-                                    let last_run_display = job.last_run.as_deref()
-                                        .map(|lr| format_relative_time(lr, now_ms.get()))
-                                        .unwrap_or_else(|| "-".to_string());
-                                    let last_run_title = job.last_run.clone().unwrap_or_default();
+                                    let last_run_display = if job.status == "running" {
+                                        format_duration(job.duration_seconds)
+                                    } else {
+                                        job.last_run.as_deref()
+                                            .map(|lr| format_relative_time(lr, now_ms.get()))
+                                            .unwrap_or_else(|| format_duration(job.duration_seconds))
+                                    };
+                                    let last_run_title = if job.status == "running" {
+                                        String::new()
+                                    } else {
+                                        job.last_run.clone().unwrap_or_default()
+                                    };
                                     let error = job.error.clone().unwrap_or_default();
                                     let domain_display = domain.clone();
                                     let domain_href = format!("/sync/{}", encode_path_segment(&domain));

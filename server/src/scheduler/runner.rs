@@ -40,7 +40,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
         status: JobPhase::Running,
         started_at: now,
         completed_at: None,
-        phase: Some(PipelinePhase::Sync),
+        phase: Some(PipelinePhase::Discover),
         documents_synced: 0,
         documents_validated: 0,
         documents_total: 0,
