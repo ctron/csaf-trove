@@ -20,3 +20,32 @@ impl MigratorTrait for Migrator {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::Database;
+
+    async fn in_memory_db() -> sea_orm::DatabaseConnection {
+        Database::connect("sqlite::memory:").await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn migration_check() {
+        let db = in_memory_db().await;
+        Migrator::status(&db).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn migration_up() {
+        let db = in_memory_db().await;
+        Migrator::up(&db, None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn migration_up_down() {
+        let db = in_memory_db().await;
+        Migrator::up(&db, None).await.unwrap();
+        Migrator::down(&db, None).await.unwrap();
+    }
+}

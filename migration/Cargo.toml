@@ -5,3 +5,7 @@ edition.workspace = true
 
 [dependencies]
 sea-orm-migration = { workspace = true }
+
+[dev-dependencies]
+sea-orm = { workspace = true }
+tokio = { workspace = true }
