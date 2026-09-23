@@ -8,11 +8,12 @@ use crate::components::{
     badge::{Badge, BadgeVariant},
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     content_tabs::{ContentTab, ContentTabs},
+    diff_view::DiffView,
     section_heading::SubHeading,
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{
-    DiffLineInfo, DiffTag, DocumentValidation, DocumentVersionInfo, HistoricalDocument,
+    DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument,
     RevisionEntry, encode_path_segment,
 };
 
@@ -343,44 +344,6 @@ fn HistoricalVersionDetail(doc: HistoricalDocument) -> impl IntoView {
                 <MetadataRow label="Current Release" value=doc.current_release_date />
             </Tbody>
         </Table>
-    }
-}
-
-/// Renders line-by-line diff between a version and its next newer version.
-#[component]
-fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
-    let additions = lines
-        .iter()
-        .filter(|l| matches!(l.tag, DiffTag::Insert))
-        .count();
-    let deletions = lines
-        .iter()
-        .filter(|l| matches!(l.tag, DiffTag::Delete))
-        .count();
-
-    view! {
-        <SubHeading>"Changes (compared to next version)"</SubHeading>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-            <span class="text-emerald-500">"+" {additions.to_string()} " added"</span>
-            " "
-            <span class="text-red-500">"-" {deletions.to_string()} " removed"</span>
-        </p>
-        <pre class="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto text-xs p-0 mb-6">
-            <code>
-                {lines.into_iter().map(|line| {
-                    let (class, prefix) = match line.tag {
-                        DiffTag::Insert => ("bg-emerald-50 dark:bg-emerald-900/20 text-gray-800 dark:text-gray-200", "+"),
-                        DiffTag::Delete => ("bg-red-50 dark:bg-red-900/20 text-gray-800 dark:text-gray-200", "-"),
-                        DiffTag::Equal => ("text-gray-800 dark:text-gray-200", " "),
-                    };
-                    view! {
-                        <div class={format!("px-3 py-0 whitespace-pre {class}")}>
-                            {prefix}{" "}{line.content}
-                        </div>
-                    }
-                }).collect::<Vec<_>>()}
-            </code>
-        </pre>
     }
 }
 
