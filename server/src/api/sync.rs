@@ -112,7 +112,10 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
     entries
 }
 
-/// Computes a human-readable ETA for a running job based on the current phase progress.
+/// Computes a human-readable ETA for a running job.
+///
+/// When the total number of distributions is known, estimates time for
+/// undiscovered distributions using the average size of those already seen.
 fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
     let phase_start = job.phase_started_at?;
     let elapsed = (now - phase_start).as_seconds_f64();
@@ -130,23 +133,33 @@ fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
         return None;
     }
 
-    let remaining = job.documents_total.saturating_sub(current) as f64;
     let rate = current as f64 / elapsed;
-    let eta_secs = (remaining / rate) as u64;
 
+    let mut remaining = job.documents_total.saturating_sub(current) as f64;
+    if job.distributions_total > 0 && job.distribution_index < job.distributions_total {
+        let remaining_dists =
+            (job.distributions_total - job.distribution_index) as f64;
+        let avg_dist_docs =
+            job.documents_total as f64 / job.distribution_index.max(1) as f64;
+        remaining += remaining_dists * avg_dist_docs;
+    }
+
+    let eta_secs = (remaining / rate) as u64;
+    Some(format_eta(eta_secs))
+}
+
+fn format_eta(eta_secs: u64) -> String {
     let hours = eta_secs / 3600;
     let minutes = (eta_secs % 3600) / 60;
     let secs = eta_secs % 60;
 
-    let formatted = if hours > 0 {
+    if hours > 0 {
         format!("~{hours}h {minutes}m {secs}s")
     } else if minutes > 0 {
         format!("~{minutes}m {secs}s")
     } else {
         format!("~{secs}s")
-    };
-
-    Some(formatted)
+    }
 }
 
 /// Returns the current job status for all providers with computed durations.
