@@ -4,7 +4,12 @@ use crate::{
         source::{Source, sanitize_domain},
         state::{JobPhase, JobStatus},
     },
-    pipeline::store::DIR_METADATA,
+    pipeline::{
+        report::generate_report,
+        store::DIR_METADATA,
+        sync::sync_provider,
+        validate::validate_provider,
+    },
     storage::{ProviderInfo, git_repo},
 };
 use csaf_trove_common::PipelinePhase;
@@ -180,7 +185,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         .update_job_phase(domain, PipelinePhase::Discover)
         .await;
 
-    let sync_result = match crate::pipeline::sync::sync_provider(state, source, &worktree_dir).await
+    let sync_result = match sync_provider(state, source, &worktree_dir).await
     {
         Ok(result) => result,
         Err(e) => {
@@ -213,7 +218,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     }
 
     state.update_job_phase(domain, PipelinePhase::Validate).await;
-    let total = crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;
+    let total = validate_provider(state, source, &worktree_dir).await?;
 
     {
         let mut jobs = state.jobs.write().await;
@@ -237,7 +242,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         .await?;
 
     state.update_job_phase(domain, PipelinePhase::Report).await;
-    crate::pipeline::report::generate_report(state, source).await?;
+    generate_report(state, source).await?;
 
     cleanup_worktree(&worktree_dir).await;
     Ok(())
