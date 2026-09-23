@@ -1,5 +1,4 @@
 use leptos::prelude::*;
-
 use crate::components::badge::{Badge, BadgeVariant};
 use crate::models::ProfileSummary;
 

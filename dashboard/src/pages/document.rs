@@ -1,8 +1,6 @@
 use std::cmp::Ordering;
-
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
-
 use crate::components::{
     alert::{Alert, AlertVariant},
     badge::{Badge, BadgeVariant},

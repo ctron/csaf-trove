@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
@@ -10,7 +9,6 @@ use sea_orm::{
 use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
 use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
 use time::OffsetDateTime;
-
 use crate::models::result::{
     DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
     FailingTest, ProfileResults, ProfileSummary, ProviderSummary, RevisionEntry, SignatureSummary,

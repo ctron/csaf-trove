@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-
 use leptos::prelude::*;
 use wasm_bindgen::{JsCast, prelude::Closure};
 use web_sys::{CloseEvent, MessageEvent, WebSocket};
-
 use crate::components::{
     badge::{Badge, BadgeVariant},
     section_heading::SectionHeading,

@@ -5,10 +5,8 @@ pub mod results;
 pub mod state;
 
 use std::path::{Path, PathBuf};
-
 use csaf_trove_common::{Paginated, SyncPoint};
 use time::OffsetDateTime;
-
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{

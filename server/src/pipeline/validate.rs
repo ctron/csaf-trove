@@ -28,7 +28,6 @@ use csaf_walker::{
 };
 use parking_lot::Mutex;
 use time::macros::datetime;
-
 use super::source::TroveFileSource;
 use crate::{
     AppState,

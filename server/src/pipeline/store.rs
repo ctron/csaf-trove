@@ -1,5 +1,4 @@
 use std::{fmt::Debug, io::ErrorKind, path::PathBuf};
-
 use anyhow::Context;
 use csaf_walker::{
     common::retrieve::RetrievalError,

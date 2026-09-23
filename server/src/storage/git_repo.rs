@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use git2::{Oid, Repository, Signature, Tree};
 use serde::Serialize;
 use walkdir::WalkDir;
-
 use crate::models::result::{DiffLineInfo, DiffTag};
 
 /// Opens an existing bare repo or initializes a new one.

@@ -1,7 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
-
 use super::error::ApiError;
 use crate::AppState;
 

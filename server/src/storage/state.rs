@@ -1,7 +1,5 @@
 use std::path::Path;
-
 use anyhow::Result;
-
 use crate::{
     models::{source::sanitize_domain, state::SyncState},
     pipeline::sync::RetrievalFailure,

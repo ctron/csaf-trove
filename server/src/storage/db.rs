@@ -1,9 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
-
 use anyhow::Result;
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
 use tokio::sync::RwLock;
-
 use crate::models::source::sanitize_domain;
 use csaf_trove_migration::{Migrator, MigratorTrait};
 

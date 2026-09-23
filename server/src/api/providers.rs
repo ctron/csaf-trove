@@ -1,6 +1,5 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::Deserialize;
-
 use super::{
     auth::verify_bearer_token,
     error::{ApiError, OptionExt},

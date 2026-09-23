@@ -1,10 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
-
 use actix_web::{HttpRequest, HttpResponse, web};
 use csaf_trove_common::SyncPoint;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-
 use super::{auth::verify_bearer_token, error::ApiError};
 use crate::{
     AppState,

@@ -1,7 +1,5 @@
 use std::path::Path;
-
 use anyhow::Result;
-
 use crate::models::{result::ProviderSummary, source::sanitize_domain};
 
 /// Reads all provider summaries from the results directory, sorted by domain.

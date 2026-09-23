@@ -1,7 +1,5 @@
 use std::collections::HashSet;
-
 use leptos::prelude::*;
-
 use crate::components::section_heading::SubHeading;
 use crate::models::{DiffLineInfo, DiffTag};
 

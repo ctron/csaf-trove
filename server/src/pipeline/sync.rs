@@ -1,7 +1,5 @@
 use std::{fmt::Debug, path::Path, sync::Arc, sync::atomic::{AtomicU64, Ordering}, time::SystemTime};
-
 use parking_lot::Mutex;
-
 use anyhow::Result;
 use csaf_walker::{
     common::{
@@ -18,9 +16,7 @@ use csaf_walker::{
 };
 use time::OffsetDateTime;
 use walker_common::utils::url::Urlify;
-
 use crate::{AppState, models::source::Source as AppSource};
-
 use super::store::{TroveStoreError, TroveStoreVisitor};
 
 /// A document that could not be retrieved during sync.
