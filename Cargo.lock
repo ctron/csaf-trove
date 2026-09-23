@@ -1410,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-common"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "serde",
  "time",
@@ -1418,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-dashboard"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -1438,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-entity"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "sea-orm",
  "time",
@@ -1446,14 +1446,14 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-migration"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "sea-orm-migration",
 ]
 
 [[package]]
 name = "csaf-trove-server"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
@@ -3929,9 +3929,9 @@ dependencies = [
 
 [[package]]
 name = "ossl"
-version = "1.5.2"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f34df8ca6a2920b0fae969ced913c714b41f23b655a434a45c6a9843a75c019"
+checksum = "4fa44e30f9538a8ff3c06349a4206f62f3e68c8d47aaeec0d6d63b1e044fd537"
 dependencies = [
  "bindgen",
  "cfg-if",
@@ -5195,7 +5195,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "sha1collisiondetection",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "xxhash-rust",
 ]
 
