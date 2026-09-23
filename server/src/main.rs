@@ -19,7 +19,7 @@ use actix_web::{App, HttpServer, web};
 use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
 use clap::Parser;
-use csaf_trove_common::SyncPoint;
+use csaf_trove_common::{PipelinePhase, SyncPoint};
 use serde::Deserialize;
 use time::OffsetDateTime;
 use tokio::{
@@ -215,10 +215,13 @@ impl AppState {
     }
 
     /// Updates only the phase field of an existing job.
-    pub async fn update_job_phase(&self, domain: &str, phase: &str) {
+    pub async fn update_job_phase(&self, domain: &str, phase: PipelinePhase) {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
-            job.phase = Some(phase.to_string());
+            if let Some(old) = job.phase.take() {
+                job.completed_phases.push(old);
+            }
+            job.phase = Some(phase);
             job.phase_started_at = Some(OffsetDateTime::now_utc());
             job.documents_total = 0;
             job.distributions_total = 0;
@@ -425,6 +428,7 @@ async fn main() -> Result<()> {
                         distribution_documents_current: 0,
                         distribution_documents_total: 0,
                         error: None,
+                        completed_phases: vec![],
                         last_completed_at: Some(last_sync),
                         phase_started_at: None,
                     },

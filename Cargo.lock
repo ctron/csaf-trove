@@ -1413,6 +1413,7 @@ name = "csaf-trove-common"
 version = "0.1.4"
 dependencies = [
  "serde",
+ "strum 0.27.2",
  "time",
 ]
 
@@ -1430,6 +1431,7 @@ dependencies = [
  "leptos_router",
  "serde",
  "serde_json",
+ "strum 0.27.2",
  "time",
  "wasm-bindgen",
  "wasm-bindgen-futures",

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 use actix_web::{HttpRequest, HttpResponse, web};
-use csaf_trove_common::SyncPoint;
+use csaf_trove_common::{PipelinePhase, SyncPoint};
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use super::{auth::verify_bearer_token, error::ApiError};
@@ -95,6 +95,7 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
                         distribution_documents_current: 0,
                         distribution_documents_total: 0,
                         error: None,
+                        completed_phases: vec![],
                         last_completed_at: None,
                         phase_started_at: None,
                     },
@@ -121,9 +122,9 @@ fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
         return None;
     }
 
-    let current = match job.phase.as_deref() {
-        Some("sync") => job.documents_synced,
-        Some("validate") => job.documents_validated,
+    let current = match job.phase {
+        Some(PipelinePhase::Sync) => job.documents_synced,
+        Some(PipelinePhase::Validate) => job.documents_validated,
         _ => return None,
     };
 

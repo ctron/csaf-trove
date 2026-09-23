@@ -8,6 +8,7 @@ use crate::components::{
     sparkline::Sparkline,
     table::{Table, Tbody, Td, Th, Thead},
 };
+use csaf_trove_common::PipelinePhase;
 use crate::models::{JobStatus, encode_path_segment};
 
 /// Formats a duration in seconds as a human-readable string.
@@ -56,13 +57,13 @@ fn format_relative_time(timestamp: &str, now_ms: f64) -> String {
 
 /// Formats the progress column based on the current phase and document counts.
 fn format_progress(job: &JobStatus) -> String {
-    let current = match job.phase.as_deref() {
-        Some("sync") => job.documents_synced,
-        Some("validate") => job.documents_validated,
+    let current = match job.phase {
+        Some(PipelinePhase::Sync) => job.documents_synced,
+        Some(PipelinePhase::Validate) => job.documents_validated,
         _ => job.documents_total,
     };
 
-    let is_active = matches!(job.phase.as_deref(), Some("sync") | Some("validate"));
+    let is_active = matches!(job.phase, Some(PipelinePhase::Sync) | Some(PipelinePhase::Validate));
 
     if is_active && job.distribution_index > 0 {
         format!(
@@ -79,6 +80,41 @@ fn format_progress(job: &JobStatus) -> String {
     } else {
         "-".to_string()
     }
+}
+
+fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
+    use strum::IntoEnumIterator;
+
+    let has_pipeline = !job.completed_phases.is_empty() || job.phase.is_some();
+
+    if !has_pipeline {
+        return view! { <span>"-"</span> }.into_any();
+    }
+
+    let items: Vec<_> = PipelinePhase::iter()
+        .enumerate()
+        .map(|(i, phase)| {
+            let completed = job.completed_phases.contains(&phase);
+            let current = job.phase == Some(phase);
+            let name = phase.as_ref();
+            let (class, label) = if completed {
+                ("text-green-600 dark:text-green-400", format!("\u{2713} {name}"))
+            } else if current {
+                ("font-semibold", name.to_string())
+            } else {
+                ("text-gray-300 dark:text-gray-600", name.to_string())
+            };
+            let sep = if i > 0 { " \u{203a} " } else { "" };
+            view! {
+                <>
+                    <span class="text-gray-300 dark:text-gray-600">{sep}</span>
+                    <span class=class>{label}</span>
+                </>
+            }
+        })
+        .collect();
+
+    view! { <span class="whitespace-nowrap text-xs">{items}</span> }.into_any()
 }
 
 /// Builds the WebSocket URL from the current page origin.
@@ -183,7 +219,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                         _ => BadgeVariant::Neutral,
                                     };
                                     let status = job.status.clone();
-                                    let phase = job.phase.clone().unwrap_or_else(|| "-".to_string());
+                                    let phase_view = render_pipeline_phase(&job);
                                     let progress = format_progress(&job);
                                     let eta_display = if job.status == "running" {
                                         job.eta.clone().unwrap_or_else(|| format_duration(job.duration_seconds))
@@ -202,7 +238,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                         <tr>
                                             <Td><a href={domain_href}>{domain_display}</a></Td>
                                             <Td><Badge variant=variant>{status}</Badge></Td>
-                                            <Td>{phase}</Td>
+                                            <Td>{phase_view}</Td>
                                             <Td class="whitespace-nowrap">{progress}</Td>
                                             <Td class="whitespace-nowrap">{eta_display}</Td>
                                             <Td class="whitespace-nowrap"><span title={last_run_title}>{last_run_display}</span></Td>

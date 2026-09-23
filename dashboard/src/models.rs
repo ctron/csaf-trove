@@ -1,4 +1,4 @@
-use csaf_trove_common::SyncPoint;
+use csaf_trove_common::{PipelinePhase, SyncPoint};
 use serde::{Deserialize, Serialize};
 
 fn default_version_count() -> u32 {
@@ -130,7 +130,7 @@ pub struct JobStatus {
     pub status: String,
     pub started_at: String,
     pub completed_at: Option<String>,
-    pub phase: Option<String>,
+    pub phase: Option<PipelinePhase>,
     pub documents_synced: u64,
     pub documents_validated: u64,
     pub documents_total: u64,
@@ -143,6 +143,9 @@ pub struct JobStatus {
     #[serde(default)]
     pub distribution_documents_total: u64,
     pub error: Option<String>,
+    /// Pipeline phases that have already completed.
+    #[serde(default)]
+    pub completed_phases: Vec<PipelinePhase>,
     /// Elapsed seconds (running) or total seconds (completed/failed).
     pub duration_seconds: Option<f64>,
     /// Pre-formatted ETA string (e.g. "~5m 30s"), only while running.

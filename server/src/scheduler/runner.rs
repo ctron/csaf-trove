@@ -7,6 +7,7 @@ use crate::{
     pipeline::store::DIR_METADATA,
     storage::{ProviderInfo, git_repo},
 };
+use csaf_trove_common::PipelinePhase;
 use anyhow::{Context, Result};
 use csaf_walker::model::metadata::{ProviderMetadata, Role};
 use std::{
@@ -39,7 +40,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
         status: JobPhase::Running,
         started_at: now,
         completed_at: None,
-        phase: Some("sync".into()),
+        phase: Some(PipelinePhase::Sync),
         documents_synced: 0,
         documents_validated: 0,
         documents_total: 0,
@@ -48,6 +49,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
         distribution_documents_current: 0,
         distribution_documents_total: 0,
         error: None,
+        completed_phases: vec![],
         last_completed_at: last_completed,
         phase_started_at: Some(now),
     };
@@ -70,12 +72,15 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
                 distribution_documents_current: 0,
                 distribution_documents_total: 0,
                 error: None,
+                completed_phases: vec![],
                 last_completed_at: None,
                 phase_started_at: None,
             });
             job.status = JobPhase::Completed;
             job.completed_at = Some(OffsetDateTime::now_utc());
-            job.phase = None;
+            if let Some(last) = job.phase.take() {
+                job.completed_phases.push(last);
+            }
             state.update_job(domain, job.clone()).await;
             persist_job_counts(state, domain, &job).await;
             tracing::info!("Pipeline for {domain} completed");
@@ -94,6 +99,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
                 distribution_documents_current: 0,
                 distribution_documents_total: 0,
                 error: None,
+                completed_phases: vec![],
                 last_completed_at: None,
                 phase_started_at: None,
             });
@@ -180,7 +186,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         }
     };
 
-    state.update_job_phase(domain, "commit").await;
+    state.update_job_phase(domain, PipelinePhase::Commit).await;
     {
         let repo = repo_path.clone();
         let worktree = worktree_dir.clone();
@@ -202,7 +208,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         state.storage.delete_all_documents(domain).await?;
     }
 
-    state.update_job_phase(domain, "validate").await;
+    state.update_job_phase(domain, PipelinePhase::Validate).await;
     let total = crate::pipeline::validate::validate_provider(state, source, &worktree_dir).await?;
 
     {
@@ -226,7 +232,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         .save_distribution_errors(domain, &sync_result.distribution_errors)
         .await?;
 
-    state.update_job_phase(domain, "report").await;
+    state.update_job_phase(domain, PipelinePhase::Report).await;
     crate::pipeline::report::generate_report(state, source).await?;
 
     cleanup_worktree(&worktree_dir).await;

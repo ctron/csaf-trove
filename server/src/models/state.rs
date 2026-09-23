@@ -1,3 +1,4 @@
+use csaf_trove_common::PipelinePhase;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -46,8 +47,8 @@ pub struct JobStatus {
     /// When the job finished, if it has.
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub completed_at: Option<OffsetDateTime>,
-    /// Human-readable label for the current pipeline stage.
-    pub phase: Option<String>,
+    /// Current pipeline stage.
+    pub phase: Option<PipelinePhase>,
     /// Documents fetched so far.
     pub documents_synced: u64,
     /// Documents validated so far.
@@ -64,6 +65,9 @@ pub struct JobStatus {
     pub distribution_documents_total: u64,
     /// Error message if the job failed.
     pub error: Option<String>,
+    /// Pipeline phases that have already completed.
+    #[serde(default)]
+    pub completed_phases: Vec<PipelinePhase>,
     /// When the previous run completed (carried forward when a new run starts).
     #[serde(skip)]
     pub last_completed_at: Option<OffsetDateTime>,
