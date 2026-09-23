@@ -31,12 +31,16 @@ struct SyncStatusEntry {
 }
 
 /// Builds status entries with computed durations for all providers.
+///
+/// Includes placeholder entries for enabled sources that have never been synced.
 async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEntry> {
     let jobs = state.jobs.read().await;
+    let sources = state.sources.read().await;
     let sparklines = state.recent_sync_points.read().await;
     let now = OffsetDateTime::now_utc();
 
-    jobs.iter()
+    let mut entries: HashMap<String, SyncStatusEntry> = jobs
+        .iter()
         .map(|(domain, job)| {
             let duration_seconds = match job.status {
                 JobPhase::Running | JobPhase::Pending => {
@@ -73,7 +77,35 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
                 },
             )
         })
-        .collect()
+        .collect();
+
+    for (domain, source) in sources.iter() {
+        if source.enabled && !entries.contains_key(domain) {
+            entries.insert(
+                domain.clone(),
+                SyncStatusEntry {
+                    job: JobStatus {
+                        status: JobPhase::Pending,
+                        started_at: now,
+                        completed_at: None,
+                        phase: None,
+                        documents_synced: 0,
+                        documents_validated: 0,
+                        documents_total: 0,
+                        error: None,
+                        last_completed_at: None,
+                        phase_started_at: None,
+                    },
+                    duration_seconds: None,
+                    eta: None,
+                    last_run: None,
+                    recent_sync_points: vec![],
+                },
+            );
+        }
+    }
+
+    entries
 }
 
 /// Computes a human-readable ETA for a running job based on the current phase progress.
