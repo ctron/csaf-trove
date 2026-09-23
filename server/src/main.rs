@@ -220,16 +220,30 @@ impl AppState {
         if let Some(job) = jobs.get_mut(domain) {
             job.phase = Some(phase.to_string());
             job.phase_started_at = Some(OffsetDateTime::now_utc());
+            job.documents_total = 0;
+            job.distributions_total = 0;
+            job.distribution_index = 0;
+            job.distribution_documents_current = 0;
+            job.distribution_documents_total = 0;
         }
         drop(jobs);
         self.job_notify.send(()).ok();
     }
 
-    /// Sets the total document count for the current phase of a running job.
-    pub async fn set_job_documents_total(&self, domain: &str, total: usize) {
+    /// Records the start of a new distribution within the current phase.
+    pub async fn start_distribution(
+        &self,
+        domain: &str,
+        doc_count: usize,
+        distributions_total: u64,
+    ) {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
-            job.documents_total = total as u64;
+            job.documents_total += doc_count as u64;
+            job.distributions_total = distributions_total;
+            job.distribution_index += 1;
+            job.distribution_documents_total = doc_count as u64;
+            job.distribution_documents_current = 0;
         }
         drop(jobs);
         self.job_notify.send(()).ok();
@@ -240,6 +254,7 @@ impl AppState {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
             job.documents_synced += 1;
+            job.distribution_documents_current += 1;
         }
         drop(jobs);
         self.job_notify.send(()).ok();
@@ -250,6 +265,7 @@ impl AppState {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
             job.documents_validated += 1;
+            job.distribution_documents_current += 1;
         }
         drop(jobs);
         self.job_notify.send(()).ok();
@@ -404,6 +420,10 @@ async fn main() -> Result<()> {
                         documents_synced: ss.documents_synced,
                         documents_validated: ss.documents_validated,
                         documents_total: ss.documents_total,
+                        distributions_total: 0,
+                        distribution_index: 0,
+                        distribution_documents_current: 0,
+                        distribution_documents_total: 0,
                         error: None,
                         last_completed_at: Some(last_sync),
                         phase_started_at: None,

@@ -131,6 +131,14 @@ pub struct JobStatus {
     pub documents_synced: u64,
     pub documents_validated: u64,
     pub documents_total: u64,
+    #[serde(default)]
+    pub distributions_total: u64,
+    #[serde(default)]
+    pub distribution_index: u64,
+    #[serde(default)]
+    pub distribution_documents_current: u64,
+    #[serde(default)]
+    pub distribution_documents_total: u64,
     pub error: Option<String>,
     /// Elapsed seconds (running) or total seconds (completed/failed).
     pub duration_seconds: Option<f64>,

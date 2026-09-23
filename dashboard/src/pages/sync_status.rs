@@ -64,7 +64,17 @@ fn format_progress(job: &JobStatus) -> String {
         _ => job.documents_total,
     };
 
-    if job.documents_total > 0 {
+    let is_active = matches!(job.phase.as_deref(), Some("sync") | Some("validate"));
+
+    if is_active && job.distribution_index > 0 {
+        format!(
+            "{} / {} ({} / {})",
+            job.distribution_index,
+            job.distributions_total,
+            current,
+            job.documents_total,
+        )
+    } else if job.documents_total > 0 {
         format!("{current} / {}", job.documents_total)
     } else if current > 0 {
         format!("{current}")

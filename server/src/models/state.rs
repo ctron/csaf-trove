@@ -54,6 +54,14 @@ pub struct JobStatus {
     pub documents_validated: u64,
     /// Total documents expected.
     pub documents_total: u64,
+    /// Total distributions for the current phase.
+    pub distributions_total: u64,
+    /// Current distribution being processed (1-based).
+    pub distribution_index: u64,
+    /// Documents processed in the current distribution.
+    pub distribution_documents_current: u64,
+    /// Total documents expected in the current distribution.
+    pub distribution_documents_total: u64,
     /// Error message if the job failed.
     pub error: Option<String>,
     /// When the previous run completed (carried forward when a new run starts).

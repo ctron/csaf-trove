@@ -1,4 +1,4 @@
-use std::{fmt::Debug, path::Path, sync::Arc, time::SystemTime};
+use std::{fmt::Debug, path::Path, sync::Arc, sync::atomic::{AtomicU64, Ordering}, time::SystemTime};
 
 use parking_lot::Mutex;
 
@@ -89,12 +89,14 @@ where
     }
 }
 
-/// Reports the total document count to the job status when the walker starts.
+/// Reports distribution progress to the job status as the walker processes each distribution.
 pub(crate) struct JobProgress {
     /// Shared application state for updating job progress.
     pub(crate) state: Arc<AppState>,
     /// Provider domain name.
     pub(crate) domain: String,
+    /// Total number of distributions accepted by the filter.
+    pub(crate) distributions_total: Arc<AtomicU64>,
 }
 
 /// No-op progress bar — individual ticks are handled by the counting visitors.
@@ -112,8 +114,11 @@ impl Progress for JobProgress {
     fn start(&self, work: usize) -> Self::Instance {
         let state = self.state.clone();
         let domain = self.domain.clone();
+        let distributions_total = self.distributions_total.load(Ordering::Relaxed);
         tokio::spawn(async move {
-            state.set_job_documents_total(&domain, work).await;
+            state
+                .start_distribution(&domain, work, distributions_total)
+                .await;
         });
         JobProgressBar
     }
@@ -179,27 +184,24 @@ pub async fn sync_provider(
         retrieval_errors: retrieval_errors.clone(),
     };
     let retriever = RetrievingVisitor::new(http_source.clone(), counting_store);
-    let progress = JobProgress {
-        state: state.clone(),
-        domain: domain.to_string(),
-    };
+    let distributions_total = Arc::new(AtomicU64::new(0));
 
     let de = distribution_errors.clone();
     let skip_dirs = source.skip_directories.clone();
+    let dt = distributions_total.clone();
     let mut walker = Walker::new(http_source);
-    if !skip_dirs.is_empty() {
-        walker = walker.with_distribution_filter(move |ctx: &DistributionContext| {
-            if let DistributionContext::Directory(url) = ctx {
-                let dominated = skip_dirs.iter().any(|s| s == url.as_str());
-                if dominated {
-                    tracing::info!("Skipping configured directory distribution {url}");
-                }
-                !dominated
-            } else {
-                true
+    walker = walker.with_distribution_filter(move |ctx: &DistributionContext| {
+        if let DistributionContext::Directory(url) = ctx {
+            if skip_dirs.iter().any(|s| s == url.as_str()) {
+                tracing::info!("Skipping configured directory distribution {url}");
+                return false;
             }
-        });
-    }
+        }
+        dt.fetch_add(1, Ordering::Relaxed);
+        true
+    });
+
+    let dt_err = distributions_total.clone();
     walker
         .with_distribution_error_handler(move |ctx: &DistributionContext, error| match ctx {
             DistributionContext::Feed {
@@ -207,6 +209,7 @@ pub async fn sync_provider(
                 ..
             } if *label == TlpLabel::Clear => Err(error),
             _ => {
+                dt_err.fetch_sub(1, Ordering::Relaxed);
                 let label = ctx
                     .tlp_label()
                     .map(|l| l.to_string())
@@ -224,7 +227,11 @@ pub async fn sync_provider(
                 Ok(())
             }
         })
-        .with_progress(progress)
+        .with_progress(JobProgress {
+            state: state.clone(),
+            domain: domain.to_string(),
+            distributions_total,
+        })
         .walk(retriever)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

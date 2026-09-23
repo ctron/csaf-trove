@@ -1,7 +1,10 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use anyhow::Result;
@@ -34,6 +37,7 @@ use crate::{
         },
         source::Source,
     },
+    pipeline::sync::JobProgress,
     storage::{Storage, git_repo::document_version_counts},
 };
 
@@ -306,13 +310,19 @@ pub async fn validate_provider(
     );
 
     let retriever = RetrievingVisitor::new(file_source.clone(), verifier);
-    let progress = crate::pipeline::sync::JobProgress {
-        state: state.clone(),
-        domain: domain.to_string(),
-    };
+    let distributions_total = Arc::new(AtomicU64::new(0));
+    let dt = distributions_total.clone();
 
     Walker::new(file_source)
-        .with_progress(progress)
+        .with_distribution_filter(move |_| {
+            dt.fetch_add(1, Ordering::Relaxed);
+            true
+        })
+        .with_progress(JobProgress {
+            state: state.clone(),
+            domain: domain.to_string(),
+            distributions_total,
+        })
         .walk(retriever)
         .await
         .map_err(|e| anyhow::anyhow!("Validation walker failed for {domain}: {e}"))?;
