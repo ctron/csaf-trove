@@ -8,8 +8,6 @@ pub struct Source {
     /// Whether this source is active for scheduled syncs.
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Optional override for the provider metadata URL.
-    pub metadata_url: Option<String>,
     /// Whether to accept OpenPGP v3 signatures.
     #[serde(default)]
     pub accept_v3_signatures: bool,
