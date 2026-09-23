@@ -1,4 +1,5 @@
 use crate::components::{
+    note_indicator::NoteIndicator,
     profile_badge::ProfileBadge,
     section_heading::SectionHeading,
     signature_badge::SignatureBadge,
@@ -68,9 +69,15 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                     let href = format!("/providers/{}", encode_path_segment(&domain));
                     let display_domain = domain.clone();
                     let validated_at = p.validated_at.clone();
+                    let note = p.note.clone();
                     view! {
                         <tr>
-                            <Td><a href={href}>{display_domain}</a></Td>
+                            <Td>
+                                <span class="inline-flex items-center gap-1.5">
+                                    <a href={href}>{display_domain}</a>
+                                    {note.map(|text| view! { <NoteIndicator text=text /> })}
+                                </span>
+                            </Td>
                             <Td>{p.document_count}</Td>
                             <Td><ProfileBadge profile=p.profiles.basic /></Td>
                             <Td><ProfileBadge profile=p.profiles.extended /></Td>

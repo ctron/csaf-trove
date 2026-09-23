@@ -8,7 +8,7 @@ use super::{
 use crate::{
     AppState,
     models::{
-        result::{ProfileResults, ProviderSummary},
+        result::{ProfileResults, ProviderDetail, ProviderSummary},
         state::JobPhase,
     },
 };
@@ -26,7 +26,7 @@ pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> 
             providers.push(ProviderSummary {
                 provider: domain.clone(),
                 publisher_name: None,
-                validated_at: chrono::Utc::now(),
+                validated_at: time::OffsetDateTime::now_utc(),
                 document_count: 0,
                 profiles: ProfileResults {
                     basic: None,
@@ -36,7 +36,14 @@ pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> 
                 signatures: None,
                 top_failing_tests: vec![],
                 retrieval_errors: 0,
+                note: source.note.clone(),
             });
+        }
+    }
+
+    for p in &mut providers {
+        if p.note.is_none() {
+            p.note = sources.get(&p.provider).and_then(|s| s.note.clone());
         }
     }
 
@@ -56,14 +63,43 @@ pub async fn detail(
         .map(|s| s.skip_directories.clone())
         .unwrap_or_default();
     let note = source.and_then(|s| s.note.clone());
+    let is_known_source = source.is_some();
     drop(sources);
-    let mut detail = state
+    let detail = state
         .storage
         .provider_detail(&domain, &skip_directories)
-        .await?
-        .or_not_found()?;
-    detail.note = note;
-    Ok(HttpResponse::Ok().json(detail))
+        .await?;
+    match detail {
+        Some(mut d) => {
+            d.note = note;
+            Ok(HttpResponse::Ok().json(d))
+        }
+        None if is_known_source => {
+            let stub = ProviderDetail {
+                summary: ProviderSummary {
+                    provider: domain,
+                    publisher_name: None,
+                    validated_at: time::OffsetDateTime::now_utc(),
+                    document_count: 0,
+                    profiles: ProfileResults {
+                        basic: None,
+                        extended: None,
+                        full: None,
+                    },
+                    signatures: None,
+                    top_failing_tests: vec![],
+                    retrieval_errors: 0,
+                    note: None,
+                },
+                metrics: None,
+                history: vec![],
+                distributions: vec![],
+                note,
+            };
+            Ok(HttpResponse::Ok().json(stub))
+        }
+        None => Err(ApiError::NotFound),
+    }
 }
 
 /// Query parameters for the sync history endpoint.

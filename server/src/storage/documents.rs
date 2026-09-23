@@ -564,7 +564,7 @@ pub async fn build_summary_from_db(
     Ok(ProviderSummary {
         provider: domain.to_string(),
         publisher_name,
-        validated_at: chrono::Utc::now(),
+        validated_at: OffsetDateTime::now_utc(),
         document_count: total,
         profiles: ProfileResults {
             basic: Some(basic),
@@ -574,6 +574,7 @@ pub async fn build_summary_from_db(
         signatures: Some(signatures),
         top_failing_tests,
         retrieval_errors,
+        note: None,
     })
 }
 

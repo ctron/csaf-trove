@@ -18,6 +18,9 @@ pub struct ProviderSummary {
     /// Number of documents with retrieval errors.
     #[serde(default)]
     pub retrieval_errors: u64,
+    /// Operator note from the source configuration.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

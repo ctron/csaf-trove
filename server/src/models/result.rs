@@ -62,7 +62,8 @@ pub struct ProviderSummary {
     /// Publisher name from the CSAF metadata, if available.
     pub publisher_name: Option<String>,
     /// When this summary was generated.
-    pub validated_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub validated_at: time::OffsetDateTime,
     /// Total number of CSAF documents evaluated.
     pub document_count: u64,
     /// Pass/fail breakdown per CSAF profile.
@@ -75,6 +76,9 @@ pub struct ProviderSummary {
     /// Number of documents with retrieval errors.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub retrieval_errors: u64,
+    /// Operator note from the source configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 fn is_zero(v: &u64) -> bool {
