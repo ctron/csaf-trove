@@ -16,6 +16,9 @@ pub struct ProviderDetail {
     /// Per-distribution health breakdown.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub distributions: Vec<DistributionHealth>,
+    /// Operator note from the source configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Health metrics for a single distribution (directory or ROLIE feed).

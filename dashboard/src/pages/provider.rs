@@ -5,6 +5,7 @@ use leptos_router::{
 };
 
 use crate::components::{
+    alert::{Alert, AlertVariant},
     badge::{Badge, BadgeVariant},
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     content_tabs::{ContentTab, ContentTabs},
@@ -131,6 +132,7 @@ fn HealthRow(label: &'static str, ok_count: u64, badges: Vec<HealthBadge>) -> im
 /// Main detail view with grouped cards, info line, and tabbed content.
 #[component]
 fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
+    let note = detail.note;
     let summary = detail.summary;
     let distributions = detail.distributions;
     let tests = summary.top_failing_tests;
@@ -141,6 +143,12 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let (active_tab, set_active_tab) = signal("documents".to_string());
 
     view! {
+        {note.map(|text| view! {
+            <div class="mb-6">
+                <Alert variant=AlertVariant::Info>{text}</Alert>
+            </div>
+        })}
+
         // Two-card grid
         <div class="grid grid-cols-1 gap-6 md:grid-cols-2 mb-6">
             // Overview card

@@ -60,6 +60,7 @@ pub struct ProviderDetail {
     pub history: Vec<csaf_trove_common::CommitInfo>,
     #[serde(default)]
     pub distributions: Vec<DistributionHealth>,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

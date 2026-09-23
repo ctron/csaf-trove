@@ -25,6 +25,8 @@ pub struct Source {
     /// Matching directories are not fetched; they appear as "Skipped" in the dashboard.
     #[serde(default)]
     pub skip_directories: Vec<String>,
+    /// Free-text operator note shown on the provider detail page.
+    pub note: Option<String>,
 }
 
 fn default_true() -> bool {

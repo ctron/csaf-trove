@@ -123,6 +123,7 @@ impl Storage {
             metrics,
             history,
             distributions,
+            note: None,
         }))
     }
 
