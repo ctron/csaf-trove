@@ -27,6 +27,8 @@ pub struct Source {
     pub skip_directories: Vec<String>,
     /// Free-text operator note shown on the provider detail page.
     pub note: Option<String>,
+    /// Custom User-Agent header value for this provider's HTTP requests.
+    pub user_agent: Option<String>,
 }
 
 fn default_true() -> bool {

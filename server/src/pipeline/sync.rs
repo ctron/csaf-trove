@@ -151,8 +151,12 @@ pub async fn sync_provider(
     }
 
     // TODO(#6): remove custom client once upstream csaf-walker sets a User-Agent in Fetcher::new
+    let user_agent = source
+        .user_agent
+        .clone()
+        .unwrap_or_else(|| concat!("csaf-trove/", env!("CARGO_PKG_VERSION")).to_string());
     let client = reqwest::ClientBuilder::new()
-        .user_agent(concat!("csaf-trove/", env!("CARGO_PKG_VERSION")))
+        .user_agent(user_agent)
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     let fetcher = Fetcher::from(client);

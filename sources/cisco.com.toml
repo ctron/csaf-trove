@@ -1,2 +1,3 @@
 domain = "cisco.com"
+user_agent = "csaf-trove/0.1.0 (+https://github.com/ctron/csaf-trove)"
 note = "May return 403 if User-Agent lacks contact URL"
