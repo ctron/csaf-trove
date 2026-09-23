@@ -40,7 +40,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
         status: JobPhase::Running,
         started_at: now,
         completed_at: None,
-        phase: Some(PipelinePhase::Discover),
+        phase: Some(PipelinePhase::Checkout),
         documents_synced: 0,
         documents_validated: 0,
         documents_total: 0,
@@ -175,6 +175,10 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         tokio::task::spawn_blocking(move || setup_worktree(&repo, &worktree, incremental))
             .await??;
     }
+
+    state
+        .update_job_phase(domain, PipelinePhase::Discover)
+        .await;
 
     let sync_result = match crate::pipeline::sync::sync_provider(state, source, &worktree_dir).await
     {
