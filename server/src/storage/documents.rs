@@ -1,11 +1,16 @@
+mod test;
+
 use super::git_repo::document_version_counts;
-use anyhow::Result;
+use anyhow::{Error, Result};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
     EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
-    Statement, TransactionTrait,
+    Statement, TransactionTrait, sea_query::Expr,
 };
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use crate::models::result::{
     DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
@@ -14,6 +19,7 @@ use crate::models::result::{
 use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
 use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
 use time::OffsetDateTime;
+use tokio::task::spawn_blocking;
 
 /// Persisted provider metadata fields for aggregator generation.
 #[derive(Debug, Clone)]
@@ -917,38 +923,58 @@ pub async fn backfill_test_counts(db: &DatabaseConnection) -> Result<()> {
     Ok(())
 }
 
-/// Computes version counts from git history and bulk-updates the database.
+/// Identifies a document and its current count without loading validation details.
+#[derive(FromQueryResult)]
+struct DocumentVersionRow {
+    /// Indexed primary key used to update this row.
+    id: i64,
+    /// Advisory URL used to locate the document in Git history.
+    url: String,
+    /// Previously stored count, used to avoid unnecessary writes.
+    version_count: i32,
+}
+
+/// Computes version counts from Git history and updates changed rows by primary key.
 pub async fn update_version_counts(db: &DatabaseConnection, repo_path: &Path) -> Result<()> {
     if !repo_path.exists() {
         return Ok(());
     }
 
-    let urls: Vec<String> = document::Entity::find()
+    let documents = document::Entity::find()
         .select_only()
+        .column(document::Column::Id)
         .column(document::Column::Url)
-        .into_tuple()
+        .column(document::Column::VersionCount)
+        .into_model::<DocumentVersionRow>()
         .all(db)
         .await?;
 
-    if urls.is_empty() {
+    if documents.is_empty() {
         return Ok(());
     }
 
     let repo = repo_path.to_path_buf();
-    let counts = tokio::task::spawn_blocking(move || {
-        let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
-        document_version_counts(&repo, &url_refs)
+    let (documents, counts) = spawn_blocking(move || {
+        // Multiple rows may share a URL; count its history only once.
+        let urls: HashSet<&str> = documents.iter().map(|doc| doc.url.as_str()).collect();
+        let url_refs: Vec<&str> = urls.into_iter().collect();
+        let counts = document_version_counts(&repo, &url_refs)?;
+        Ok::<_, Error>((documents, counts))
     })
     .await??;
 
     let txn = db.begin().await?;
-    for (url, count) in &counts {
+    for doc in documents {
+        let Some(&count) = counts.get(&doc.url) else {
+            continue;
+        };
+        let count = i32::try_from(count)?;
+        if count == doc.version_count {
+            continue;
+        }
         document::Entity::update_many()
-            .col_expr(
-                document::Column::VersionCount,
-                sea_orm::sea_query::Expr::value(*count as i32),
-            )
-            .filter(document::Column::Url.eq(url.as_str()))
+            .col_expr(document::Column::VersionCount, Expr::value(count))
+            .filter(document::Column::Id.eq(doc.id))
             .exec(&txn)
             .await?;
     }
