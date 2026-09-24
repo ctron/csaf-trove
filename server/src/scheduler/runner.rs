@@ -19,10 +19,31 @@ use std::{
 };
 use time::OffsetDateTime;
 
+/// Kind of work a tracked provider job performs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JobKind {
+    /// Full pipeline: sync, commit, validate, report.
+    Sync,
+    /// Re-validate already stored documents without fetching anything.
+    Revalidate,
+}
+
 /// Runs the full pipeline (sync, validate, report) for a provider with job status tracking.
 ///
 /// Acquires a per-provider lock so concurrent runs for the same domain are skipped.
 pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> {
+    run_job(state, source, JobKind::Sync).await
+}
+
+/// Re-validates all stored documents of a provider with job status tracking.
+///
+/// Shares the per-provider lock with [`run_provider`], so it is skipped while a sync runs.
+pub async fn revalidate_provider(state: &Arc<AppState>, source: &Source) -> Result<()> {
+    run_job(state, source, JobKind::Revalidate).await
+}
+
+/// Runs a provider job of the given kind, tracking its status and holding the provider lock.
+async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Result<()> {
     let domain = &source.domain;
 
     let lock = {
@@ -34,7 +55,7 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
         return Ok(());
     };
 
-    tracing::info!("Starting pipeline for {domain}");
+    tracing::info!("Starting {kind:?} pipeline for {domain}");
 
     let last_completed = state.get_job(domain).await.and_then(|j| j.completed_at);
     let now = OffsetDateTime::now_utc();
@@ -58,7 +79,10 @@ pub async fn run_provider(state: &Arc<AppState>, source: &Source) -> Result<()> 
     };
     state.update_job(domain, job).await;
 
-    let result = run_pipeline(state, source).await;
+    let result = match kind {
+        JobKind::Sync => run_pipeline(state, source).await,
+        JobKind::Revalidate => run_revalidation(state, source).await,
+    };
 
     match &result {
         Ok(()) => {
@@ -235,6 +259,46 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
             .storage
             .save_distribution_errors(domain, &sync_result.distribution_errors)
             .await?;
+
+        state.update_job_phase(domain, PipelinePhase::Report).await;
+        generate_report(state, source).await?;
+
+        Ok(())
+    }
+    .await;
+    cleanup_worktree(&worktree_dir).await;
+    result
+}
+
+/// Checks out the stored repository and re-validates every document in it.
+///
+/// Nothing is fetched from the provider; existing results are updated in place.
+async fn run_revalidation(state: &Arc<AppState>, source: &Source) -> Result<()> {
+    let domain = &source.domain;
+    let repo_path = state.storage.repo_path(domain);
+    let worktree_dir = state.work_dir().join(sanitize_domain(domain));
+
+    let result = async {
+        {
+            let repo = repo_path.clone();
+            let worktree = worktree_dir.clone();
+            tokio::task::spawn_blocking(move || {
+                git_repo::prepare_worktree(&repo, &worktree, false)
+            })
+            .await??;
+        }
+
+        state
+            .update_job_phase(domain, PipelinePhase::Validate)
+            .await;
+        let total = validate_provider(state, source, &worktree_dir).await?;
+
+        {
+            let mut jobs = state.jobs.write().await;
+            if let Some(job) = jobs.get_mut(domain) {
+                job.documents_total = total;
+            }
+        }
 
         state.update_job_phase(domain, PipelinePhase::Report).await;
         generate_report(state, source).await?;

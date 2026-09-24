@@ -62,3 +62,11 @@ Use this token to trigger manual syncs:
 curl -X POST https://your-host.example.com/api/sync/redhat.com \
   -H "Authorization: Bearer <token>"
 ```
+
+To re-validate all stored documents of a source without fetching anything
+(runs in the background, returns `202 Accepted`):
+
+```sh
+curl -X POST https://your-host.example.com/api/sync/redhat.com/revalidate \
+  -H "Authorization: Bearer <token>"
+```

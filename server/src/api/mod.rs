@@ -37,7 +37,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         web::scope("/sync")
             .route("/status", web::get().to(sync::status))
             .route("/ws", web::get().to(sync::ws))
-            .route("/{domain}", web::post().to(sync::trigger)),
+            .route("/{domain}", web::post().to(sync::trigger))
+            .route("/{domain}/revalidate", web::post().to(sync::revalidate)),
     )
     .service(web::scope("/webhook").route("/github", web::post().to(webhook::github)));
 }
