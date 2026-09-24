@@ -1,1 +1,2 @@
 domain = "https://www.cisa.gov/sites/default/files/csaf/provider-metadata.json"
+note = "Looks like IP blocked"
