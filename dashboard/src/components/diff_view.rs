@@ -1,7 +1,7 @@
-use std::collections::HashSet;
-use leptos::prelude::*;
 use crate::components::section_heading::SubHeading;
 use crate::models::{DiffLineInfo, DiffTag};
+use leptos::prelude::*;
+use std::collections::HashSet;
 
 const CONTEXT_LINES: usize = 3;
 
@@ -277,7 +277,10 @@ mod tests {
         let lines: Vec<_> = (0..10).map(|i| eq(&format!("line {i}"))).collect();
         let sections = compute_sections(assign_line_numbers(lines), 3);
         assert_eq!(sections.len(), 1);
-        assert!(!sections[0].0, "no changes means nothing to anchor context, all collapsed");
+        assert!(
+            !sections[0].0,
+            "no changes means nothing to anchor context, all collapsed"
+        );
         assert_eq!(sections[0].1.len(), 10);
     }
 }

@@ -8,6 +8,18 @@ use std::{
     time::SystemTime,
 };
 
+use super::source::TroveFileSource;
+use crate::{
+    AppState,
+    models::{
+        result::{
+            DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
+            DocumentValidation, RevisionEntry,
+        },
+        source::Source,
+    },
+    pipeline::sync::JobProgress,
+};
 use anyhow::Result;
 use csaf_walker::{
     check::CheckError,
@@ -27,18 +39,6 @@ use csaf_walker::{
     walker::Walker,
 };
 use time::macros::datetime;
-use super::source::TroveFileSource;
-use crate::{
-    AppState,
-    models::{
-        result::{
-            DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
-            DocumentValidation, RevisionEntry,
-        },
-        source::Source,
-    },
-    pipeline::sync::JobProgress,
-};
 
 #[derive(Debug, Clone, Copy)]
 enum CsafVersionTag {

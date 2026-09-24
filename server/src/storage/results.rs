@@ -1,6 +1,6 @@
-use std::path::Path;
-use anyhow::Result;
 use crate::models::{result::ProviderSummary, source::sanitize_domain};
+use anyhow::Result;
+use std::path::Path;
 
 /// Reads all provider summaries from the results directory, sorted by domain.
 pub async fn list_summaries(results_dir: &Path) -> Result<Vec<ProviderSummary>> {

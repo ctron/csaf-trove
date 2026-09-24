@@ -1,8 +1,8 @@
+use super::error::ApiError;
+use crate::AppState;
 use actix_web::{HttpRequest, HttpResponse, web};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
-use super::error::ApiError;
-use crate::AppState;
 
 /// Handles GitHub push webhook events by reloading source configs.
 pub async fn github(

@@ -1,6 +1,6 @@
-use leptos::prelude::*;
 use crate::components::badge::{Badge, BadgeVariant};
 use crate::models::ProfileSummary;
+use leptos::prelude::*;
 
 /// Displays a provider-level profile pass-rate badge.
 #[component]

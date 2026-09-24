@@ -1,19 +1,19 @@
-use std::{collections::HashMap, path::Path};
+use super::git_repo::document_version_counts;
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
     EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
     Statement, TransactionTrait,
 };
-use super::git_repo::document_version_counts;
+use std::{collections::HashMap, path::Path};
 
-use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
-use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
-use time::OffsetDateTime;
 use crate::models::result::{
     DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
     FailingTest, ProfileResults, ProfileSummary, ProviderSummary, RevisionEntry, SignatureSummary,
 };
+use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
+use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
+use time::OffsetDateTime;
 
 /// Persisted provider metadata fields for aggregator generation.
 #[derive(Debug, Clone)]

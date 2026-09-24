@@ -1,15 +1,15 @@
-use std::collections::HashMap;
-use leptos::prelude::*;
-use wasm_bindgen::{JsCast, prelude::Closure};
-use web_sys::{CloseEvent, MessageEvent, WebSocket};
 use crate::components::{
     badge::{Badge, BadgeVariant},
     section_heading::SectionHeading,
     sparkline::Sparkline,
     table::{Table, Tbody, Td, Th, Thead},
 };
-use csaf_trove_common::PipelinePhase;
 use crate::models::{JobStatus, encode_path_segment};
+use csaf_trove_common::PipelinePhase;
+use leptos::prelude::*;
+use std::collections::HashMap;
+use wasm_bindgen::{JsCast, prelude::Closure};
+use web_sys::{CloseEvent, MessageEvent, WebSocket};
 
 /// Formats a duration in seconds as a human-readable string.
 fn format_duration(seconds: Option<f64>) -> String {
@@ -63,8 +63,10 @@ fn format_progress(job: &JobStatus) -> String {
         _ => job.documents_total,
     };
 
-    let has_distribution_progress =
-        matches!(job.phase, Some(PipelinePhase::Sync) | Some(PipelinePhase::Validate));
+    let has_distribution_progress = matches!(
+        job.phase,
+        Some(PipelinePhase::Sync) | Some(PipelinePhase::Validate)
+    );
 
     if has_distribution_progress && job.distribution_index > 0 {
         format!(
@@ -99,7 +101,10 @@ fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
             let current = job.phase == Some(phase);
             let name = phase.as_ref();
             let (class, label) = if completed {
-                ("text-green-600 dark:text-green-400", format!("\u{2713} {name}"))
+                (
+                    "text-green-600 dark:text-green-400",
+                    format!("\u{2713} {name}"),
+                )
             } else if current {
                 ("font-semibold", name.to_string())
             } else {

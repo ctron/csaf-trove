@@ -4,9 +4,6 @@ pub mod git_repo;
 pub mod results;
 pub mod state;
 
-use std::path::{Path, PathBuf};
-use csaf_trove_common::{Paginated, SyncPoint};
-use time::OffsetDateTime;
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
@@ -17,6 +14,9 @@ use crate::models::{
     state::SyncState,
 };
 use anyhow::Result;
+use csaf_trove_common::{Paginated, SyncPoint};
+use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
 
 pub use documents::ProviderInfo;
 

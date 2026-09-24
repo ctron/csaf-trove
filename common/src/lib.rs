@@ -5,9 +5,16 @@ use time::OffsetDateTime;
 
 /// Pipeline phases that a sync job progresses through in order.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq,
-    Serialize, Deserialize,
-    strum::Display, strum::EnumIter, strum::AsRefStr,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::Display,
+    strum::EnumIter,
+    strum::AsRefStr,
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]

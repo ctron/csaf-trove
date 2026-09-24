@@ -1,5 +1,3 @@
-use actix_web::{HttpRequest, HttpResponse, web};
-use serde::Deserialize;
 use super::{
     auth::verify_bearer_token,
     error::{ApiError, OptionExt},
@@ -11,6 +9,8 @@ use crate::{
         state::JobPhase,
     },
 };
+use actix_web::{HttpRequest, HttpResponse, web};
+use serde::Deserialize;
 
 /// Returns all provider summaries as JSON, including placeholders for sources awaiting first sync.
 pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {

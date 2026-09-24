@@ -1,4 +1,3 @@
-use std::{fmt::Debug, io::ErrorKind, path::PathBuf};
 use anyhow::Context;
 use csaf_walker::{
     common::retrieve::RetrievalError,
@@ -7,6 +6,7 @@ use csaf_walker::{
     retrieve::{RetrievalContext, RetrievedAdvisory, RetrievedVisitor},
     source::Source,
 };
+use std::{fmt::Debug, io::ErrorKind, path::PathBuf};
 use tokio::fs;
 use walker_common::{
     store::{Document, StoreError, store_document},

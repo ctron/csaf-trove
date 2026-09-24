@@ -7,12 +7,24 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         for col in [
-            ColumnDef::new(Documents::BasicTestCount).big_integer().to_owned(),
-            ColumnDef::new(Documents::BasicFailingTestCount).big_integer().to_owned(),
-            ColumnDef::new(Documents::ExtendedTestCount).big_integer().to_owned(),
-            ColumnDef::new(Documents::ExtendedFailingTestCount).big_integer().to_owned(),
-            ColumnDef::new(Documents::FullTestCount).big_integer().to_owned(),
-            ColumnDef::new(Documents::FullFailingTestCount).big_integer().to_owned(),
+            ColumnDef::new(Documents::BasicTestCount)
+                .big_integer()
+                .to_owned(),
+            ColumnDef::new(Documents::BasicFailingTestCount)
+                .big_integer()
+                .to_owned(),
+            ColumnDef::new(Documents::ExtendedTestCount)
+                .big_integer()
+                .to_owned(),
+            ColumnDef::new(Documents::ExtendedFailingTestCount)
+                .big_integer()
+                .to_owned(),
+            ColumnDef::new(Documents::FullTestCount)
+                .big_integer()
+                .to_owned(),
+            ColumnDef::new(Documents::FullFailingTestCount)
+                .big_integer()
+                .to_owned(),
         ] {
             manager
                 .alter_table(

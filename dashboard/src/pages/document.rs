@@ -1,6 +1,3 @@
-use std::cmp::Ordering;
-use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
 use crate::components::{
     alert::{Alert, AlertVariant},
     badge::{Badge, BadgeVariant},
@@ -11,9 +8,12 @@ use crate::components::{
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{
-    DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument,
-    RevisionEntry, encode_path_segment,
+    DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, RevisionEntry,
+    encode_path_segment,
 };
+use leptos::prelude::*;
+use leptos_router::hooks::use_params_map;
+use std::cmp::Ordering;
 
 /// Compares dotted-numeric test IDs (e.g. `6.1.27.5`) segment by segment.
 fn numeric_test_id_cmp(a: &str, b: &str) -> Ordering {

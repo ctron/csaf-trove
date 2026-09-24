@@ -1,13 +1,13 @@
-use std::{collections::HashMap, sync::Arc};
-use actix_web::{HttpRequest, HttpResponse, web};
-use csaf_trove_common::{PipelinePhase, SyncPoint};
-use serde::{Deserialize, Serialize};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use super::{auth::verify_bearer_token, error::ApiError};
 use crate::{
     AppState,
     models::state::{JobPhase, JobStatus},
 };
+use actix_web::{HttpRequest, HttpResponse, web};
+use csaf_trove_common::{PipelinePhase, SyncPoint};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, sync::Arc};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 /// API response wrapper that adds computed fields to a job status.
 #[derive(Serialize)]
@@ -136,10 +136,8 @@ fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
 
     let mut remaining = job.documents_total.saturating_sub(current) as f64;
     if job.distributions_total > 0 && job.distribution_index < job.distributions_total {
-        let remaining_dists =
-            (job.distributions_total - job.distribution_index) as f64;
-        let avg_dist_docs =
-            job.documents_total as f64 / job.distribution_index.max(1) as f64;
+        let remaining_dists = (job.distributions_total - job.distribution_index) as f64;
+        let avg_dist_docs = job.documents_total as f64 / job.distribution_index.max(1) as f64;
         remaining += remaining_dists * avg_dist_docs;
     }
 

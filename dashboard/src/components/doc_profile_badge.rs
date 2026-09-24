@@ -1,6 +1,6 @@
-use leptos::prelude::*;
 use crate::components::badge::{Badge, BadgeVariant};
 use crate::models::DocumentProfileDetail;
+use leptos::prelude::*;
 
 /// Displays a per-document profile validation badge showing test pass counts.
 #[component]
@@ -29,7 +29,11 @@ pub fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
                 if d.info_count > 0 {
                     parts.push(format!("{} info", d.info_count));
                 }
-                if parts.is_empty() { "Fail".to_string() } else { parts.join(", ") }
+                if parts.is_empty() {
+                    "Fail".to_string()
+                } else {
+                    parts.join(", ")
+                }
             };
             let rate = if d.total_tests > 0 {
                 passed as f64 / d.total_tests as f64

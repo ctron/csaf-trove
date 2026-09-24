@@ -1,6 +1,6 @@
-use leptos::prelude::*;
 use crate::components::badge::{Badge, BadgeVariant};
 use crate::models::SignatureSummary;
+use leptos::prelude::*;
 
 /// Displays an aggregate signature status badge for a provider.
 #[component]

@@ -1,13 +1,17 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
 };
 
+use crate::models::result::{DiffLineInfo, DiffTag};
 use anyhow::{Context, Result};
-use git2::{Oid, Repository, Signature, Tree};
+use git2::{
+    BranchType, ErrorCode, Index, Oid, Repository, Signature, Tree, build::CheckoutBuilder,
+};
 use serde::Serialize;
 use walkdir::WalkDir;
-use crate::models::result::{DiffLineInfo, DiffTag};
 
 /// Opens an existing bare repo or initializes a new one.
 pub fn init_bare(path: &Path) -> Result<Repository> {
@@ -18,13 +22,123 @@ pub fn init_bare(path: &Path) -> Result<Repository> {
     }
 }
 
-/// Stages working-directory files into the index and commits, then pushes to the bare repo.
+/// Scratch files and index backed by a provider's existing object database.
+#[derive(Debug)]
+pub struct PreparedWorktree {
+    /// Persistent bare repository containing all objects and history.
+    repo_path: PathBuf,
+    /// Disposable working directory, including its private `.git/index`.
+    worktree_path: PathBuf,
+    /// Branch to advance when the sync is committed.
+    branch: String,
+    /// Branch tip captured before downloading files, or no tip for an initial sync.
+    base_commit: Option<Oid>,
+}
+
+/// Failures specific to preparing or publishing a sync's Git snapshot.
+#[derive(Debug, thiserror::Error)]
+enum WorktreeError {
+    /// HEAD must identify a local branch that can receive new commits.
+    #[error("Provider repository HEAD must point to a local branch")]
+    InvalidHead,
+    /// Another writer changed the branch after preparation.
+    #[error("Provider branch {0} changed during sync; refusing to overwrite it")]
+    BranchChanged(String),
+}
+
+/// Resolves HEAD, repairing a missing branch using the first existing local branch.
+fn resolve_branch(repo: &Repository) -> Result<(String, Option<Oid>)> {
+    let head = repo.find_reference("HEAD")?;
+    let branch = head
+        .symbolic_target()?
+        .filter(|name| name.starts_with("refs/heads/"))
+        .ok_or(WorktreeError::InvalidHead)?;
+    match repo.find_reference(branch) {
+        Ok(reference) => return Ok((branch.to_owned(), Some(reference.peel_to_commit()?.id()))),
+        Err(error) if error.code() == ErrorCode::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    if let Some(entry) = repo.branches(Some(BranchType::Local))?.next() {
+        let (fallback, _) = entry?;
+        let reference = fallback.get();
+        let name = reference.name()?;
+        let oid = reference.peel_to_commit()?.id();
+        repo.set_head(name)?;
+        tracing::info!("Fixed bare repo HEAD → {name}");
+        return Ok((name.to_owned(), Some(oid)));
+    }
+    Ok((branch.to_owned(), None))
+}
+
+/// Attaches scratch paths only to this repository handle, without changing config.
+fn open_worktree(worktree: &PreparedWorktree) -> Result<Repository> {
+    let repo = Repository::open_bare(&worktree.repo_path)?;
+    repo.set_workdir(&worktree.worktree_path, false)?;
+    let mut index = Index::open(&worktree.worktree_path.join(".git/index"))?;
+    repo.set_index(&mut index)?;
+    Ok(repo)
+}
+
+/// Prepares a private index without copying objects or transferring Git history.
+///
+/// Incremental runs download into an empty directory; full runs check out HEAD.
+/// The caller must hold the provider's pipeline lock until committing and cleanup.
+pub fn prepare_worktree(
+    repo_path: &Path,
+    worktree_path: &Path,
+    incremental: bool,
+) -> Result<PreparedWorktree> {
+    let started = Instant::now();
+    let repo = init_bare(repo_path)?;
+    let (branch, base_commit) = resolve_branch(&repo)?;
+    if worktree_path.exists() {
+        fs::remove_dir_all(worktree_path).context("Failed to remove previous scratch worktree")?;
+    }
+    fs::create_dir_all(worktree_path.join(".git"))?;
+    let worktree = PreparedWorktree {
+        repo_path: fs::canonicalize(repo_path)?,
+        worktree_path: fs::canonicalize(worktree_path)?,
+        branch,
+        base_commit,
+    };
+    let repo = open_worktree(&worktree)?;
+    let mut index = repo.index()?;
+    if let Some(oid) = base_commit {
+        let tree = repo.find_commit(oid)?.tree()?;
+        index.read_tree(&tree)?;
+        if !incremental {
+            repo.checkout_tree(tree.as_object(), Some(CheckoutBuilder::new().force()))?;
+        }
+    }
+    index.write()?;
+    tracing::info!(
+        repository = %repo_path.display(),
+        incremental,
+        entries = index.len(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "Prepared worktree using existing Git objects"
+    );
+    Ok(worktree)
+}
+
+/// Stages scratch files and commits directly into the persistent bare repository.
 ///
 /// Uses `add_path` per file instead of `add_all` so that existing index entries
 /// (e.g. from a previous `read_tree` in incremental mode) are preserved for files
 /// not present on disk.  Returns `false` if nothing changed.
-pub fn commit_all(repo_path: &Path, worktree_path: &Path, message: &str) -> Result<bool> {
-    let repo = Repository::open(worktree_path)?;
+pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
+    let worktree_path = &worktree.worktree_path;
+    // Index::open would silently create an empty index if scratch data was lost.
+    fs::metadata(worktree_path.join(".git/index")).context("Missing prepared worktree index")?;
+    let repo = open_worktree(worktree)?;
+    let current = match repo.find_reference(&worktree.branch) {
+        Ok(reference) => Some(reference.peel_to_commit()?.id()),
+        Err(error) if error.code() == ErrorCode::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if current != worktree.base_commit {
+        return Err(WorktreeError::BranchChanged(worktree.branch.clone()).into());
+    }
     let mut index = repo.index()?;
 
     let git_dir = worktree_path.join(".git");
@@ -48,56 +162,35 @@ pub fn commit_all(repo_path: &Path, worktree_path: &Path, message: &str) -> Resu
 
     let sig = Signature::now("csaf-trove", "csaf-trove@localhost")?;
 
-    let parent = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    let parent = worktree
+        .base_commit
+        .map(|oid| repo.find_commit(oid))
+        .transpose()?;
 
     if let Some(ref parent) = parent
         && parent.tree()?.id() == tree_oid
     {
-        tracing::debug!("No changes to commit for {}", repo_path.display());
+        tracing::debug!("No changes to commit for {}", worktree.repo_path.display());
         return Ok(false);
     }
 
     let parents: Vec<&git2::Commit> = parent.as_ref().map(|p| vec![p]).unwrap_or_default();
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)?;
-
-    push_to_bare(&repo)?;
-
-    Ok(true)
-}
-
-/// Pushes the worktree commit back to the bare repo via its `origin` remote.
-///
-/// After pushing, ensures the bare repo's HEAD points to the pushed branch
-/// so that subsequent clones see the full history.
-fn push_to_bare(worktree_repo: &Repository) -> Result<()> {
-    let head = worktree_repo
-        .head()
-        .context("worktree has no HEAD after commit")?;
-    let branch = head
-        .shorthand()
-        .context("HEAD branch name is not valid UTF-8")?;
-    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-
-    let mut remote = worktree_repo
-        .find_remote("origin")
-        .context("worktree has no origin remote")?;
-    remote
-        .push(&[&refspec], None)
-        .context("failed to push worktree commit to bare repo")?;
-
-    if let Ok(url) = remote.url().map(String::from) {
-        let bare_path = std::path::Path::new(&url);
-        if bare_path.exists()
-            && let Ok(bare) = Repository::open_bare(bare_path)
-        {
-            let target_ref = format!("refs/heads/{branch}");
-            if bare.head().is_err() {
-                bare.set_head(&target_ref).ok();
-            }
+    let oid = repo.commit(None, &sig, &sig, message, &tree, &parents)?;
+    match repo.reference_matching(
+        &worktree.branch,
+        oid,
+        true,
+        worktree.base_commit.unwrap_or(Oid::ZERO_SHA1),
+        message,
+    ) {
+        Ok(_) => {}
+        Err(error) if error.code() == ErrorCode::Modified || error.code() == ErrorCode::Exists => {
+            return Err(WorktreeError::BranchChanged(worktree.branch.clone()).into());
         }
+        Err(error) => return Err(error).context("Failed to publish provider commit"),
     }
 
-    Ok(())
+    Ok(true)
 }
 
 /// Reads a blob from the HEAD commit of a bare repo at the given tree path.
@@ -408,36 +501,241 @@ mod tests {
     use super::*;
     use std::{fs, path::PathBuf};
 
-    /// Creates a bare repo with a worktree, commits files, and pushes.
+    /// Creates provider history through the production setup and commit path.
     fn create_test_repo(files: &[(&str, &[u8])]) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let bare_path = dir.path().join("repo.git");
         let work_path = dir.path().join("work");
-
-        Repository::init_bare(&bare_path).unwrap();
-        let repo = Repository::init(&work_path).unwrap();
-        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
-
+        let prepared = prepare_worktree(&bare_path, &work_path, false).unwrap();
         for (path, content) in files {
             let full = work_path.join(path);
             fs::create_dir_all(full.parent().unwrap()).unwrap();
             fs::write(&full, content).unwrap();
         }
-
-        let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
-            .unwrap();
-        index.write().unwrap();
-        let tree_oid = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_oid).unwrap();
-        let sig = Signature::now("test", "test@test").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-            .unwrap();
-
-        push_to_bare(&repo).unwrap();
-
+        assert!(commit_all(&prepared, "initial").unwrap());
         (dir, bare_path)
+    }
+
+    /// Verifies that scratch state never duplicates objects or alters bare config.
+    #[test]
+    fn worktree_setup_reuses_objects_and_recovers_scratch() {
+        let (dir, bare_path) = create_test_repo(&[("example.com/doc.json", b"old")]);
+        let config = fs::read(bare_path.join("config")).unwrap();
+        let head = fs::read(bare_path.join("HEAD")).unwrap();
+        let work_path = dir.path().join("work");
+        // Simulate a legacy clone left behind by a killed process.
+        fs::create_dir_all(work_path.join(".git/objects/pack")).unwrap();
+        fs::write(work_path.join(".git/objects/pack/abandoned.pack"), b"old").unwrap();
+        let prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+        assert!(!work_path.join("example.com").exists());
+        assert!(!work_path.join(".git/objects").exists());
+        assert_eq!(fs::read_dir(work_path.join(".git")).unwrap().count(), 1);
+        assert_eq!(Index::open(&work_path.join(".git/index")).unwrap().len(), 1);
+        assert!(!commit_all(&prepared, "no changes").unwrap());
+        assert_eq!(fs::read(bare_path.join("config")).unwrap(), config);
+        assert_eq!(fs::read(bare_path.join("HEAD")).unwrap(), head);
+        assert!(!bare_path.join("index").exists());
+        assert!(Repository::open_bare(&bare_path).unwrap().is_bare());
+        assert_eq!(
+            fs::read_dir(bare_path.join("objects/pack"))
+                .unwrap()
+                .count(),
+            0
+        );
+        fs::remove_dir_all(&work_path).unwrap();
+        assert_eq!(
+            read_head_blob(&bare_path, "example.com/doc.json")
+                .unwrap()
+                .unwrap(),
+            b"old"
+        );
+    }
+
+    /// Full syncs materialize the current snapshot and preserve unchanged history.
+    #[test]
+    fn full_worktree_checks_out_current_tree() {
+        let (dir, bare_path) = create_test_repo(&[("example.com/doc.json", b"old")]);
+        let work_path = dir.path().join("full");
+        let prepared = prepare_worktree(&bare_path, &work_path, false).unwrap();
+        assert_eq!(
+            fs::read(work_path.join("example.com/doc.json")).unwrap(),
+            b"old"
+        );
+        assert!(!commit_all(&prepared, "unchanged").unwrap());
+        fs::write(work_path.join("example.com/doc.json"), b"new").unwrap();
+        assert!(commit_all(&prepared, "changed").unwrap());
+        assert_eq!(
+            read_head_blob(&bare_path, "example.com/doc.json")
+                .unwrap()
+                .unwrap(),
+            b"new"
+        );
+    }
+
+    /// Direct commits preserve versions, counts, and diffs after deleting scratch files.
+    #[test]
+    fn direct_commit_history_survives_cleanup() {
+        let (dir, bare_path) = create_test_repo(&[("example.com/doc.json", br#"{"v":1}"#)]);
+        let work_path = dir.path().join("work");
+        add_commit(&work_path, "example.com/doc.json", br#"{"v":2}"#, "second");
+        add_commit(&work_path, "example.com/doc.json", br#"{"v":3}"#, "third");
+        fs::remove_dir_all(&work_path).unwrap();
+        let url = "https://example.com/doc.json";
+        let versions = document_versions(&bare_path, url, 50).unwrap().unwrap();
+        assert_eq!(versions.len(), 3);
+        assert_eq!(document_version_counts(&bare_path, &[url]).unwrap()[url], 3);
+        let (original, _) = read_document_blob(&bare_path, url, &versions[2].commit_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(original, br#"{"v":1}"#);
+        let diff = diff_document_versions(
+            &bare_path,
+            url,
+            &versions[2].commit_id,
+            &versions[0].commit_id,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(diff.iter().any(|line| matches!(line.tag, DiffTag::Insert)));
+        assert!(diff.iter().any(|line| matches!(line.tag, DiffTag::Delete)));
+    }
+
+    /// Empty repositories retain their configured branch name for the first commit.
+    #[test]
+    fn initial_sync_supports_custom_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare_path = dir.path().join("repo.git");
+        let bare = init_bare(&bare_path).unwrap();
+        bare.set_head("refs/heads/provider/history").unwrap();
+        let work_path = dir.path().join("work");
+        let prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+        assert_eq!(prepared.base_commit, None);
+        fs::write(work_path.join("doc.json"), b"initial").unwrap();
+        assert!(commit_all(&prepared, "initial").unwrap());
+        assert_eq!(
+            bare.head().unwrap().name().unwrap(),
+            "refs/heads/provider/history"
+        );
+        assert_eq!(
+            bare.head()
+                .unwrap()
+                .peel_to_commit()
+                .unwrap()
+                .parent_count(),
+            0
+        );
+    }
+
+    /// A missing HEAD branch falls back without losing existing history.
+    #[test]
+    fn worktree_repairs_missing_head_branch() {
+        let (dir, bare_path) = create_test_repo(&[("doc.json", b"old")]);
+        let bare = Repository::open_bare(&bare_path).unwrap();
+        let original = bare.head().unwrap().name().unwrap().to_owned();
+        let oid = bare.head().unwrap().target().unwrap();
+        bare.set_head("refs/heads/missing").unwrap();
+        let prepared = prepare_worktree(&bare_path, &dir.path().join("work"), true).unwrap();
+        assert_eq!(prepared.branch, original);
+        assert_eq!(prepared.base_commit, Some(oid));
+        assert_eq!(bare.head().unwrap().target(), Some(oid));
+    }
+
+    /// Corrupt objects must fail setup rather than start a new history.
+    #[test]
+    fn worktree_propagates_missing_commit_object() {
+        let (dir, bare_path) = create_test_repo(&[("doc.json", b"old")]);
+        let bare = Repository::open_bare(&bare_path).unwrap();
+        let oid = bare.head().unwrap().target().unwrap().to_string();
+        drop(bare);
+        fs::remove_file(bare_path.join("objects").join(&oid[..2]).join(&oid[2..])).unwrap();
+        assert!(prepare_worktree(&bare_path, &dir.path().join("work"), true).is_err());
+    }
+
+    /// Competing updates are rejected for both existing and initially absent branches.
+    #[test]
+    fn direct_commit_rejects_branch_changes() {
+        for initial in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let bare_path = dir.path().join("repo.git");
+            let work_path = dir.path().join("work");
+            let mut prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+            if !initial {
+                fs::write(work_path.join("doc.json"), b"old").unwrap();
+                commit_all(&prepared, "initial").unwrap();
+                prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+            }
+            let competing_path = dir.path().join("competing");
+            let competing = prepare_worktree(&bare_path, &competing_path, true).unwrap();
+            fs::write(competing_path.join("doc.json"), b"competing").unwrap();
+            commit_all(&competing, "competing").unwrap();
+            fs::write(work_path.join("doc.json"), b"stale").unwrap();
+            let error = commit_all(&prepared, "stale").unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<WorktreeError>(),
+                Some(WorktreeError::BranchChanged(_))
+            ));
+            assert_eq!(
+                read_head_blob(&bare_path, "doc.json").unwrap().unwrap(),
+                b"competing"
+            );
+        }
+    }
+
+    /// A lost index cannot silently discard the provider's existing documents.
+    #[test]
+    fn direct_commit_rejects_missing_index() {
+        let (dir, bare_path) = create_test_repo(&[("doc.json", b"old")]);
+        let work_path = dir.path().join("work");
+        let prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+        fs::remove_file(work_path.join(".git/index")).unwrap();
+        assert!(commit_all(&prepared, "lost index").is_err());
+        assert_eq!(
+            read_head_blob(&bare_path, "doc.json").unwrap().unwrap(),
+            b"old"
+        );
+    }
+
+    /// Measures incremental setup on a disposable repository snapshot, without committing.
+    /// Set CSAF_TROVE_BENCH_REPO to the snapshot and CSAF_TROVE_BENCH_MODE to direct or fetch.
+    /// Run each mode in a separate process to measure peak RSS using /usr/bin/time -v.
+    #[test]
+    #[ignore = "requires a disposable provider repository snapshot"]
+    fn benchmark_worktree_setup() -> Result<()> {
+        let repo_path = PathBuf::from(std::env::var_os("CSAF_TROVE_BENCH_REPO").unwrap());
+        let mode = std::env::var("CSAF_TROVE_BENCH_MODE").unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let work_path = scratch.path().join("work");
+        let started = Instant::now();
+        let entries = match mode.as_str() {
+            "direct" => {
+                let prepared = prepare_worktree(&repo_path, &work_path, true).unwrap();
+                assert!(!work_path.join(".git/objects").exists());
+                let count = open_worktree(&prepared).unwrap().index().unwrap().len();
+                assert_eq!(fs::read_dir(&work_path).unwrap().count(), 1);
+                count
+            }
+            "fetch" => {
+                let repo = Repository::init(&work_path).unwrap();
+                repo.remote("origin", repo_path.to_str().unwrap())
+                    .unwrap()
+                    .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
+                    .unwrap();
+                let bare = Repository::open_bare(&repo_path).unwrap();
+                let oid = bare.head().unwrap().target().unwrap();
+                let mut index = repo.index().unwrap();
+                index
+                    .read_tree(&repo.find_commit(oid).unwrap().tree().unwrap())
+                    .unwrap();
+                index.write().unwrap();
+                index.len()
+            }
+            _ => anyhow::bail!("unknown benchmark mode: {mode}"),
+        };
+        eprintln!(
+            "mode={mode} entries={entries} elapsed={:?}",
+            started.elapsed()
+        );
+        Ok(())
     }
 
     #[test]
@@ -548,22 +846,8 @@ mod tests {
         ];
         let (_dir, bare_path) = create_test_repo(files);
 
-        // Set up an incremental-style worktree: index from HEAD, no files on disk.
         let inc_work = _dir.path().join("incremental");
-        let repo = Repository::init(&inc_work).unwrap();
-        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
-        let mut remote = repo.find_remote("origin").unwrap();
-        remote
-            .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
-            .unwrap();
-
-        let origin_ref = repo.find_reference("refs/remotes/origin/master").unwrap();
-        let origin_commit = origin_ref.peel_to_commit().unwrap();
-        let mut index = repo.index().unwrap();
-        index.read_tree(&origin_commit.tree().unwrap()).unwrap();
-        index.write().unwrap();
-        repo.branch("master", &origin_commit, false).unwrap();
-        repo.set_head("refs/heads/master").unwrap();
+        let prepared = prepare_worktree(&bare_path, &inc_work, true).unwrap();
 
         // Add one new file to the working directory (simulating incremental sync).
         let new_file = inc_work.join("example.com/advisories/2025/adv-004.json");
@@ -571,7 +855,7 @@ mod tests {
         fs::write(&new_file, b"{\"a\":4}").unwrap();
 
         // commit_all must preserve the 3 existing index entries.
-        let changed = commit_all(&bare_path, &inc_work, "incremental").unwrap();
+        let changed = commit_all(&prepared, "incremental").unwrap();
         assert!(changed, "should detect changes");
 
         // Verify the bare repo's HEAD tree has all 4 files.
@@ -584,25 +868,14 @@ mod tests {
         );
     }
 
-    /// Creates a second commit by modifying a file in the existing worktree.
+    /// Records an incremental update directly in the persistent repository.
     fn add_commit(work_path: &Path, file: &str, content: &[u8], msg: &str) {
+        let bare_path = work_path.parent().unwrap().join("repo.git");
+        let prepared = prepare_worktree(&bare_path, work_path, true).unwrap();
         let full = work_path.join(file);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
         fs::write(&full, content).unwrap();
-
-        let repo = Repository::open(work_path).unwrap();
-        let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
-            .unwrap();
-        index.write().unwrap();
-        let tree_oid = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_oid).unwrap();
-        let sig = Signature::now("test", "test@test").unwrap();
-        let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&parent])
-            .unwrap();
-
-        push_to_bare(&repo).unwrap();
+        assert!(commit_all(&prepared, msg).unwrap());
     }
 
     #[test]
@@ -610,29 +883,8 @@ mod tests {
         let file_path =
             "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_1234.json";
         let v1 = br#"{"document":{"title":"Advisory v1","category":"csaf_vex"}}"#;
-        let dir = tempfile::tempdir().unwrap();
-        let bare_path = dir.path().join("repo.git");
+        let (dir, bare_path) = create_test_repo(&[(file_path, v1)]);
         let work_path = dir.path().join("work");
-
-        Repository::init_bare(&bare_path).unwrap();
-        let repo = Repository::init(&work_path).unwrap();
-        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
-
-        let full = work_path.join(file_path);
-        fs::create_dir_all(full.parent().unwrap()).unwrap();
-        fs::write(&full, v1).unwrap();
-
-        let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
-            .unwrap();
-        index.write().unwrap();
-        let tree_oid = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_oid).unwrap();
-        let sig = Signature::now("test", "test@test").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "v1", &tree, &[])
-            .unwrap();
-        push_to_bare(&repo).unwrap();
 
         let v2 = br#"{"document":{"title":"Advisory v2","category":"csaf_vex"}}"#;
         add_commit(&work_path, file_path, v2, "v2");
@@ -686,29 +938,8 @@ mod tests {
         let file_path =
             "security.access.redhat.com/data/csaf/v2/advisories/2024/rhsa-2024_5678.json";
         let v1 = br#"{"document":{"title":"v1"}}"#;
-        let dir = tempfile::tempdir().unwrap();
-        let bare_path = dir.path().join("repo.git");
+        let (dir, bare_path) = create_test_repo(&[(file_path, v1)]);
         let work_path = dir.path().join("work");
-
-        Repository::init_bare(&bare_path).unwrap();
-        let repo = Repository::init(&work_path).unwrap();
-        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
-
-        let full = work_path.join(file_path);
-        fs::create_dir_all(full.parent().unwrap()).unwrap();
-        fs::write(&full, v1).unwrap();
-
-        let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
-            .unwrap();
-        index.write().unwrap();
-        let tree_oid = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_oid).unwrap();
-        let sig = Signature::now("test", "test@test").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "v1", &tree, &[])
-            .unwrap();
-        push_to_bare(&repo).unwrap();
 
         let v2 = br#"{"document":{"title":"v2"}}"#;
         add_commit(&work_path, file_path, v2, "v2");
@@ -756,29 +987,8 @@ mod tests {
     fn diff_falls_back_to_raw_for_formatting_only_changes() {
         let file_path = "example.com/advisories/2024/fmt.json";
         let compact = br#"{"document":{"title":"hello"}}"#;
-        let dir = tempfile::tempdir().unwrap();
-        let bare_path = dir.path().join("repo.git");
+        let (dir, bare_path) = create_test_repo(&[(file_path, compact)]);
         let work_path = dir.path().join("work");
-
-        Repository::init_bare(&bare_path).unwrap();
-        let repo = Repository::init(&work_path).unwrap();
-        repo.remote("origin", bare_path.to_str().unwrap()).unwrap();
-
-        let full = work_path.join(file_path);
-        fs::create_dir_all(full.parent().unwrap()).unwrap();
-        fs::write(&full, compact).unwrap();
-
-        let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
-            .unwrap();
-        index.write().unwrap();
-        let tree_oid = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_oid).unwrap();
-        let sig = Signature::now("test", "test@test").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "compact", &tree, &[])
-            .unwrap();
-        push_to_bare(&repo).unwrap();
 
         let pretty = b"{\n  \"document\": {\n    \"title\": \"hello\"\n  }\n}\n";
         add_commit(&work_path, file_path, pretty, "pretty");

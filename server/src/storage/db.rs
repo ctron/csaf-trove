@@ -1,9 +1,9 @@
-use std::{collections::HashMap, path::PathBuf};
-use anyhow::Result;
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
-use tokio::sync::RwLock;
 use crate::models::source::sanitize_domain;
+use anyhow::Result;
 use csaf_trove_migration::{Migrator, MigratorTrait};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
+use std::{collections::HashMap, path::PathBuf};
+use tokio::sync::RwLock;
 
 /// Manages per-provider SQLite database connections with lazy initialization.
 pub struct DbPool {

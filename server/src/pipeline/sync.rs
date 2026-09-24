@@ -1,5 +1,5 @@
-use std::{fmt::Debug, path::Path, sync::Arc, sync::atomic::{AtomicU64, Ordering}, time::SystemTime};
-use parking_lot::Mutex;
+use super::store::{TroveStoreError, TroveStoreVisitor};
+use crate::{AppState, models::source::Source as AppSource};
 use anyhow::Result;
 use csaf_walker::{
     common::{
@@ -14,10 +14,16 @@ use csaf_walker::{
     source::{HttpOptions, HttpSource, Source},
     walker::Walker,
 };
+use parking_lot::Mutex;
+use std::{
+    fmt::Debug,
+    path::Path,
+    sync::Arc,
+    sync::atomic::{AtomicU64, Ordering},
+    time::SystemTime,
+};
 use time::OffsetDateTime;
 use walker_common::utils::url::Urlify;
-use crate::{AppState, models::source::Source as AppSource};
-use super::store::{TroveStoreError, TroveStoreVisitor};
 
 /// A document that could not be retrieved during sync.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

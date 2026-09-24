@@ -1,9 +1,9 @@
-use std::path::Path;
-use anyhow::Result;
 use crate::{
     models::{source::sanitize_domain, state::SyncState},
     pipeline::sync::RetrievalFailure,
 };
+use anyhow::Result;
+use std::path::Path;
 
 /// Loads sync state from disk, returning a default if the file does not exist.
 pub async fn load_sync_state(state_dir: &Path, domain: &str) -> Result<SyncState> {

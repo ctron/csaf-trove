@@ -1,6 +1,3 @@
-use std::sync::Arc;
-use anyhow::Result;
-use chrono::Utc;
 use crate::{
     AppState,
     models::{
@@ -8,6 +5,9 @@ use crate::{
         source::Source,
     },
 };
+use anyhow::Result;
+use chrono::Utc;
+use std::sync::Arc;
 
 /// Appends a metrics entry from the latest summary for a provider.
 pub async fn generate_report(state: &Arc<AppState>, source: &Source) -> Result<()> {
