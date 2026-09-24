@@ -16,17 +16,8 @@ fn format_duration(seconds: Option<f64>) -> String {
     match seconds {
         None => "-".to_string(),
         Some(s) => {
-            let total = s as u64;
-            let hours = total / 3600;
-            let minutes = (total % 3600) / 60;
-            let secs = total % 60;
-            if hours > 0 {
-                format!("{hours}h {minutes}m {secs}s")
-            } else if minutes > 0 {
-                format!("{minutes}m {secs}s")
-            } else {
-                format!("{secs}s")
-            }
+            let duration = std::time::Duration::from_secs_f64(s);
+            csaf_trove_common::format_duration_hms(duration, false)
         }
     }
 }
@@ -86,41 +77,12 @@ fn format_progress(job: &JobStatus) -> String {
 }
 
 fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
-    use strum::IntoEnumIterator;
+    let label = job.phase
+        .as_ref()
+        .map(|p| p.as_ref().to_string())
+        .unwrap_or_else(|| "-".to_string());
 
-    let has_pipeline = !job.completed_phases.is_empty() || job.phase.is_some();
-
-    if !has_pipeline {
-        return view! { <span>"-"</span> }.into_any();
-    }
-
-    let items: Vec<_> = PipelinePhase::iter()
-        .enumerate()
-        .map(|(i, phase)| {
-            let completed = job.completed_phases.contains(&phase);
-            let current = job.phase == Some(phase);
-            let name = phase.as_ref();
-            let (class, label) = if completed {
-                (
-                    "text-green-600 dark:text-green-400",
-                    format!("\u{2713} {name}"),
-                )
-            } else if current {
-                ("font-semibold", name.to_string())
-            } else {
-                ("text-gray-300 dark:text-gray-600", name.to_string())
-            };
-            let sep = if i > 0 { " \u{203a} " } else { "" };
-            view! {
-                <>
-                    <span class="text-gray-300 dark:text-gray-600">{sep}</span>
-                    <span class=class>{label}</span>
-                </>
-            }
-        })
-        .collect();
-
-    view! { <span class="whitespace-nowrap text-xs">{items}</span> }.into_any()
+    view! { <span class="whitespace-nowrap text-xs">{label}</span> }.into_any()
 }
 
 /// Builds the WebSocket URL from the current page origin.

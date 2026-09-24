@@ -1,7 +1,32 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+
+pub fn format_duration_hms(duration: Duration, truncate_seconds: bool) -> String {
+    let total_secs = duration.as_secs();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let secs = total_secs % 60;
+
+    if hours > 0 {
+        if truncate_seconds {
+            format!("{hours}h {minutes}m")
+        } else {
+            format!("{hours}h {minutes}m {secs}s")
+        }
+    } else if minutes > 0 {
+        if truncate_seconds {
+            format!("{minutes}m")
+        } else {
+            format!("{minutes}m {secs}s")
+        }
+    } else {
+        format!("{secs}s")
+    }
+}
 
 /// Pipeline phases that a sync job progresses through in order.
 #[derive(
