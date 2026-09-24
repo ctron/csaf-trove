@@ -56,6 +56,7 @@
   become_user: "{{ csaf_trove_user }}"
   when: csaf_trove_force_full_sync | bool
   changed_when: true
+  notify: Restart csaf-trove
 
 - name: Deploy configuration
   ansible.builtin.template:
