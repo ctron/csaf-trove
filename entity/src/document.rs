@@ -29,6 +29,8 @@ pub struct Model {
     pub full_failing_test_count: Option<i64>,
     pub signature_present: i32,
     pub signature_error: Option<String>,
+    /// Failed digest check when the other supplied digest matched.
+    pub signature_warning: Option<String>,
     pub category: Option<String>,
     pub publisher_name: Option<String>,
     pub initial_release_date: Option<String>,

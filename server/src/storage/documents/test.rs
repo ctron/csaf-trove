@@ -220,3 +220,33 @@ async fn benchmark_version_count_updates() {
     update_version_counts(&db, &repo).await.unwrap();
     eprintln!("111427 unchanged rows: {:?}", started.elapsed());
 }
+
+/// Digest warnings survive persistence and are cleared when later checks pass.
+#[tokio::test]
+async fn digest_warning_round_trip() {
+    let db = database("sqlite::memory:", None).await;
+    db.execute_raw(Statement::from_string(
+        DbBackend::Sqlite,
+        "INSERT INTO documents (tracking_id, title, url, signature_present, version_count) VALUES ('example', 'Example', 'https://example.com/example.json', 1, 1)",
+    ))
+    .await
+    .unwrap();
+    let mut doc = super::load_document(&db, "example").await.unwrap().unwrap();
+    assert!(doc.signature_warning.is_none());
+    doc.signature_warning = Some("SHA-256 mismatch: expected <!doctype, got abc".into());
+    super::save_documents(&db, &[doc.clone()]).await.unwrap();
+    let loaded = super::load_document(&db, "example").await.unwrap().unwrap();
+    assert_eq!(loaded.signature_warning, doc.signature_warning);
+    assert!(loaded.signature_error.is_none());
+    assert!(loaded.signature_present);
+    doc.signature_warning = None;
+    super::save_documents(&db, &[doc]).await.unwrap();
+    assert!(
+        super::load_document(&db, "example")
+            .await
+            .unwrap()
+            .unwrap()
+            .signature_warning
+            .is_none()
+    );
+}

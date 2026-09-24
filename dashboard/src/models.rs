@@ -166,6 +166,9 @@ pub struct DocumentValidation {
     pub url: String,
     pub profiles: DocumentProfileResults,
     pub signature_error: Option<String>,
+    /// Failed digest check when the other supplied digest matched.
+    #[serde(default)]
+    pub signature_warning: Option<String>,
     pub signature_present: bool,
     #[serde(default)]
     pub category: Option<String>,

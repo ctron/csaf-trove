@@ -7,6 +7,7 @@ mod m20240102_000002_add_retrieval_error;
 mod m20240103_000003_add_version_count;
 mod m20240104_000004_add_test_counts;
 mod m20240105_000005_fix_provider_info_table;
+mod m20240106_000006_add_signature_warning;
 
 /// Migrator that applies all schema migrations in order.
 pub struct Migrator;
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240103_000003_add_version_count::Migration),
             Box::new(m20240104_000004_add_test_counts::Migration),
             Box::new(m20240105_000005_fix_provider_info_table::Migration),
+            Box::new(m20240106_000006_add_signature_warning::Migration),
         ]
     }
 }

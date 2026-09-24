@@ -84,7 +84,9 @@ struct DocumentResult {
     version_tag: Option<CsafVersionTag>,
     /// Signature/digest error message, if any.
     signature_error: Option<String>,
-    /// Whether a signature file was present.
+    /// Failed checks when another integrity check passed.
+    signature_warning: Option<String>,
+    /// Whether any signature or checksum was supplied.
     signature_present: bool,
     /// Document category.
     category: Option<String>,
@@ -182,34 +184,40 @@ pub async fn validate_provider(
                         let url =
                             reconstruct_original_url(&verified.advisory.discovered.url, &worktree);
 
-                        let signature_present = verified.advisory.signature.is_some();
-                        let mut sig_errors = Vec::new();
+                        let mut integrity = assess_integrity([
+                            verified.advisory.sha256.as_ref().map(|_| {
+                                validate_digest(&verified.advisory.sha256).map_err(
+                                    |(expected, actual)| {
+                                        format!(
+                                            "SHA-256 mismatch: expected {expected}, got {actual}"
+                                        )
+                                    },
+                                )
+                            }),
+                            verified.advisory.sha512.as_ref().map(|_| {
+                                validate_digest(&verified.advisory.sha512).map_err(
+                                    |(expected, actual)| {
+                                        format!(
+                                            "SHA-512 mismatch: expected {expected}, got {actual}"
+                                        )
+                                    },
+                                )
+                            }),
+                        ]);
 
-                        if let Some(sig) = &verified.advisory.signature
-                            && let Err(e) =
-                                validate_signature(&opts, &keys, sig, &verified.advisory.data)
-                        {
-                            sig_errors.push(format!("Invalid signature: {e}"));
+                        // OpenPGP authenticity is independent of digest integrity.
+                        if let Some(signature) = &verified.advisory.signature {
+                            integrity.present = true;
+                            if let Err(error) =
+                                validate_signature(&opts, &keys, signature, &verified.advisory.data)
+                            {
+                                let message = format!("Invalid signature: {error}");
+                                integrity.error = Some(match integrity.error {
+                                    Some(digest_error) => format!("{message}; {digest_error}"),
+                                    None => message,
+                                });
+                            }
                         }
-
-                        if let Err((expected, actual)) = validate_digest(&verified.advisory.sha256)
-                        {
-                            sig_errors.push(format!(
-                                "SHA-256 mismatch: expected {expected}, got {actual}"
-                            ));
-                        }
-                        if let Err((expected, actual)) = validate_digest(&verified.advisory.sha512)
-                        {
-                            sig_errors.push(format!(
-                                "SHA-512 mismatch: expected {expected}, got {actual}"
-                            ));
-                        }
-
-                        let signature_error = if sig_errors.is_empty() {
-                            None
-                        } else {
-                            Some(sig_errors.join("; "))
-                        };
 
                         let failures: HashMap<String, Vec<CheckError>> = verified
                             .errors
@@ -243,8 +251,9 @@ pub async fn validate_provider(
                             infos,
                             successes,
                             version_tag: vtag,
-                            signature_error,
-                            signature_present,
+                            signature_error: integrity.error,
+                            signature_warning: integrity.warning,
+                            signature_present: integrity.present,
                             category: meta.category,
                             publisher_name: meta.publisher_name,
                             initial_release_date: meta.initial_release_date,
@@ -275,6 +284,7 @@ pub async fn validate_provider(
                             version_tag: None,
                             signature_error: Some(format!("Document error: {e}")),
                             signature_present: false,
+                            signature_warning: None,
                             category: None,
                             publisher_name: None,
                             initial_release_date: None,
@@ -351,6 +361,7 @@ fn build_document_validation(doc: DocumentResult) -> DocumentValidation {
         url: doc.url,
         profiles,
         signature_error: doc.signature_error,
+        signature_warning: doc.signature_warning,
         signature_present: doc.signature_present,
         category: doc.category,
         publisher_name: doc.publisher_name,
@@ -604,5 +615,99 @@ mod tests {
 
         let result = reconstruct_original_url(&url, &worktree);
         assert_eq!(result, "https://example.com/doc.json");
+    }
+}
+
+/// Overall result of the supplied checksum checks.
+#[derive(Debug, PartialEq, Eq)]
+struct IntegrityResult {
+    /// Whether at least one check was supplied.
+    present: bool,
+    /// Failures when none of the supplied checks passed.
+    error: Option<String>,
+    /// Failures tolerated because another supplied check passed.
+    warning: Option<String>,
+}
+
+/// Accepts either matching digest; missing digests never count as successes.
+fn assess_integrity(checks: [Option<Result<(), String>>; 2]) -> IntegrityResult {
+    let mut present = false;
+    let mut passed = false;
+    let mut failures = Vec::new();
+    for check in checks.into_iter().flatten() {
+        present = true;
+        match check {
+            Ok(()) => passed = true,
+            Err(error) => failures.push(error),
+        }
+    }
+    let message = (!failures.is_empty()).then(|| failures.join("; "));
+    let (error, warning) = if passed {
+        (None, message)
+    } else {
+        (message, None)
+    };
+    IntegrityResult {
+        present,
+        error,
+        warning,
+    }
+}
+
+#[cfg(test)]
+mod integrity_tests {
+    use super::assess_integrity;
+
+    /// Either matching digest downgrades a mismatch in the other to a warning.
+    #[test]
+    fn either_digest_accepts_other_failure() {
+        for checks in [
+            [Some(Ok(())), Some(Err("bad SHA-512".into()))],
+            [Some(Err("bad SHA-256".into())), Some(Ok(()))],
+        ] {
+            let result = assess_integrity(checks);
+            assert!(result.present);
+            assert!(result.error.is_none());
+            assert!(result.warning.is_some());
+        }
+    }
+
+    /// Absent digests cannot rescue a failed digest or mark a document valid.
+    #[test]
+    fn missing_checks_are_not_successes() {
+        let missing = assess_integrity([None, None]);
+        assert!(!missing.present);
+        assert!(missing.error.is_none());
+        assert!(missing.warning.is_none());
+        let failed = assess_integrity([Some(Err("bad checksum".into())), None]);
+        assert!(failed.present);
+        assert_eq!(failed.error.as_deref(), Some("bad checksum"));
+        assert!(failed.warning.is_none());
+    }
+
+    /// Matching digests produce no errors or warnings, including single-digest providers.
+    #[test]
+    fn matching_digests_pass() {
+        for checks in [
+            [None, Some(Ok(()))],
+            [Some(Ok(())), None],
+            [Some(Ok(())), Some(Ok(()))],
+        ] {
+            let result = assess_integrity(checks);
+            assert!(result.present);
+            assert!(result.error.is_none());
+            assert!(result.warning.is_none());
+        }
+    }
+
+    /// Two mismatches remain errors with both diagnostic messages preserved.
+    #[test]
+    fn both_digests_fail() {
+        let result = assess_integrity([
+            Some(Err("bad SHA-256".into())),
+            Some(Err("bad SHA-512".into())),
+        ]);
+        assert_eq!(result.error.as_deref(), Some("bad SHA-256; bad SHA-512"));
+        assert!(result.warning.is_none());
     }
 }

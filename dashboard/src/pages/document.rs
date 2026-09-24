@@ -367,7 +367,9 @@ fn DocumentDetailContent(doc: DocumentValidation, tab: ReadSignal<String>) -> im
             } else {
                 let (sig_variant, sig_label) = if d.signature_error.is_some() {
                     (BadgeVariant::Danger, "Invalid")
-                } else if d.signature_present {
+                } else if d.signature_warning.is_some() {
+                                        (BadgeVariant::Warning, "Valid with warnings")
+                                    } else if d.signature_present {
                     (BadgeVariant::Success, "Valid")
                 } else {
                     (BadgeVariant::Warning, "Missing")
@@ -386,9 +388,12 @@ fn DocumentDetailContent(doc: DocumentValidation, tab: ReadSignal<String>) -> im
                                 <Td><a href={d.url.clone()} target="_blank">{d.url.clone()}</a></Td>
                             </tr>
                             <tr>
-                                <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"Signature"</Td>
+                                <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"Integrity"</Td>
                                 <Td>
                                     <Badge variant=sig_variant>{sig_label}</Badge>
+                                    {d.signature_warning.map(|e| view! {
+                                        <span class="text-sm text-amber-600 dark:text-amber-400 ml-2">{e}</span>
+                                    })}
                                     {d.signature_error.map(|e| view! {
                                         <span class="text-sm text-red-500 dark:text-red-400 ml-2">{e}</span>
                                     })}

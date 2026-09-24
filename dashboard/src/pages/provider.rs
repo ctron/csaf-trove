@@ -435,7 +435,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     <Th>"Basic"</Th>
                                     <Th>"Extended"</Th>
                                     <Th>"Full"</Th>
-                                    <Th>"Signature"</Th>
+                                    <Th>"Integrity"</Th>
                                     <Th>"Versions"</Th>
                                 </tr>
                             </Thead>
@@ -447,6 +447,8 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     let retrieval_err = doc.retrieval_error.clone();
                                     let (sig_variant, sig_label) = if doc.signature_error.is_some() {
                                         (BadgeVariant::Danger, "Invalid")
+                                    } else if doc.signature_warning.is_some() {
+                                        (BadgeVariant::Warning, "Valid with warnings")
                                     } else if doc.signature_present {
                                         (BadgeVariant::Success, "Valid")
                                     } else {

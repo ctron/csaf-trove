@@ -146,7 +146,10 @@ pub struct DocumentValidation {
     pub profiles: DocumentProfileResults,
     /// Signature validation error message, if the signature was invalid.
     pub signature_error: Option<String>,
-    /// Whether a signature file was present for this document.
+    /// Failed digest check when the other supplied digest matched.
+    #[serde(default)]
+    pub signature_warning: Option<String>,
+    /// Whether any signature or checksum was supplied for this document.
     pub signature_present: bool,
     /// Document category (e.g. `csaf_security_advisory`, `csaf_vex`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
