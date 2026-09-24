@@ -62,4 +62,4 @@ walker-common = "0.19"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"
-
+zstd = "0.13"

@@ -2,14 +2,14 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    str::from_utf8,
     time::Instant,
 };
 
+use super::scratch;
 use crate::models::result::{DiffLineInfo, DiffTag};
-use anyhow::{Context, Result};
-use git2::{
-    BranchType, ErrorCode, Index, Oid, Repository, Signature, Tree, build::CheckoutBuilder,
-};
+use anyhow::{Context, Result, ensure};
+use git2::{BranchType, ErrorCode, Index, IndexEntry, IndexTime, Oid, Repository, Signature, Tree};
 use serde::Serialize;
 use walkdir::WalkDir;
 
@@ -81,7 +81,7 @@ fn open_worktree(worktree: &PreparedWorktree) -> Result<Repository> {
 
 /// Prepares a private index without copying objects or transferring Git history.
 ///
-/// Incremental runs download into an empty directory; full runs check out HEAD.
+/// Incremental runs start empty; full runs materialize HEAD with compressed advisories.
 /// The caller must hold the provider's pipeline lock until committing and cleanup.
 pub fn prepare_worktree(
     repo_path: &Path,
@@ -107,7 +107,12 @@ pub fn prepare_worktree(
         let tree = repo.find_commit(oid)?.tree()?;
         index.read_tree(&tree)?;
         if !incremental {
-            repo.checkout_tree(tree.as_object(), Some(CheckoutBuilder::new().force()))?;
+            for entry in index.iter() {
+                let relative = Path::new(from_utf8(&entry.path)?);
+                let blob = repo.find_blob(entry.id)?;
+                scratch::write(&worktree.worktree_path, relative, blob.content())
+                    .with_context(|| format!("Failed to materialize {}", relative.display()))?;
+            }
         }
     }
     index.write()?;
@@ -123,9 +128,9 @@ pub fn prepare_worktree(
 
 /// Stages scratch files and commits directly into the persistent bare repository.
 ///
-/// Uses `add_path` per file instead of `add_all` so that existing index entries
-/// (e.g. from a previous `read_tree` in incremental mode) are preserved for files
-/// not present on disk.  Returns `false` if nothing changed.
+/// Decompresses advisories individually into Git under their original paths. Existing
+/// index entries are preserved for files absent from incremental scratch directories.
+/// Returns `false` if nothing changed.
 pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
     let worktree_path = &worktree.worktree_path;
     // Index::open would silently create an empty index if scratch data was lost.
@@ -152,7 +157,36 @@ pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
                 .path()
                 .strip_prefix(worktree_path)
                 .context("file is not under worktree")?;
-            index.add_path(relative)?;
+            let logical = scratch::logical_path(relative);
+            if logical != relative {
+                ensure!(
+                    !worktree_path.join(&logical).exists(),
+                    "Both plain and compressed scratch files exist: {}",
+                    logical.display()
+                );
+                let data = scratch::read(entry.path())?;
+                let entry = index.get_path(&logical, 0).unwrap_or(IndexEntry {
+                    ctime: IndexTime::new(0, 0),
+                    mtime: IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode: 0o100644,
+                    uid: 0,
+                    gid: 0,
+                    file_size: 0,
+                    id: Oid::ZERO_SHA1,
+                    flags: 0,
+                    flags_extended: 0,
+                    path: logical
+                        .to_str()
+                        .context("Invalid scratch path")?
+                        .as_bytes()
+                        .to_vec(),
+                });
+                index.add_frombuffer(&entry, &data)?;
+            } else {
+                index.add_path(relative)?;
+            }
         }
     }
     index.write()?;
@@ -551,18 +585,19 @@ mod tests {
         );
     }
 
-    /// Full syncs materialize the current snapshot and preserve unchanged history.
+    /// Full syncs compress existing history and commit original bytes without extra versions.
     #[test]
     fn full_worktree_checks_out_current_tree() {
         let (dir, bare_path) = create_test_repo(&[("example.com/doc.json", b"old")]);
         let work_path = dir.path().join("full");
         let prepared = prepare_worktree(&bare_path, &work_path, false).unwrap();
         assert_eq!(
-            fs::read(work_path.join("example.com/doc.json")).unwrap(),
+            scratch::read(&work_path.join("example.com/doc.json.zst")).unwrap(),
             b"old"
         );
         assert!(!commit_all(&prepared, "unchanged").unwrap());
-        fs::write(work_path.join("example.com/doc.json"), b"new").unwrap();
+        assert!(!work_path.join("example.com/doc.json").exists());
+        scratch::write(&work_path, Path::new("example.com/doc.json"), b"new").unwrap();
         assert!(commit_all(&prepared, "changed").unwrap());
         assert_eq!(
             read_head_blob(&bare_path, "example.com/doc.json")
@@ -850,9 +885,12 @@ mod tests {
         let prepared = prepare_worktree(&bare_path, &inc_work, true).unwrap();
 
         // Add one new file to the working directory (simulating incremental sync).
-        let new_file = inc_work.join("example.com/advisories/2025/adv-004.json");
-        fs::create_dir_all(new_file.parent().unwrap()).unwrap();
-        fs::write(&new_file, b"{\"a\":4}").unwrap();
+        scratch::write(
+            &inc_work,
+            Path::new("example.com/advisories/2025/adv-004.json"),
+            b"{\"a\":4}",
+        )
+        .unwrap();
 
         // commit_all must preserve the 3 existing index entries.
         let changed = commit_all(&prepared, "incremental").unwrap();
@@ -872,9 +910,7 @@ mod tests {
     fn add_commit(work_path: &Path, file: &str, content: &[u8], msg: &str) {
         let bare_path = work_path.parent().unwrap().join("repo.git");
         let prepared = prepare_worktree(&bare_path, work_path, true).unwrap();
-        let full = work_path.join(file);
-        fs::create_dir_all(full.parent().unwrap()).unwrap();
-        fs::write(&full, content).unwrap();
+        scratch::write(work_path, Path::new(file), content).unwrap();
         assert!(commit_all(&prepared, msg).unwrap());
     }
 

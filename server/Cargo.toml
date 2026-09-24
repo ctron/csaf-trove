@@ -39,6 +39,7 @@ tracing-subscriber = { workspace = true }
 url = { workspace = true }
 walkdir = { workspace = true }
 walker-common = { workspace = true }
+zstd = { workspace = true }
 
 [dev-dependencies]
 rusqlite = { workspace = true }

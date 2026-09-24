@@ -2,6 +2,7 @@ pub mod db;
 pub mod documents;
 pub mod git_repo;
 pub mod results;
+pub mod scratch;
 pub mod state;
 
 use crate::models::{

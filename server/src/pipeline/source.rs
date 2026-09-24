@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, ensure};
 use bytes::Bytes;
 use csaf_walker::{
     discover::{DiscoveredAdvisory, DistributionContext},
@@ -13,7 +13,7 @@ use csaf_walker::{
     source::Source,
 };
 use time::OffsetDateTime;
-use tokio::sync::mpsc;
+use tokio::{fs, sync::mpsc, task::spawn_blocking};
 use url::Url;
 use walkdir::WalkDir;
 use walker_common::{
@@ -24,6 +24,7 @@ use walker_common::{
 };
 
 use super::store::DIR_METADATA;
+use crate::storage::scratch;
 
 /// Reads CSAF documents from a `<domain>/<url_path>` layout on disk.
 #[derive(Clone, Debug)]
@@ -61,7 +62,7 @@ impl TroveFileSource {
         let dir = self.base.join(DIR_METADATA).join("keys");
         let mut result = Vec::new();
 
-        let mut entries = match tokio::fs::read_dir(&dir).await {
+        let mut entries = match fs::read_dir(&dir).await {
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(result),
             Err(err) => {
                 return Err(err)
@@ -84,7 +85,7 @@ impl TroveFileSource {
         Ok(result)
     }
 
-    /// Walks a distribution directory for `.json` files.
+    /// Walks a distribution directory for plain or zstd-compressed advisories.
     fn walk_distribution(
         &self,
         context: Arc<DistributionContext>,
@@ -105,10 +106,9 @@ impl TroveFileSource {
             return Ok(rx);
         }
 
-        tokio::task::spawn_blocking(move || {
+        spawn_blocking(move || {
             for entry in WalkDir::new(path).into_iter().filter_entry(|entry| {
-                !entry.file_type().is_file()
-                    || entry.file_name().to_string_lossy().ends_with(".json")
+                !entry.file_type().is_file() || scratch::is_advisory(entry.path())
             }) {
                 if tx.blocking_send(entry).is_err() {
                     return;
@@ -192,15 +192,19 @@ impl Source for TroveFileSource {
             if !path.is_file() {
                 continue;
             }
-            let name = match path.file_name().and_then(|s| s.to_str()) {
-                Some(name) => name,
-                None => continue,
-            };
-            if !name.ends_with(".json") {
+            if !scratch::is_advisory(path) {
                 continue;
             }
 
-            let url = Url::from_file_path(path)
+            let logical_path = scratch::logical_path(path);
+            if logical_path != path {
+                ensure!(
+                    !logical_path.exists(),
+                    "Both plain and compressed scratch files exist: {}",
+                    logical_path.display()
+                );
+            }
+            let url = Url::from_file_path(&logical_path)
                 .map_err(|()| anyhow!("Failed to convert to URL: {}", path.display()))?;
             let modified = path.metadata()?.modified()?;
 
@@ -225,10 +229,17 @@ impl Source for TroveFileSource {
             .to_file_path()
             .map_err(|()| anyhow!("Unable to convert URL to path: {}", discovered.url))?;
 
-        let data = Bytes::from(tokio::fs::read(&path).await?);
+        let compressed = scratch::compressed_path(&path);
+        let physical = if fs::try_exists(&compressed).await? {
+            compressed
+        } else {
+            path.clone()
+        };
+        let read_path = physical.clone();
+        let data = Bytes::from(spawn_blocking(move || scratch::read(&read_path)).await??);
         let (signature, sha256, sha512) = read_sig_and_digests(&path, &data).await?;
 
-        let last_modification = path
+        let last_modification = physical
             .metadata()
             .ok()
             .and_then(|md| md.modified().ok())
@@ -261,7 +272,7 @@ impl KeySource for TroveFileSource {
             .map_err(|()| anyhow!("Failed to convert key URL to path: {}", key.url))
             .map_err(KeySourceError::Source)?;
 
-        let bytes = tokio::fs::read(&path)
+        let bytes = fs::read(&path)
             .await
             .map_err(|err| KeySourceError::Source(err.into()))?;
 
@@ -269,3 +280,6 @@ impl KeySource for TroveFileSource {
             .map_err(KeySourceError::OpenPgp)
     }
 }
+
+#[cfg(test)]
+mod tests;

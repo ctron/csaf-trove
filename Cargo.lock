@@ -1496,6 +1496,7 @@ dependencies = [
  "url",
  "walkdir",
  "walker-common",
+ "zstd",
 ]
 
 [[package]]

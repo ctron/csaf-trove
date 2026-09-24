@@ -16,3 +16,9 @@ csaf-trove periodically fetches CSAF documents from configured providers, valida
 - **Web dashboard** — provider summaries, document details, and sync activity sparklines
 - **CSAF lister** — generates `aggregator.json` for use as a CSAF lister
 - **GitHub config sync** — provider list managed via a GitHub repository with webhook support
+
+Scratch advisories in `work/` use zstd compression (`.json.zst`, level 3), including during full syncs
+and revalidation. Signatures, checksums, and provider metadata remain plain files. Validation and Git
+insertion decompress individual advisories in memory; Git retains the original JSON bytes and paths,
+so document history and diffs remain compatible with existing repositories. No configuration or
+repository migration is required.

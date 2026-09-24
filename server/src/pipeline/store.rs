@@ -1,3 +1,4 @@
+use crate::storage::scratch;
 use anyhow::Context;
 use csaf_walker::{
     common::retrieve::RetrievalError,
@@ -7,13 +8,13 @@ use csaf_walker::{
     source::Source,
 };
 use std::{fmt::Debug, io::ErrorKind, path::PathBuf};
-use tokio::fs;
+use tokio::{fs, task::spawn_blocking};
 use walker_common::{
     store::{Document, StoreError, store_document},
     utils::{openpgp::PublicKey, url::Urlify},
 };
 
-/// Stores CSAF documents under a clean `<domain>/<url_path>` layout.
+/// Stores compressed CSAF documents under `<domain>/<url_path>.zst` with plain sidecars.
 pub struct TroveStoreVisitor {
     /// Output base directory (the worktree root).
     base: PathBuf,
@@ -30,6 +31,7 @@ pub enum TroveStoreError {
     Io(anyhow::Error),
 }
 
+/// Directory containing provider metadata and public keys.
 pub const DIR_METADATA: &str = "metadata";
 
 impl TroveStoreVisitor {
@@ -135,10 +137,24 @@ where
 
         tracing::debug!("Storing: {} → {}", advisory.url, file.display());
 
+        let compressed = if file.extension().is_some_and(|ext| ext == "json") {
+            let data = advisory.data.clone();
+            Some(
+                spawn_blocking(move || scratch::compress(&data))
+                    .await
+                    .map_err(|err| TroveStoreError::Io(err.into()))?
+                    .map_err(TroveStoreError::Io)?,
+            )
+        } else {
+            None
+        };
+
+        // The storage helper writes sidecars at their original paths and preserves timestamps
+        // and xattrs. JSON is written compressed even at the temporary advisory path.
         store_document(
             &file,
             Document {
-                data: &advisory.data,
+                data: compressed.as_deref().unwrap_or(&advisory.data),
                 changed: advisory.modified,
                 metadata: &advisory.metadata,
                 sha256: &advisory.sha256,
@@ -149,6 +165,15 @@ where
             },
         )
         .await?;
+
+        if compressed.is_some() {
+            fs::rename(&file, scratch::compressed_path(&file))
+                .await
+                .with_context(|| {
+                    format!("Failed to publish compressed advisory: {}", file.display())
+                })
+                .map_err(TroveStoreError::Io)?;
+        }
 
         Ok(())
     }
