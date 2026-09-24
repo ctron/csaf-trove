@@ -234,6 +234,50 @@ pub async fn save_documents(
     Ok(total)
 }
 
+/// Validation error counts that make a document fail; warnings and infos do not.
+const ERROR_COUNT_COLUMNS: [document::Column; 3] = [
+    document::Column::BasicErrorCount,
+    document::Column::ExtendedErrorCount,
+    document::Column::FullErrorCount,
+];
+
+/// Matches documents with validation errors, an integrity error, or a retrieval error.
+fn failing_condition() -> Condition {
+    ERROR_COUNT_COLUMNS
+        .into_iter()
+        .fold(Condition::any(), |c, col| c.add(col.gt(0)))
+        .add(document::Column::SignatureError.is_not_null())
+        .add(document::Column::RetrievalError.is_not_null())
+}
+
+/// Warning counts that, together with [`failing_condition`], mark a document as needing attention.
+const WARNING_COUNT_COLUMNS: [document::Column; 3] = [
+    document::Column::BasicWarningCount,
+    document::Column::ExtendedWarningCount,
+    document::Column::FullWarningCount,
+];
+
+/// Matches documents with warnings (validation or integrity) or anything [`failing_condition`] matches.
+fn warning_condition() -> Condition {
+    WARNING_COUNT_COLUMNS
+        .into_iter()
+        .fold(failing_condition(), |c, col| c.add(col.gt(0)))
+        .add(document::Column::SignatureWarning.is_not_null())
+}
+
+/// Matches exactly the documents [`warning_condition`] rejects, treating NULL counts as zero.
+fn passing_condition() -> Condition {
+    ERROR_COUNT_COLUMNS
+        .into_iter()
+        .chain(WARNING_COUNT_COLUMNS)
+        .fold(Condition::all(), |c, col| {
+            c.add(Condition::any().add(col.is_null()).add(col.eq(0)))
+        })
+        .add(document::Column::SignatureError.is_null())
+        .add(document::Column::SignatureWarning.is_null())
+        .add(document::Column::RetrievalError.is_null())
+}
+
 /// Loads a paginated, optionally filtered list of document validation results.
 pub async fn load_documents_paginated(
     db: &DatabaseConnection,
@@ -244,40 +288,10 @@ pub async fn load_documents_paginated(
     let mut query = document::Entity::find();
 
     match status_filter {
-        Some("failing") => {
-            query = query.filter(
-                Condition::any()
-                    .add(document::Column::BasicPassed.eq(0))
-                    .add(document::Column::ExtendedPassed.eq(0))
-                    .add(document::Column::FullPassed.eq(0))
-                    .add(document::Column::SignatureError.is_not_null())
-                    .add(document::Column::RetrievalError.is_not_null()),
-            );
-        }
-        Some("errors") => {
-            query = query.filter(document::Column::RetrievalError.is_not_null());
-        }
-        Some("passing") => {
-            query = query.filter(
-                Condition::all()
-                    .add(
-                        Condition::any()
-                            .add(document::Column::BasicPassed.is_null())
-                            .add(document::Column::BasicPassed.eq(1)),
-                    )
-                    .add(
-                        Condition::any()
-                            .add(document::Column::ExtendedPassed.is_null())
-                            .add(document::Column::ExtendedPassed.eq(1)),
-                    )
-                    .add(
-                        Condition::any()
-                            .add(document::Column::FullPassed.is_null())
-                            .add(document::Column::FullPassed.eq(1)),
-                    )
-                    .add(document::Column::SignatureError.is_null()),
-            );
-        }
+        Some("failing") => query = query.filter(failing_condition()),
+        Some("warnings") => query = query.filter(warning_condition()),
+        Some("passing") => query = query.filter(passing_condition()),
+        Some("errors") => query = query.filter(document::Column::RetrievalError.is_not_null()),
         _ => {}
     }
 

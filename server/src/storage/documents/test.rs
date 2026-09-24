@@ -250,3 +250,49 @@ async fn digest_warning_round_trip() {
             .is_none()
     );
 }
+
+/// Passing and warnings-and-above partition all documents; infos alone still pass.
+#[tokio::test]
+async fn status_filters_partition_documents() {
+    let db = database("sqlite::memory:", None).await;
+    db.execute_unprepared(
+        "INSERT INTO documents (tracking_id, title, url, signature_present, version_count,
+            basic_passed, basic_error_count, extended_passed, extended_error_count,
+            extended_warning_count, full_passed, full_error_count, full_info_count,
+            signature_error, retrieval_error) VALUES
+         ('clean', '', '', 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, NULL, NULL),
+         ('info', '', '', 1, 1, 1, 0, 1, 0, 0, 0, 0, 5, NULL, NULL),
+         ('warning', '', '', 1, 1, 1, 0, 0, 0, 3, 0, 0, 2, NULL, NULL),
+         ('invalid', '', '', 1, 1, 0, 1, 0, 1, 0, 0, 1, 0, NULL, NULL),
+         ('signature', '', '', 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 'bad', NULL),
+         ('digest', '', '', 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, NULL, NULL),
+         ('retrieval', '', '', 0, 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'gone')",
+    )
+    .await
+    .unwrap();
+    db.execute_unprepared(
+        "UPDATE documents SET signature_warning = 'mismatch' WHERE tracking_id = 'digest'",
+    )
+    .await
+    .unwrap();
+    let ids = async |status| {
+        super::load_documents_paginated(&db, 0, 100, status)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|d| d.tracking_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(None).await.len(), 7);
+    assert_eq!(ids(Some("passing")).await, ["clean", "info"]);
+    assert_eq!(
+        ids(Some("failing")).await,
+        ["invalid", "retrieval", "signature"]
+    );
+    assert_eq!(
+        ids(Some("warnings")).await,
+        ["digest", "invalid", "retrieval", "signature", "warning"]
+    );
+    assert_eq!(ids(Some("errors")).await, ["retrieval"]);
+}

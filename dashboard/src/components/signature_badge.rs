@@ -1,5 +1,10 @@
-use crate::components::badge::{Badge, BadgeVariant};
-use crate::models::SignatureSummary;
+use crate::{
+    components::{
+        badge::{Badge, BadgeVariant},
+        progress_bar::format_rate,
+    },
+    models::SignatureSummary,
+};
 use leptos::prelude::*;
 
 /// Displays an aggregate signature status badge for a provider.
@@ -12,12 +17,12 @@ pub fn SignatureBadge(signatures: Option<SignatureSummary>) -> impl IntoView {
             } else if s.valid + s.invalid + s.missing > 0 {
                 let total = (s.valid + s.invalid + s.missing) as f64;
                 let present_rate = (s.valid + s.invalid) as f64 / total;
-                let variant = if present_rate >= 0.95 {
+                let variant = if s.missing == 0 {
                     BadgeVariant::Success
                 } else {
                     BadgeVariant::Warning
                 };
-                (variant, format!("{:.0}% signed", present_rate * 100.0))
+                (variant, format!("{} signed", format_rate(present_rate, 0)))
             } else {
                 (BadgeVariant::Neutral, "-".to_string())
             };

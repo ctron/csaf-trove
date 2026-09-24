@@ -3,6 +3,8 @@ use crate::models::DocumentProfileDetail;
 use leptos::prelude::*;
 
 /// Displays a per-document profile validation badge showing test pass counts.
+///
+/// Red means errors, amber warnings only, green passed or informational notes only.
 #[component]
 pub fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
     match detail {
@@ -35,17 +37,13 @@ pub fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
                     parts.join(", ")
                 }
             };
-            let rate = if d.total_tests > 0 {
-                passed as f64 / d.total_tests as f64
-            } else {
-                0.0
-            };
-            let variant = if rate >= 0.95 {
-                BadgeVariant::Success
-            } else if rate >= 0.80 {
+            // Color by severity so green always means "ok", whatever the pass rate.
+            let variant = if d.error_count > 0 {
+                BadgeVariant::Danger
+            } else if d.warning_count > 0 {
                 BadgeVariant::Warning
             } else {
-                BadgeVariant::Danger
+                BadgeVariant::Success
             };
             view! { <Badge variant=variant>{label}</Badge> }.into_any()
         }

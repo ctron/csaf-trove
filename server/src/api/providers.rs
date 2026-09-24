@@ -135,7 +135,8 @@ pub struct DocumentsQuery {
     pub offset: Option<u64>,
     /// Maximum number of results (default 50, max 200).
     pub limit: Option<u64>,
-    /// Filter by status: `passing`, `failing`, or omit for all.
+    /// Filter by status: `failing` (errors), `warnings` (warnings or errors),
+    /// `passing` (no errors or warnings), `errors` (retrieval errors), or omit for all.
     pub status: Option<String>,
 }
 

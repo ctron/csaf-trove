@@ -12,7 +12,7 @@ use crate::components::{
     doc_profile_badge::DocProfileBadge,
     empty_state::EmptyState,
     pagination::Pagination,
-    progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate},
+    progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate, format_rate},
     table::{Table, Tbody, Td, Th, Thead},
     tabs::{Tab, Tabs},
     tlp_badge::TlpBadge,
@@ -79,7 +79,7 @@ fn profile_row(label: &'static str, profile: Option<ProfileSummary>) -> impl Int
         Some(p) => {
             let pct = p.pass_rate * 100.0;
             let color = color_for_pass_rate(p.pass_rate);
-            let rate_label = format!("{pct:.1}%");
+            let rate_label = format_rate(p.pass_rate, 1);
             let detail = format!("{} tests passed \u{00b7} {} tests failed", p.valid, p.invalid);
             view! {
                 <div class="mb-4 last:mb-0">
@@ -268,13 +268,12 @@ fn FailingTestsView(tests: Vec<crate::models::FailingTest>) -> impl IntoView {
 fn rate_badge(rate: Option<f64>) -> impl IntoView {
     match rate {
         Some(r) => {
-            let pct = r * 100.0;
             let variant = match color_for_pass_rate(r) {
                 ProgressColor::Emerald => BadgeVariant::Success,
                 ProgressColor::Amber => BadgeVariant::Warning,
                 ProgressColor::Red => BadgeVariant::Danger,
             };
-            view! { <Badge variant=variant>{format!("{pct:.1}%")}</Badge> }.into_any()
+            view! { <Badge variant=variant>{format_rate(r, 1)}</Badge> }.into_any()
         }
         None => view! {
             <span class="text-gray-400 dark:text-gray-500">"n/a"</span>
@@ -408,7 +407,11 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                 <Tab
                     active=Signal::derive(move || status_filter.get().as_deref() == Some("failing"))
                     on_click=Callback::new(move |_| { set_status_param.set(Some("failing".into())); set_offset_param.set(None); })
-                >"Failing"</Tab>
+                >"Errors"</Tab>
+                <Tab
+                    active=Signal::derive(move || status_filter.get().as_deref() == Some("warnings"))
+                    on_click=Callback::new(move |_| { set_status_param.set(Some("warnings".into())); set_offset_param.set(None); })
+                >"Warnings & Above"</Tab>
                 <Tab
                     active=Signal::derive(move || status_filter.get().as_deref() == Some("passing"))
                     on_click=Callback::new(move |_| { set_status_param.set(Some("passing".into())); set_offset_param.set(None); })
@@ -416,7 +419,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                 <Tab
                     active=Signal::derive(move || status_filter.get().as_deref() == Some("errors"))
                     on_click=Callback::new(move |_| { set_status_param.set(Some("errors".into())); set_offset_param.set(None); })
-                >"Errors"</Tab>
+                >"Retrieval Errors"</Tab>
             </Tabs>
         </div>
 
