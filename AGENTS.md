@@ -12,3 +12,5 @@
 
 * Try to avoid `gh api`, use the other `gh` commands
 * Try to avoid -C for git
+* Use conventional commits
+* Use gitflow branches
