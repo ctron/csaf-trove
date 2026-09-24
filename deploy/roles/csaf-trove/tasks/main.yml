@@ -49,6 +49,14 @@
     mode: "0755"
   notify: Restart csaf-trove
 
+- name: Clear sync state to force full re-sync
+  ansible.builtin.command:
+    cmd: find {{ csaf_trove_data_dir }}/state -name sync.json -delete
+  become: true
+  become_user: "{{ csaf_trove_user }}"
+  when: csaf_trove_force_full_sync
+  changed_when: true
+
 - name: Deploy configuration
   ansible.builtin.template:
     src: config.toml.j2

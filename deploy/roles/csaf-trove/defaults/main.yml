@@ -5,6 +5,9 @@ csaf_trove_github_repo: "ctron/csaf-trove"
 # Release version tag to deploy (e.g. "v0.1.0").
 csaf_trove_version: "v0.1.9"
 
+# Clear sync state to force a full re-sync on next run.
+csaf_trove_force_full_sync: false
+
 # Target architecture for the server binary.
 # Must match a CI build target: x86_64-unknown-linux-gnu or aarch64-unknown-linux-gnu.
 csaf_trove_target: "{{ 'aarch64-unknown-linux-gnu' if ansible_facts['architecture'] == 'aarch64' else 'x86_64-unknown-linux-gnu' }}"
