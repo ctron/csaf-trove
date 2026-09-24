@@ -193,11 +193,11 @@ pub async fn sync_provider(
     let dt = distributions_total.clone();
     let mut walker = Walker::new(http_source);
     walker = walker.with_distribution_filter(move |ctx: &DistributionContext| {
-        if let DistributionContext::Directory(url) = ctx {
-            if skip_dirs.iter().any(|s| s == url.as_str()) {
-                tracing::info!("Skipping configured directory distribution {url}");
-                return false;
-            }
+        if let DistributionContext::Directory(url) = ctx
+            && skip_dirs.iter().any(|s| s == url.as_str())
+        {
+            tracing::info!("Skipping configured directory distribution {url}");
+            return false;
         }
         dt.fetch_add(1, Ordering::Relaxed);
         true

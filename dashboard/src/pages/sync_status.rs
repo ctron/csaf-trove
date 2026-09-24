@@ -77,7 +77,8 @@ fn format_progress(job: &JobStatus) -> String {
 }
 
 fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
-    let label = job.phase
+    let label = job
+        .phase
         .as_ref()
         .map(|p| p.as_ref().to_string())
         .unwrap_or_else(|| "-".to_string());

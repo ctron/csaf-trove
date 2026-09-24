@@ -147,7 +147,10 @@ fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
 
 fn format_eta(eta_secs: u64) -> String {
     let duration = std::time::Duration::from_secs(eta_secs);
-    format!("~{}", csaf_trove_common::format_duration_hms(duration, true))
+    format!(
+        "~{}",
+        csaf_trove_common::format_duration_hms(duration, true)
+    )
 }
 
 /// Returns the current job status for all providers with computed durations.

@@ -131,32 +131,32 @@ pub async fn save_documents(
                 .await?;
         }
 
-        let (bp, bec, bwc, bic, btc, bfc) = profile_to_cols(doc.profiles.basic.as_ref());
-        let (ep, eec, ewc, eic, etc, efc) = profile_to_cols(doc.profiles.extended.as_ref());
-        let (fp, fec, fwc, fic, ftc, ffc) = profile_to_cols(doc.profiles.full.as_ref());
+        let basic = profile_to_cols(doc.profiles.basic.as_ref());
+        let extended = profile_to_cols(doc.profiles.extended.as_ref());
+        let full = profile_to_cols(doc.profiles.full.as_ref());
 
         let new_doc = document::ActiveModel {
             tracking_id: Set(doc.tracking_id.clone()),
             title: Set(doc.title.clone()),
             url: Set(doc.url.clone()),
-            basic_passed: Set(bp),
-            basic_error_count: Set(bec),
-            basic_warning_count: Set(bwc),
-            basic_info_count: Set(bic),
-            basic_test_count: Set(btc),
-            basic_failing_test_count: Set(bfc),
-            extended_passed: Set(ep),
-            extended_error_count: Set(eec),
-            extended_warning_count: Set(ewc),
-            extended_info_count: Set(eic),
-            extended_test_count: Set(etc),
-            extended_failing_test_count: Set(efc),
-            full_passed: Set(fp),
-            full_error_count: Set(fec),
-            full_warning_count: Set(fwc),
-            full_info_count: Set(fic),
-            full_test_count: Set(ftc),
-            full_failing_test_count: Set(ffc),
+            basic_passed: Set(basic.passed),
+            basic_error_count: Set(basic.error_count),
+            basic_warning_count: Set(basic.warning_count),
+            basic_info_count: Set(basic.info_count),
+            basic_test_count: Set(basic.test_count),
+            basic_failing_test_count: Set(basic.failing_test_count),
+            extended_passed: Set(extended.passed),
+            extended_error_count: Set(extended.error_count),
+            extended_warning_count: Set(extended.warning_count),
+            extended_info_count: Set(extended.info_count),
+            extended_test_count: Set(extended.test_count),
+            extended_failing_test_count: Set(extended.failing_test_count),
+            full_passed: Set(full.passed),
+            full_error_count: Set(full.error_count),
+            full_warning_count: Set(full.warning_count),
+            full_info_count: Set(full.info_count),
+            full_test_count: Set(full.test_count),
+            full_failing_test_count: Set(full.failing_test_count),
             signature_present: Set(doc.signature_present as i32),
             signature_error: Set(doc.signature_error.clone()),
             category: Set(doc.category.clone()),
@@ -366,36 +366,9 @@ async fn load_failures_for_docs(
                 title: doc.title.clone(),
                 url: doc.url.clone(),
                 profiles: DocumentProfileResults {
-                    basic: cols_to_profile(
-                        doc.basic_passed,
-                        doc.basic_error_count,
-                        doc.basic_warning_count,
-                        doc.basic_info_count,
-                        doc.basic_test_count,
-                        doc.basic_failing_test_count,
-                        doc_failures,
-                        "basic",
-                    ),
-                    extended: cols_to_profile(
-                        doc.extended_passed,
-                        doc.extended_error_count,
-                        doc.extended_warning_count,
-                        doc.extended_info_count,
-                        doc.extended_test_count,
-                        doc.extended_failing_test_count,
-                        doc_failures,
-                        "extended",
-                    ),
-                    full: cols_to_profile(
-                        doc.full_passed,
-                        doc.full_error_count,
-                        doc.full_warning_count,
-                        doc.full_info_count,
-                        doc.full_test_count,
-                        doc.full_failing_test_count,
-                        doc_failures,
-                        "full",
-                    ),
+                    basic: cols_to_profile(doc, doc_failures, "basic"),
+                    extended: cols_to_profile(doc, doc_failures, "extended"),
+                    full: cols_to_profile(doc, doc_failures, "full"),
                 },
                 signature_error: doc.signature_error.clone(),
                 signature_present: doc.signature_present != 0,
@@ -417,42 +390,63 @@ async fn load_failures_for_docs(
     Ok(items)
 }
 
-/// Converts a `DocumentProfileDetail` into column values for the documents table.
-fn profile_to_cols(
-    detail: Option<&DocumentProfileDetail>,
-) -> (
-    Option<i32>,
-    Option<i64>,
-    Option<i64>,
-    Option<i64>,
-    Option<i64>,
-    Option<i64>,
-) {
-    match detail {
-        Some(d) => (
-            Some(d.passed as i32),
-            Some(d.error_count as i64),
-            Some(d.warning_count as i64),
-            Some(d.info_count as i64),
-            Some(d.total_tests as i64),
-            Some(d.failing_test_count as i64),
-        ),
-        None => (None, None, None, None, None, None),
-    }
-}
-
-/// Reconstructs a `DocumentProfileDetail` from column values and loaded failures.
-fn cols_to_profile(
+#[derive(Default)]
+struct ProfileColumns {
     passed: Option<i32>,
     error_count: Option<i64>,
     warning_count: Option<i64>,
     info_count: Option<i64>,
     test_count: Option<i64>,
     failing_test_count: Option<i64>,
+}
+
+fn profile_to_cols(detail: Option<&DocumentProfileDetail>) -> ProfileColumns {
+    match detail {
+        Some(d) => ProfileColumns {
+            passed: Some(d.passed as i32),
+            error_count: Some(d.error_count as i64),
+            warning_count: Some(d.warning_count as i64),
+            info_count: Some(d.info_count as i64),
+            test_count: Some(d.total_tests as i64),
+            failing_test_count: Some(d.failing_test_count as i64),
+        },
+        None => ProfileColumns::default(),
+    }
+}
+
+fn cols_to_profile(
+    doc: &document::Model,
     failures: Option<&Vec<(String, String, String, String)>>,
     profile: &str,
 ) -> Option<DocumentProfileDetail> {
-    let passed_val = passed?;
+    let cols = match profile {
+        "basic" => ProfileColumns {
+            passed: doc.basic_passed,
+            error_count: doc.basic_error_count,
+            warning_count: doc.basic_warning_count,
+            info_count: doc.basic_info_count,
+            test_count: doc.basic_test_count,
+            failing_test_count: doc.basic_failing_test_count,
+        },
+        "extended" => ProfileColumns {
+            passed: doc.extended_passed,
+            error_count: doc.extended_error_count,
+            warning_count: doc.extended_warning_count,
+            info_count: doc.extended_info_count,
+            test_count: doc.extended_test_count,
+            failing_test_count: doc.extended_failing_test_count,
+        },
+        "full" => ProfileColumns {
+            passed: doc.full_passed,
+            error_count: doc.full_error_count,
+            warning_count: doc.full_warning_count,
+            info_count: doc.full_info_count,
+            test_count: doc.full_test_count,
+            failing_test_count: doc.full_failing_test_count,
+        },
+        _ => return None,
+    };
+    let passed_val = cols.passed?;
     let failing_tests = failures
         .map(|fs| {
             fs.iter()
@@ -468,11 +462,11 @@ fn cols_to_profile(
 
     Some(DocumentProfileDetail {
         passed: passed_val != 0,
-        error_count: error_count.unwrap_or(0) as u64,
-        warning_count: warning_count.unwrap_or(0) as u64,
-        info_count: info_count.unwrap_or(0) as u64,
-        total_tests: test_count.unwrap_or(0) as u64,
-        failing_test_count: failing_test_count.unwrap_or(0) as u64,
+        error_count: cols.error_count.unwrap_or(0) as u64,
+        warning_count: cols.warning_count.unwrap_or(0) as u64,
+        info_count: cols.info_count.unwrap_or(0) as u64,
+        total_tests: cols.test_count.unwrap_or(0) as u64,
+        failing_test_count: cols.failing_test_count.unwrap_or(0) as u64,
         failing_tests,
     })
 }
