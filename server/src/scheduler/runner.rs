@@ -263,6 +263,13 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         state.update_job_phase(domain, PipelinePhase::Report).await;
         generate_report(state, source).await?;
 
+        // only advance the since token once the full run succeeded, so a failure in a later
+        // phase causes the affected documents to be processed again on the next run
+        let mut sync_state = state.storage.load_sync_state(domain).await?;
+        sync_state.last_sync = Some(OffsetDateTime::now_utc());
+        sync_state.since_token = Some(sync_result.started_at);
+        state.storage.save_sync_state(&sync_state).await?;
+
         Ok(())
     }
     .await;

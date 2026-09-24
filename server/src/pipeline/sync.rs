@@ -40,6 +40,8 @@ pub struct SyncResult {
     pub retrieval_errors: Vec<RetrievalFailure>,
     /// Distribution feeds that could not be loaded (e.g. 403 on restricted TLP feeds).
     pub distribution_errors: Vec<RetrievalFailure>,
+    /// Time the sync started, to be used as the next `since` token once the whole run succeeded.
+    pub started_at: OffsetDateTime,
 }
 
 /// Wraps [`TroveStoreVisitor`] to increment the synced document count and collect retrieval errors.
@@ -131,12 +133,17 @@ impl Progress for JobProgress {
 /// Returns a list of documents that could not be retrieved (e.g. due to HTTP errors).
 /// These are collected instead of aborting the sync so that remaining documents can
 /// still be processed.
+///
+/// This does not advance the persisted `since` token. The caller must do that, using
+/// [`SyncResult::started_at`], only after the whole pipeline completed successfully.
 pub async fn sync_provider(
     state: &Arc<AppState>,
     source: &AppSource,
     worktree_dir: &Path,
 ) -> Result<SyncResult> {
     let domain = &source.domain;
+    // taken before fetching, so that documents changed during the walk are picked up next time
+    let started_at = OffsetDateTime::now_utc();
 
     let mut sync_state = state.storage.load_sync_state(domain).await?;
 
@@ -235,10 +242,6 @@ pub async fn sync_provider(
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    sync_state.last_sync = Some(OffsetDateTime::now_utc());
-    sync_state.since_token = Some(OffsetDateTime::now_utc());
-    state.storage.save_sync_state(&sync_state).await?;
-
     let retrieval_errors = match Arc::try_unwrap(retrieval_errors) {
         Ok(mutex) => mutex.into_inner(),
         Err(arc) => std::mem::take(&mut *arc.lock()),
@@ -263,5 +266,6 @@ pub async fn sync_provider(
     Ok(SyncResult {
         retrieval_errors,
         distribution_errors,
+        started_at,
     })
 }
