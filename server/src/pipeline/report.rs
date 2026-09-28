@@ -13,13 +13,7 @@ use std::sync::Arc;
 pub async fn generate_report(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
 
-    let Some(summary) = state
-        .storage
-        .list_summaries()
-        .await?
-        .into_iter()
-        .find(|s| s.provider == *domain)
-    else {
+    let Some(summary) = state.storage.load_summary(domain).await? else {
         tracing::warn!("No summary found for {domain}, skipping report");
         return Ok(());
     };

@@ -296,3 +296,24 @@ async fn status_filters_partition_documents() {
     );
     assert_eq!(ids(Some("errors")).await, ["retrieval"]);
 }
+
+/// Revalidation preserves revision counts and replaces obsolete tracking IDs at the same URL.
+#[tokio::test]
+async fn replacement_preserves_history_and_removes_stale_identity() {
+    let db = database("sqlite::memory:", None).await;
+    db.execute_unprepared("INSERT INTO documents (tracking_id, title, url, signature_present, version_count) VALUES ('old-id', 'Document', 'https://example.com/a.json', 0, 7)").await.unwrap();
+    let mut doc = super::load_document(&db, "old-id").await.unwrap().unwrap();
+    doc.tracking_id = "new-id".into();
+    doc.version_count = 1;
+    super::save_documents(&db, &[doc]).await.unwrap();
+    assert!(super::load_document(&db, "old-id").await.unwrap().is_none());
+    assert_eq!(
+        super::load_document(&db, "new-id")
+            .await
+            .unwrap()
+            .unwrap()
+            .version_count,
+        7
+    );
+    assert_eq!(super::document_count(&db).await.unwrap(), 1);
+}

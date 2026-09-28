@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -18,7 +18,6 @@ use crate::{
         },
         source::Source,
     },
-    pipeline::sync::JobProgress,
 };
 use anyhow::Result;
 use csaf_walker::{
@@ -128,18 +127,23 @@ async fn load_keys(file_source: &TroveFileSource) -> Result<Vec<PublicKey>> {
     Ok(keys)
 }
 
-/// Validates all documents in the worktree against basic, extended, and full CSAF profiles.
+/// Validates selected documents against basic, extended, and full CSAF profiles.
 ///
 /// Returns the total number of documents stored for this provider after the upsert.
 pub async fn validate_provider(
     state: &Arc<AppState>,
     source: &Source,
     worktree_dir: &Path,
+    selected: BTreeSet<String>,
 ) -> Result<u64> {
     let domain = &source.domain;
     tracing::info!("Validating documents for {domain}");
 
-    let file_source = TroveFileSource::new(worktree_dir)?;
+    let expected_count = selected.len() as u64;
+    if let Some(job) = state.jobs.write().await.get_mut(domain) {
+        job.documents_total = expected_count;
+    }
+    let file_source = TroveFileSource::selected(worktree_dir, selected)?;
     let canonical_worktree = Arc::new(
         std::fs::canonicalize(worktree_dir).unwrap_or_else(|_| worktree_dir.to_path_buf()),
     );
@@ -150,7 +154,6 @@ pub async fn validate_provider(
     }));
     let validation_options = Arc::new(build_validation_options(source));
 
-    let db_count_before = state.storage.document_count(domain).await.unwrap_or(0);
     let total_count = Arc::new(AtomicU64::new(0));
     let total_count_ref = total_count.clone();
 
@@ -310,38 +313,18 @@ pub async fn validate_provider(
     );
 
     let retriever = RetrievingVisitor::new(file_source.clone(), verifier);
-    let distributions_total = Arc::new(AtomicU64::new(0));
-    let dt = distributions_total.clone();
-
     Walker::new(file_source)
-        .with_distribution_filter(move |_| {
-            dt.fetch_add(1, Ordering::Relaxed);
-            true
-        })
-        .with_progress(JobProgress {
-            state: state.clone(),
-            domain: domain.to_string(),
-            distributions_total,
-        })
         .walk(retriever)
         .await
         .map_err(|e| anyhow::anyhow!("Validation walker failed for {domain}: {e}"))?;
 
     let total_count = total_count.load(Ordering::Relaxed);
-
-    if db_count_before > 0 && total_count < db_count_before / 2 {
-        tracing::warn!(
-            "{domain}: validation found {total_count} documents but database has {db_count_before}; \
-             documents not in this batch are preserved via upsert",
-        );
-    }
-
-    state.storage.update_version_counts(domain).await?;
+    anyhow::ensure!(
+        total_count == expected_count,
+        "Validation processed {total_count} of {expected_count} selected documents"
+    );
 
     let total_documents = state.storage.document_count(domain).await?;
-
-    let summary = state.storage.build_summary_from_db(domain).await?;
-    state.storage.save_summary(domain, &summary).await?;
 
     tracing::info!(
         "Validation complete for {domain}: {total_documents} documents ({total_count} validated)",

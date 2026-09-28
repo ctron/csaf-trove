@@ -1,6 +1,8 @@
 pub mod db;
 pub mod documents;
+pub mod git_processing;
 pub mod git_repo;
+pub mod processing;
 pub mod results;
 pub mod scratch;
 pub mod state;
@@ -374,7 +376,7 @@ impl Storage {
         &self,
         domain: &str,
         errors: &[(String, String)],
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let db = self.db.get(domain).await?;
         documents::save_retrieval_errors(&db, errors).await
     }

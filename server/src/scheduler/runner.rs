@@ -8,7 +8,13 @@ use crate::{
         report::generate_report, store::DIR_METADATA, sync::sync_provider,
         validate::validate_provider,
     },
-    storage::{ProviderInfo, git_repo},
+    storage::{
+        ProviderInfo,
+        git_processing::{
+            include_recovered_downloads, materialize_processing, path_url, select_processing,
+        },
+        git_repo,
+    },
 };
 use anyhow::Result;
 use csaf_trove_common::PipelinePhase;
@@ -215,7 +221,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         };
 
         state.update_job_phase(domain, PipelinePhase::Commit).await;
-        {
+        let committed = {
             let now = OffsetDateTime::now_utc();
             let msg = format!(
                 "sync: {:04}-{:02}-{:02}T{:02}:{:02}Z",
@@ -225,43 +231,25 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
                 now.hour(),
                 now.minute(),
             );
-            tokio::task::spawn_blocking(move || git_repo::commit_all(&prepared, &msg)).await??;
-        }
+            tokio::task::spawn_blocking(move || git_repo::commit_snapshot(&prepared, &msg))
+                .await??
+        };
+        tracing::debug!(commit = %committed.commit_id, "Committed provider snapshot");
 
         persist_provider_metadata(state, domain, &worktree_dir).await;
-
-        if !incremental {
-            state.storage.delete_all_documents(domain).await?;
-        }
-
-        state
-            .update_job_phase(domain, PipelinePhase::Validate)
-            .await;
-        let total = validate_provider(state, source, &worktree_dir).await?;
-
-        {
-            let mut jobs = state.jobs.write().await;
-            if let Some(job) = jobs.get_mut(domain) {
-                job.documents_total = total;
-            }
-        }
-
-        if !sync_result.retrieval_errors.is_empty() {
-            let pairs: Vec<(String, String)> = sync_result
-                .retrieval_errors
-                .into_iter()
-                .map(|e| (e.url, e.error))
-                .collect();
-            state.storage.save_retrieval_errors(domain, &pairs).await?;
-        }
 
         state
             .storage
             .save_distribution_errors(domain, &sync_result.distribution_errors)
             .await?;
-
-        state.update_job_phase(domain, PipelinePhase::Report).await;
-        generate_report(state, source).await?;
+        process_snapshot(
+            state,
+            source,
+            &worktree_dir,
+            false,
+            &sync_result.retrieval_errors,
+        )
+        .await?;
 
         // only advance the since token once the full run succeeded, so a failure in a later
         // phase causes the affected documents to be processed again on the next run
@@ -277,44 +265,140 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     result
 }
 
-/// Checks out the stored repository and re-validates every document in it.
+/// Materializes and re-validates every advisory in the stored repository.
 ///
 /// Nothing is fetched from the provider; existing results are updated in place.
 async fn run_revalidation(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
-    let repo_path = state.storage.repo_path(domain);
     let worktree_dir = state.work_dir().join(sanitize_domain(domain));
 
-    let result = async {
-        {
-            let repo = repo_path.clone();
-            let worktree = worktree_dir.clone();
-            tokio::task::spawn_blocking(move || {
-                git_repo::prepare_worktree(&repo, &worktree, false)
-            })
-            .await??;
-        }
+    // No checkout is needed: processing materializes the selected committed inputs.
+    let result = process_snapshot(state, source, &worktree_dir, true, &[]).await;
+    cleanup_worktree(&worktree_dir).await;
+    result
+}
 
+/// Identifies local validation code, dependency versions and effective signature policy.
+fn validator_identity(source: &Source) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(include_bytes!("../pipeline/validate.rs"));
+    hash.update(include_bytes!("../pipeline/source.rs"));
+    hash.update(include_bytes!("../storage/documents.rs"));
+    hash.update(include_bytes!("../../../Cargo.lock"));
+    hash.update([u8::from(source.accept_v3_signatures)]);
+    hex::encode(hash.finalize())
+}
+
+/// Processes only inputs changed since the last successful snapshot, then publishes its checkpoint.
+async fn process_snapshot(
+    state: &Arc<AppState>,
+    source: &Source,
+    download_dir: &Path,
+    force_full: bool,
+    retrieval_errors: &[crate::pipeline::sync::RetrievalFailure],
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let domain = &source.domain;
+    let previous = state.storage.processing_checkpoint(domain).await?;
+    let summary_dirty = previous
+        .as_ref()
+        .is_some_and(|checkpoint| checkpoint.summary_dirty);
+    if force_full {
+        state.storage.clear_processing_checkpoint(domain).await?;
+    }
+    let repo = state.storage.repo_path(domain);
+    let identity = validator_identity(source);
+    let selection_repo = repo.clone();
+    let mut selection = tokio::task::spawn_blocking(move || {
+        select_processing(&selection_repo, previous.as_ref(), &identity, force_full)
+    })
+    .await??;
+    let failed_urls = state.storage.retrieval_error_urls(domain).await?;
+    include_recovered_downloads(&mut selection, &failed_urls, download_dir)?;
+    let validation_dir = download_dir.join("validation");
+    let work = validation_dir.clone();
+    let selection = tokio::task::spawn_blocking(move || {
+        if work.exists() {
+            std::fs::remove_dir_all(&work)?;
+        }
+        if !selection.advisories.is_empty() {
+            materialize_processing(&repo, &selection, &work)?;
+        }
+        Ok::<_, anyhow::Error>(selection)
+    })
+    .await??;
+    let mut changed = summary_dirty
+        || selection.full
+        || !selection.advisories.is_empty()
+        || !selection.deleted.is_empty();
+    if selection.baseline {
+        // Recovery from missing/rewritten history must not retain orphaned results.
+        state.storage.delete_all_documents(domain).await?;
+    } else {
+        state
+            .storage
+            .delete_document_urls(domain, &selection.deleted)
+            .await?;
+    }
+    if !selection.advisories.is_empty() {
         state
             .update_job_phase(domain, PipelinePhase::Validate)
             .await;
-        let total = validate_provider(state, source, &worktree_dir).await?;
-
-        {
-            let mut jobs = state.jobs.write().await;
-            if let Some(job) = jobs.get_mut(domain) {
-                job.documents_total = total;
-            }
-        }
-
-        state.update_job_phase(domain, PipelinePhase::Report).await;
-        generate_report(state, source).await?;
-
-        Ok(())
+        validate_provider(state, source, &validation_dir, selection.advisories.clone()).await?;
     }
-    .await;
-    cleanup_worktree(&worktree_dir).await;
-    result
+    if selection.baseline || !selection.history.is_empty() {
+        state
+            .update_job_phase(domain, PipelinePhase::VersionCounts)
+            .await;
+        let urls: Vec<String> = selection
+            .history
+            .iter()
+            .map(|path| path_url(path))
+            .collect();
+        state
+            .storage
+            .update_selected_version_counts(
+                domain,
+                if selection.baseline {
+                    None
+                } else {
+                    Some(&urls)
+                },
+            )
+            .await?;
+    }
+    if !retrieval_errors.is_empty() {
+        let pairs = retrieval_errors
+            .iter()
+            .map(|failure| (failure.url.clone(), failure.error.clone()))
+            .collect::<Vec<_>>();
+        changed |= state.storage.save_retrieval_errors(domain, &pairs).await?;
+    }
+    if changed || state.storage.load_summary(domain).await?.is_none() {
+        state.update_job_phase(domain, PipelinePhase::Summary).await;
+        let summary = state.storage.build_summary_from_db(domain).await?;
+        state.storage.save_summary(domain, &summary).await?;
+    }
+    state.update_job_phase(domain, PipelinePhase::Report).await;
+    generate_report(state, source).await?;
+    let total = state.storage.document_count(domain).await?;
+    if let Some(job) = state.jobs.write().await.get_mut(domain) {
+        job.documents_total = total;
+    }
+    state
+        .storage
+        .save_processing_checkpoint(domain, &selection.checkpoint)
+        .await?;
+    tracing::info!(
+        domain,
+        full = selection.full,
+        selected = selection.advisories.len(),
+        skipped = total.saturating_sub(selection.advisories.len() as u64),
+        elapsed_ms = started.elapsed().as_millis(),
+        "Provider processing complete"
+    );
+    Ok(())
 }
 
 /// Removes disposable files without touching the persistent object database.
@@ -371,3 +455,6 @@ async fn persist_provider_metadata(state: &Arc<AppState>, domain: &str, worktree
         tracing::warn!("{domain}: failed to persist provider info: {e}");
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
@@ -8,7 +9,7 @@ use anyhow::{Context, anyhow, ensure};
 use bytes::Bytes;
 use csaf_walker::{
     discover::{DiscoveredAdvisory, DistributionContext},
-    model::metadata::{self, ProviderMetadata},
+    model::metadata::{self, Distribution, ProviderMetadata},
     retrieve::RetrievedAdvisory,
     source::Source,
 };
@@ -31,6 +32,8 @@ use crate::storage::scratch;
 pub struct TroveFileSource {
     /// Absolute path to the worktree root.
     base: PathBuf,
+    /// Exact logical advisory paths for a selected validation pass.
+    selected: Option<Arc<BTreeSet<String>>>,
 }
 
 impl TroveFileSource {
@@ -38,7 +41,15 @@ impl TroveFileSource {
     pub fn new(base: impl AsRef<Path>) -> anyhow::Result<Self> {
         Ok(Self {
             base: std::fs::canonicalize(base)?,
+            selected: None,
         })
+    }
+
+    /// Creates a source that discovers each selected advisory once, independent of overlapping feeds.
+    pub fn selected(base: impl AsRef<Path>, paths: BTreeSet<String>) -> anyhow::Result<Self> {
+        let mut source = Self::new(base)?;
+        source.selected = Some(Arc::new(paths));
+        Ok(source)
     }
 
     /// Maps an HTTP(S) distribution URL to the corresponding local directory.
@@ -136,6 +147,17 @@ impl Source for TroveFileSource {
 
         metadata.public_openpgp_keys = self.scan_keys().await?;
 
+        if self.selected.is_some() {
+            metadata.distributions = vec![Distribution {
+                directory_url: Some(
+                    Url::from_directory_path(&self.base)
+                        .map_err(|()| anyhow!("Invalid validation root"))?,
+                ),
+                rolie: None,
+            }];
+            return Ok(metadata);
+        }
+
         for dist in &mut metadata.distributions {
             if let Some(ref directory_url) = dist.directory_url {
                 let local_dir = self.url_to_local_dir(directory_url.as_str())?;
@@ -183,6 +205,23 @@ impl Source for TroveFileSource {
         context: DistributionContext,
     ) -> Result<Vec<DiscoveredAdvisory>, Self::Error> {
         let context = Arc::new(context);
+        if let Some(selected) = &self.selected {
+            return selected
+                .iter()
+                .map(|relative| {
+                    let path = self.base.join(relative);
+                    let url = Url::from_file_path(&path)
+                        .map_err(|()| anyhow!("Invalid selected path"))?;
+                    Ok(DiscoveredAdvisory {
+                        url,
+                        modified: std::time::SystemTime::UNIX_EPOCH,
+                        digest: None,
+                        signature: None,
+                        context: context.clone(),
+                    })
+                })
+                .collect();
+        }
         let mut entries = self.walk_distribution(context.clone())?;
         let mut result = vec![];
 

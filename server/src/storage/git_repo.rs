@@ -146,6 +146,18 @@ pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
     }
     let mut index = repo.index()?;
 
+    // Downloaded key sets replace the old set, including keys removed by rotation.
+    if worktree_path.join("metadata/keys").is_dir() {
+        let keys: Vec<_> = index
+            .iter()
+            .filter(|entry| entry.path.starts_with(b"metadata/keys/"))
+            .map(|entry| entry.path)
+            .collect();
+        for key in keys {
+            index.remove_path(Path::new(from_utf8(&key)?))?;
+        }
+    }
+
     let git_dir = worktree_path.join(".git");
     for entry in WalkDir::new(worktree_path)
         .into_iter()
@@ -158,6 +170,16 @@ pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
                 .strip_prefix(worktree_path)
                 .context("file is not under worktree")?;
             let logical = scratch::logical_path(relative);
+            if scratch::is_advisory(&logical) && !logical.starts_with("metadata") {
+                for suffix in ["asc", "sha256", "sha512"] {
+                    let sidecar = logical.with_added_extension(suffix);
+                    if !worktree_path.join(&sidecar).exists()
+                        && index.get_path(&sidecar, 0).is_some()
+                    {
+                        index.remove_path(&sidecar)?;
+                    }
+                }
+            }
             if logical != relative {
                 ensure!(
                     !worktree_path.join(&logical).exists(),
@@ -225,6 +247,21 @@ pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
     }
 
     Ok(true)
+}
+
+/// Snapshot published by a sync commit, including unchanged runs.
+pub struct CommitOutcome {
+    /// Resulting immutable Git commit.
+    pub commit_id: String,
+}
+
+/// Commits downloaded files and returns the resulting snapshot identity.
+pub fn commit_snapshot(worktree: &PreparedWorktree, message: &str) -> Result<CommitOutcome> {
+    commit_all(worktree, message)?;
+    let repo = Repository::open_bare(&worktree.repo_path)?;
+    Ok(CommitOutcome {
+        commit_id: repo.head()?.peel_to_commit()?.id().to_string(),
+    })
 }
 
 /// Reads a blob from the HEAD commit of a bare repo at the given tree path.
@@ -298,7 +335,7 @@ fn collect_blob_oids(tree: &Tree<'_>, paths: &HashSet<String>) -> HashMap<String
 ///
 /// The worktree (and thus the git tree) stores files as
 /// `<domain>/<url_path>`, mirroring the URL structure directly.
-fn url_to_git_path(url: &str) -> Result<Option<String>> {
+pub(super) fn url_to_git_path(url: &str) -> Result<Option<String>> {
     let parsed = url::Url::parse(url).context("invalid document URL")?;
     let domain = match parsed.host_str() {
         Some(d) => d,
@@ -384,6 +421,19 @@ pub fn document_versions(
 /// in the repo are omitted. More efficient than calling `document_versions`
 /// per document because the repo and revwalk are shared.
 pub fn document_version_counts(repo_path: &Path, urls: &[&str]) -> Result<HashMap<String, u32>> {
+    version_counts(repo_path, urls, false)
+}
+
+/// Counts history using only requested paths instead of walking each complete tree.
+pub fn selected_document_version_counts(
+    repo_path: &Path,
+    urls: &[&str],
+) -> Result<HashMap<String, u32>> {
+    version_counts(repo_path, urls, true)
+}
+
+/// Shared absolute history calculation with bulk and targeted tree access.
+fn version_counts(repo_path: &Path, urls: &[&str], targeted: bool) -> Result<HashMap<String, u32>> {
     let repo = Repository::open_bare(repo_path)?;
 
     let Ok(head) = repo.head() else {
@@ -419,7 +469,17 @@ pub fn document_version_counts(repo_path: &Path, urls: &[&str]) -> Result<HashMa
         let tree = commit.tree()?;
 
         // Walk tree once per commit, collect all blob OIDs we care about
-        let current_oids = collect_blob_oids(&tree, &git_paths);
+        let current_oids = if targeted {
+            let mut oids = HashMap::new();
+            for path in &git_paths {
+                if let Some(oid) = blob_oid_at_path(&tree, path)? {
+                    oids.insert(path.clone(), oid);
+                }
+            }
+            oids
+        } else {
+            collect_blob_oids(&tree, &git_paths)
+        };
 
         for (url, git_path) in &paths {
             let current_oid = current_oids.get(git_path).copied();

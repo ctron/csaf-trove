@@ -110,8 +110,14 @@ pub async fn save_documents(
                 .add(document::Column::TrackingId.eq(&lossy_id))
         } else {
             Condition::any().add(document::Column::TrackingId.eq(&doc.tracking_id))
-        };
+        }
+        .add(document::Column::Url.eq(&doc.url));
 
+        let previous_count = document::Entity::find()
+            .filter(document::Column::Url.eq(&doc.url))
+            .one(&txn)
+            .await?
+            .map(|row| row.version_count);
         let existing_ids: Vec<i64> = document::Entity::find()
             .filter(condition.clone())
             .select_only()
@@ -175,7 +181,7 @@ pub async fn save_documents(
             aggregate_severity: Set(doc.aggregate_severity.clone()),
             csaf_version: Set(doc.csaf_version.clone()),
             retrieval_error: Set(doc.retrieval_error.clone()),
-            version_count: Set(doc.version_count as i32),
+            version_count: Set(previous_count.unwrap_or(doc.version_count as i32)),
             ..Default::default()
         };
 
@@ -228,6 +234,10 @@ pub async fn save_documents(
         }
     }
 
+    if !documents.is_empty() {
+        txn.execute_unprepared("UPDATE processing_checkpoint SET summary_dirty = 1 WHERE id = 1")
+            .await?;
+    }
     txn.commit().await?;
 
     let total = document::Entity::find().count(db).await?;
@@ -831,23 +841,27 @@ pub async fn save_provider_info(db: &DatabaseConnection, info: &ProviderInfo) ->
 /// Persists retrieval errors as document entries.
 ///
 /// For each `(url, error)` pair, either updates the `retrieval_error` column on an
-/// existing document (matched by tracking ID derived from the URL) or inserts a stub
-/// row when no prior document exists.
+/// existing document (matched by its original URL) or inserts a stub
+/// row when no prior document exists. Returns whether stored error state changed.
 pub async fn save_retrieval_errors(
     db: &DatabaseConnection,
     errors: &[(String, String)],
-) -> Result<()> {
+) -> Result<bool> {
     let txn = db.begin().await?;
+    let mut changed = false;
 
     for (url, error) in errors {
         let tracking_id = tracking_id_from_url(url);
 
         let existing = document::Entity::find()
-            .filter(document::Column::TrackingId.eq(&tracking_id))
+            .filter(document::Column::Url.eq(url))
             .one(&txn)
             .await?;
 
         if let Some(doc) = existing {
+            if doc.retrieval_error.as_deref() == Some(error.as_str()) {
+                continue;
+            }
             let mut active: document::ActiveModel = doc.into();
             active.retrieval_error = Set(Some(error.clone()));
             active.update(&txn).await?;
@@ -863,10 +877,14 @@ pub async fn save_retrieval_errors(
             .insert(&txn)
             .await?;
         }
+        changed = true;
     }
-
+    if changed {
+        txn.execute_unprepared("UPDATE processing_checkpoint SET summary_dirty = 1 WHERE id = 1")
+            .await?;
+    }
     txn.commit().await?;
-    Ok(())
+    Ok(changed)
 }
 
 /// Loads the persisted provider metadata info, if available.
@@ -952,11 +970,24 @@ struct DocumentVersionRow {
 
 /// Computes version counts from Git history and updates changed rows by primary key.
 pub async fn update_version_counts(db: &DatabaseConnection, repo_path: &Path) -> Result<()> {
-    if !repo_path.exists() {
+    update_selected_version_counts(db, repo_path, None).await
+}
+
+/// Updates absolute version counts for selected URLs; retries never increment twice.
+pub async fn update_selected_version_counts(
+    db: &DatabaseConnection,
+    repo_path: &Path,
+    urls: Option<&[String]>,
+) -> Result<()> {
+    if !repo_path.exists() || urls.is_some_and(|urls| urls.is_empty()) {
         return Ok(());
     }
-
-    let documents = document::Entity::find()
+    let mut query = document::Entity::find();
+    if let Some(urls) = urls {
+        query = query.filter(document::Column::Url.is_in(urls.to_vec()));
+    }
+    let targeted = urls.is_some();
+    let documents = query
         .select_only()
         .column(document::Column::Id)
         .column(document::Column::Url)
@@ -974,7 +1005,11 @@ pub async fn update_version_counts(db: &DatabaseConnection, repo_path: &Path) ->
         // Multiple rows may share a URL; count its history only once.
         let urls: HashSet<&str> = documents.iter().map(|doc| doc.url.as_str()).collect();
         let url_refs: Vec<&str> = urls.into_iter().collect();
-        let counts = document_version_counts(&repo, &url_refs)?;
+        let counts = if targeted {
+            super::git_repo::selected_document_version_counts(&repo, &url_refs)?
+        } else {
+            document_version_counts(&repo, &url_refs)?
+        };
         Ok::<_, Error>((documents, counts))
     })
     .await??;

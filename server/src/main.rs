@@ -219,6 +219,10 @@ impl AppState {
         let mut jobs = self.jobs.write().await;
         if let Some(job) = jobs.get_mut(domain) {
             if let Some(old) = job.phase.take() {
+                let elapsed_ms = job
+                    .phase_started_at
+                    .map(|start| (OffsetDateTime::now_utc() - start).whole_milliseconds());
+                tracing::info!(domain, phase = %old, elapsed_ms, "Provider phase complete");
                 job.completed_phases.push(old);
             }
             job.phase = Some(phase);

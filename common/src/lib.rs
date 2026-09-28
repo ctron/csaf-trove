@@ -49,6 +49,10 @@ pub enum PipelinePhase {
     Sync,
     Commit,
     Validate,
+    /// Recomputing document revision counts.
+    VersionCounts,
+    /// Aggregating stored validation results.
+    Summary,
     Report,
 }
 

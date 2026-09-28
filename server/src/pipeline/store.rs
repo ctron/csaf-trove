@@ -77,6 +77,9 @@ impl TroveStoreVisitor {
     /// Writes PGP public keys to `metadata/keys/`.
     async fn store_keys(&self, keys: &[PublicKey]) -> anyhow::Result<()> {
         let dir = self.base.join(DIR_METADATA).join("keys");
+        if fs::try_exists(&dir).await? {
+            fs::remove_dir_all(&dir).await?;
+        }
         fs::create_dir(&dir)
             .await
             .or_else(|err| match err.kind() {
@@ -148,6 +151,16 @@ where
         } else {
             None
         };
+
+        // A successful retrieval replaces its complete integrity input set.
+        for suffix in ["asc", "sha256", "sha512"] {
+            let sidecar = file.with_added_extension(suffix);
+            match fs::remove_file(sidecar).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(TroveStoreError::Io(error.into())),
+            }
+        }
 
         // The storage helper writes sidecars at their original paths and preserves timestamps
         // and xattrs. JSON is written compressed even at the temporary advisory path.
