@@ -197,6 +197,7 @@ async fn status_filters_partition_documents() {
         ["digest", "invalid", "retrieval", "signature", "warning"]
     );
     assert_eq!(ids(Some("errors")).await, ["retrieval"]);
+    assert_eq!(ids(Some("signature-errors")).await, ["signature"]);
 }
 
 /// Revalidation preserves revision counts and replaces obsolete tracking IDs at the same URL.

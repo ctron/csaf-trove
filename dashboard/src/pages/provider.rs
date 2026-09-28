@@ -420,6 +420,10 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                     active=Signal::derive(move || status_filter.get().as_deref() == Some("errors"))
                     on_click=Callback::new(move |_| { set_status_param.set(Some("errors".into())); set_offset_param.set(None); })
                 >"Retrieval Errors"</Tab>
+                <Tab
+                    active=Signal::derive(move || status_filter.get().as_deref() == Some("signature-errors"))
+                    on_click=Callback::new(move |_| { set_status_param.set(Some("signature-errors".into())); set_offset_param.set(None); })
+                >"Signature Errors"</Tab>
             </Tabs>
         </div>
 

@@ -297,6 +297,9 @@ pub async fn load_documents_paginated(
         Some("warnings") => query = query.filter(warning_condition()),
         Some("passing") => query = query.filter(passing_condition()),
         Some("errors") => query = query.filter(document::Column::RetrievalError.is_not_null()),
+        Some("signature-errors") => {
+            query = query.filter(document::Column::SignatureError.is_not_null());
+        }
         _ => {}
     }
 
