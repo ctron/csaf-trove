@@ -1,3 +1,4 @@
+pub mod content;
 pub mod db;
 pub mod documents;
 pub mod git_processing;

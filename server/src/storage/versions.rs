@@ -2,12 +2,12 @@
 mod test;
 
 use super::{
-    Storage, documents,
+    Storage, content, documents,
     git_repo::{self, CommitVersions},
 };
 use crate::models::result::{DiffLineInfo, DocumentVersionInfo, HistoricalDocument};
 use anyhow::{Result, anyhow};
-use csaf_trove_common::Paginated;
+use csaf_trove_common::{Paginated, document_content::DocumentContent};
 use csaf_trove_entity::{document, document_version};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, PaginatorTrait,
@@ -177,6 +177,18 @@ async fn find_version(
         .await?)
 }
 
+/// Returns the most recently recorded version of a document.
+async fn latest_version(
+    db: &DatabaseConnection,
+    url: &str,
+) -> Result<Option<document_version::Model>> {
+    Ok(document_version::Entity::find()
+        .filter(document_version::Column::Url.eq(url))
+        .order_by_desc(document_version::Column::Id)
+        .one(db)
+        .await?)
+}
+
 /// Returns the version recorded directly after the given one, if any.
 async fn next_newer_version(
     db: &DatabaseConnection,
@@ -288,5 +300,23 @@ impl Storage {
             commit_id,
             version.timestamp,
         )?))
+    }
+
+    /// Reads the current version of a document from git and extracts its displayable content.
+    pub async fn read_document_content(
+        &self,
+        domain: &str,
+        tracking_id: &str,
+    ) -> Result<Option<DocumentContent>> {
+        let Some((db, url)) = self.document_ref(domain, tracking_id).await? else {
+            return Ok(None);
+        };
+        let Some(version) = latest_version(&db, &url).await? else {
+            return Ok(None);
+        };
+        let Some(blob) = self.read_blob(domain, &version.blob_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(content::extract_content(&blob)?))
     }
 }

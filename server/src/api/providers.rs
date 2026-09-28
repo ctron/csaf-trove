@@ -216,6 +216,20 @@ pub async fn document_detail(
     Ok(HttpResponse::Ok().json(doc))
 }
 
+/// Returns the displayable content of the current version of a document.
+pub async fn document_content(
+    state: web::Data<AppState>,
+    path: web::Path<(String, String)>,
+) -> Result<HttpResponse, ApiError> {
+    let (domain, tracking_id) = path.into_inner();
+    let content = state
+        .storage
+        .read_document_content(&domain, &tracking_id)
+        .await?
+        .or_not_found()?;
+    Ok(HttpResponse::Ok().json(content))
+}
+
 /// Returns a page of the version history for a specific document, newest first.
 pub async fn document_versions(
     state: web::Data<AppState>,

@@ -1,6 +1,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod document_checks;
+pub mod document_content;
 
 use std::time::Duration;
 

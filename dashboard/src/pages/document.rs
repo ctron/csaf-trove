@@ -8,10 +8,14 @@ use crate::components::{
     pagination::Pagination,
     section_heading::SubHeading,
     table::{Table, Tbody, Td, Th, Thead},
+    tlp_badge::TlpBadge,
 };
 use crate::models::{
     DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, PaginatedVersions,
     RevisionEntry, encode_path_segment,
+};
+use csaf_trove_common::document_content::{
+    DocumentContent, Note, ProductStatusCount, Publisher, Reference, Vulnerability,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
@@ -55,6 +59,24 @@ async fn fetch_document(domain: String, tracking_id: String) -> Result<DocumentV
         return Err("Document not found".to_string());
     }
     resp.json().await.map_err(|e| e.to_string())
+}
+
+/// Fetches the displayable content of the current document version, `None` if unavailable.
+async fn fetch_content(
+    domain: String,
+    tracking_id: String,
+) -> Result<Option<DocumentContent>, String> {
+    let resp = gloo_net::http::Request::get(&format!(
+        "/api/providers/{}/document/{tracking_id}/content",
+        encode_path_segment(&domain)
+    ))
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    if resp.status() == 404 {
+        return Ok(None);
+    }
+    resp.json().await.map(Some).map_err(|e| e.to_string())
 }
 
 /// Fetches a page of the version history for a document, newest first.
@@ -126,7 +148,8 @@ fn format_timestamp(ts: i64) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
-/// Document detail page with Overview, Validation, Revision, and History tabs.
+/// Document detail page with Overview, Notes & References, Vulnerabilities, Validation,
+/// Revision, and History tabs.
 #[component]
 pub fn DocumentPage() -> impl IntoView {
     let params = use_params_map();
@@ -170,6 +193,14 @@ pub fn DocumentPage() -> impl IntoView {
         let t = tracking_id();
         async move { fetch_document(d, t).await }
     });
+
+    // Needed by the Overview tab as well, so always loaded.
+    let content = LocalResource::new(move || {
+        let d = domain();
+        let t = tracking_id();
+        async move { fetch_content(d, t).await }
+    });
+    let loaded_content = Signal::derive(move || content.get().and_then(Result::ok).flatten());
 
     // Only load history once the tab is opened.
     let versions = LocalResource::new(move || {
@@ -240,6 +271,21 @@ pub fn DocumentPage() -> impl IntoView {
                     })
                 >"Overview"</ContentTab>
                 <ContentTab
+                    active=Signal::derive(move || tab.get() == "notes")
+                    on_click=Callback::new(move |_| {
+                        navigate.run(format!("{}/notes", document_url()));
+                    })
+                >"Notes & References"</ContentTab>
+                <ContentTab
+                    active=Signal::derive(move || tab.get() == "vulnerabilities")
+                    on_click=Callback::new(move |_| {
+                        navigate.run(format!("{}/vulnerabilities", document_url()));
+                    })
+                >
+                    "Vulnerabilities"
+                    {move || loaded_content.get().map(|c| format!(" ({})", c.vulnerabilities.len()))}
+                </ContentTab>
+                <ContentTab
                     active=Signal::derive(move || tab.get() == "validation")
                     on_click=Callback::new(move |_| {
                         navigate.run(format!("{}/validation", document_url()));
@@ -258,7 +304,22 @@ pub fn DocumentPage() -> impl IntoView {
             </ContentTabs>
 
             {move || {
-                if tab.get() == "history" {
+                let t = tab.get();
+                if t == "notes" || t == "vulnerabilities" {
+                    view! {
+                        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
+                            {move || content.get().map(|result| match result {
+                                Ok(Some(c)) if tab.get() == "notes" => view! {
+                                    <NotesSection notes=c.notes />
+                                    <ReferencesSection references=c.references />
+                                }.into_any(),
+                                Ok(Some(c)) => view! { <VulnerabilitiesTable vulnerabilities=c.vulnerabilities /> }.into_any(),
+                                Ok(None) => view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Document content not available."</p> }.into_any(),
+                                Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
+                            })}
+                        </Suspense>
+                    }.into_any()
+                } else if t == "history" {
                     view! {
                         {move || {
                             if selected_version.get().is_some() {
@@ -314,7 +375,7 @@ pub fn DocumentPage() -> impl IntoView {
                     view! {
                         <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                             {move || detail.get().map(|result| match result {
-                                Ok(doc) => view! { <DocumentDetailContent doc=doc tab=tab /> }.into_any(),
+                                Ok(doc) => view! { <DocumentDetailContent doc=doc tab=tab content=loaded_content /> }.into_any(),
                                 Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                             })}
                         </Suspense>
@@ -449,7 +510,12 @@ fn HistoricalVersionDetail(doc: HistoricalDocument) -> impl IntoView {
 
 /// Renders document content for the Overview, Validation, and Revision tabs.
 #[component]
-fn DocumentDetailContent(doc: DocumentValidation, tab: Signal<String>) -> impl IntoView {
+fn DocumentDetailContent(
+    doc: DocumentValidation,
+    tab: Signal<String>,
+    /// Extracted document content, once loaded.
+    content: Signal<Option<DocumentContent>>,
+) -> impl IntoView {
     let doc = StoredValue::new(doc);
 
     view! {
@@ -473,7 +539,19 @@ fn DocumentDetailContent(doc: DocumentValidation, tab: Signal<String>) -> impl I
                         <Tbody>
                             <MetadataRow label="Title" value=Some(d.title) />
                             <MetadataRow label="Category" value=d.category />
-                            <MetadataRow label="Publisher" value=d.publisher_name />
+                            {move || content.get().and_then(|c| c.tlp).map(|tlp| view! {
+                                <tr>
+                                    <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"TLP"</Td>
+                                    <Td><TlpBadge label=tlp /></Td>
+                                </tr>
+                            })}
+                            {
+                                let fallback = d.publisher_name.clone();
+                                move || match content.get().and_then(|c| c.publisher) {
+                                    Some(publisher) => view! { <PublisherRow publisher=publisher /> }.into_any(),
+                                    None => view! { <MetadataRow label="Publisher" value=fallback.clone() /> }.into_any(),
+                                }
+                            }
                             <MetadataRow label="Severity" value=d.aggregate_severity />
                             <MetadataRow label="CSAF Version" value=d.csaf_version />
                             <tr>
@@ -621,6 +699,219 @@ fn RevisionHistoryTable(entries: Vec<RevisionEntry>) -> impl IntoView {
                         <Td>{r.date}</Td>
                         <Td>{r.summary}</Td>
                     </tr>
+                }).collect::<Vec<_>>()}
+            </Tbody>
+        </Table>
+    }
+    .into_any()
+}
+
+/// Renders the publisher name with its category as a label, plus namespace and contact details.
+#[component]
+fn PublisherRow(publisher: Publisher) -> impl IntoView {
+    let details = [publisher.contact_details, publisher.issuing_authority]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    view! {
+        <tr>
+            <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"Publisher"</Td>
+            <Td>
+                <div class="flex flex-wrap items-center gap-2">
+                    <span>{publisher.name}</span>
+                    {publisher.category.map(|category| view! {
+                        <Badge variant=BadgeVariant::Info>{category}</Badge>
+                    })}
+                    {publisher.namespace.map(|namespace| {
+                        let href = namespace.clone();
+                        view! { <a href=href target="_blank" rel="noopener noreferrer">{namespace}</a> }
+                    })}
+                </div>
+                {details.into_iter().map(|detail| view! {
+                    <div class="mt-1 text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap">{detail}</div>
+                }).collect::<Vec<_>>()}
+            </Td>
+        </tr>
+    }
+}
+
+/// Renders a muted placeholder line for an empty section.
+#[component]
+fn EmptySection(message: &'static str) -> impl IntoView {
+    view! { <p class="text-sm text-gray-500 dark:text-gray-400">{message}</p> }
+}
+
+/// Renders a list of notes with their title, category, and text.
+#[component]
+fn NoteList(notes: Vec<Note>) -> impl IntoView {
+    view! {
+        <div class="space-y-4">
+            {notes.into_iter().map(|note| view! {
+                <div class="p-4 border border-gray-200 rounded-lg dark:border-gray-700 bg-white dark:bg-gray-900">
+                    <div class="flex flex-wrap items-center gap-2 mb-2">
+                        {note.title.map(|title| view! {
+                            <span class="font-medium text-gray-800 dark:text-white">{title}</span>
+                        })}
+                        {note.category.map(|category| view! {
+                            <Badge variant=BadgeVariant::Neutral>{category}</Badge>
+                        })}
+                    </div>
+                    <p class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{note.text}</p>
+                </div>
+            }).collect::<Vec<_>>()}
+        </div>
+    }
+}
+
+/// Renders the document notes section.
+#[component]
+fn NotesSection(notes: Vec<Note>) -> impl IntoView {
+    view! {
+        <SubHeading>"Notes"</SubHeading>
+        {if notes.is_empty() {
+            view! { <EmptySection message="No notes." /> }.into_any()
+        } else {
+            view! { <NoteList notes=notes /> }.into_any()
+        }}
+    }
+}
+
+/// Renders a table of references with their category, summary, and link.
+#[component]
+fn ReferenceTable(references: Vec<Reference>) -> impl IntoView {
+    view! {
+        <Table>
+            <Thead>
+                <tr>
+                    <Th>"Category"</Th>
+                    <Th>"Summary"</Th>
+                    <Th>"URL"</Th>
+                </tr>
+            </Thead>
+            <Tbody>
+                {references.into_iter().map(|reference| {
+                    let href = reference.url.clone();
+                    view! {
+                    <tr>
+                        <Td>{reference.category.map(|category| view! {
+                            <Badge variant=BadgeVariant::Neutral>{category}</Badge>
+                        })}</Td>
+                        <Td>{reference.summary}</Td>
+                        <Td class="break-all">
+                            <a href=href target="_blank" rel="noopener noreferrer">{reference.url}</a>
+                        </Td>
+                    </tr>
+                    }
+                }).collect::<Vec<_>>()}
+            </Tbody>
+        </Table>
+    }
+}
+
+/// Renders the document references section.
+#[component]
+fn ReferencesSection(references: Vec<Reference>) -> impl IntoView {
+    view! {
+        <SubHeading>"References"</SubHeading>
+        {if references.is_empty() {
+            view! { <EmptySection message="No references." /> }.into_any()
+        } else {
+            view! { <ReferenceTable references=references /> }.into_any()
+        }}
+    }
+}
+
+/// Maps a CVSS severity to a badge variant.
+fn severity_variant(severity: &str) -> BadgeVariant {
+    match severity.to_ascii_uppercase().as_str() {
+        "CRITICAL" | "HIGH" => BadgeVariant::Danger,
+        "MEDIUM" => BadgeVariant::Warning,
+        "LOW" => BadgeVariant::Info,
+        _ => BadgeVariant::Neutral,
+    }
+}
+
+/// Maps a product status key to a short label and badge variant.
+fn product_status_label(status: &str) -> (&str, BadgeVariant) {
+    match status {
+        "known_affected" => ("affected", BadgeVariant::Danger),
+        "first_affected" => ("first affected", BadgeVariant::Danger),
+        "last_affected" => ("last affected", BadgeVariant::Danger),
+        "under_investigation" => ("under investigation", BadgeVariant::Warning),
+        "fixed" => ("fixed", BadgeVariant::Success),
+        "first_fixed" => ("first fixed", BadgeVariant::Success),
+        "known_not_affected" => ("not affected", BadgeVariant::Success),
+        "recommended" => ("recommended", BadgeVariant::Info),
+        other => (other, BadgeVariant::Neutral),
+    }
+}
+
+/// Renders product status counts as compact badges.
+#[component]
+fn ProductStatusBadges(statuses: Vec<ProductStatusCount>) -> impl IntoView {
+    view! {
+        <div class="flex flex-wrap gap-1">
+            {statuses.into_iter().map(|s| {
+                let (label, variant) = product_status_label(&s.status);
+                let text = format!("{} {label}", s.count);
+                view! { <Badge variant=variant>{text}</Badge> }
+            }).collect::<Vec<_>>()}
+        </div>
+    }
+}
+
+/// Renders the vulnerabilities of a document as a table.
+#[component]
+fn VulnerabilitiesTable(vulnerabilities: Vec<Vulnerability>) -> impl IntoView {
+    if vulnerabilities.is_empty() {
+        return view! {
+            <p class="text-gray-500 dark:text-gray-400 text-center py-12">"No vulnerabilities."</p>
+        }
+        .into_any();
+    }
+    view! {
+        <Table>
+            <Thead>
+                <tr>
+                    <Th>"ID"</Th>
+                    <Th>"Title"</Th>
+                    <Th>"CWE"</Th>
+                    <Th>"Severity"</Th>
+                    <Th>"Product Status"</Th>
+                </tr>
+            </Thead>
+            <Tbody>
+                {vulnerabilities.into_iter().map(|v| {
+                    let severity = match (v.score, v.severity) {
+                        (Some(score), Some(severity)) => Some((format!("{score:.1} {severity}"), severity_variant(&severity))),
+                        (Some(score), None) => Some((format!("{score:.1}"), BadgeVariant::Neutral)),
+                        (None, Some(severity)) => {
+                            let variant = severity_variant(&severity);
+                            Some((severity, variant))
+                        }
+                        (None, None) => None,
+                    };
+                    view! {
+                        <tr>
+                            <Td class="whitespace-nowrap">
+                                {v.cve.map(|cve| view! { <div class="font-medium">{cve}</div> })}
+                                {v.ids.into_iter().map(|id| view! {
+                                    <div class="text-xs text-gray-500 dark:text-gray-400">{id}</div>
+                                }).collect::<Vec<_>>()}
+                            </Td>
+                            <Td>{v.title.unwrap_or_default()}</Td>
+                            <Td>
+                                {v.cwes.into_iter().map(|cwe| {
+                                    let name = cwe.name.unwrap_or_default();
+                                    view! { <div class="whitespace-nowrap" title=name>{cwe.id}</div> }
+                                }).collect::<Vec<_>>()}
+                            </Td>
+                            <Td class="whitespace-nowrap">
+                                {severity.map(|(label, variant)| view! { <Badge variant=variant>{label}</Badge> })}
+                            </Td>
+                            <Td><ProductStatusBadges statuses=v.product_status /></Td>
+                        </tr>
+                    }
                 }).collect::<Vec<_>>()}
             </Tbody>
         </Table>
