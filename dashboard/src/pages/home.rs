@@ -7,8 +7,11 @@ use crate::components::{
 };
 use crate::models::{ProviderSummary, encode_path_segment};
 use leptos::prelude::*;
-use time::OffsetDateTime;
-use time::format_description::{self, well_known::Rfc3339};
+use std::cmp::Ordering;
+use time::{
+    OffsetDateTime,
+    format_description::{self, well_known::Rfc3339},
+};
 
 fn format_validated_at(s: &str) -> String {
     OffsetDateTime::parse(s, &Rfc3339)
@@ -47,24 +50,121 @@ pub fn HomePage() -> impl IntoView {
     }
 }
 
+/// Provider summary columns that support sorting.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProviderSort {
+    /// Provider domain name.
+    Name,
+    /// Number of documents.
+    Documents,
+    /// Basic profile pass rate.
+    Basic,
+    /// Extended profile pass rate.
+    Extended,
+    /// Full profile pass rate.
+    Full,
+}
+
+impl ProviderSort {
+    /// Compares providers, keeping missing profile results last in either direction.
+    fn compare(
+        self,
+        left: &ProviderSummary,
+        right: &ProviderSummary,
+        descending: bool,
+    ) -> Ordering {
+        let order = match self {
+            Self::Name => left.provider.cmp(&right.provider),
+            Self::Documents => left.document_count.cmp(&right.document_count),
+            profile => {
+                let rate = |provider: &ProviderSummary| {
+                    match profile {
+                        Self::Basic => &provider.profiles.basic,
+                        Self::Extended => &provider.profiles.extended,
+                        _ => &provider.profiles.full,
+                    }
+                    .as_ref()
+                    .map(|summary| summary.pass_rate)
+                };
+                match (rate(left), rate(right)) {
+                    (Some(a), Some(b)) => a.total_cmp(&b),
+                    (Some(_), None) => return Ordering::Less,
+                    (None, Some(_)) => return Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                }
+            }
+        };
+        let order = if descending { order.reverse() } else { order };
+        order.then_with(|| left.provider.cmp(&right.provider))
+    }
+}
+
+/// A keyboard-accessible sort heading with a visible direction indicator.
+#[component]
+fn ProviderSortHeading(
+    /// Column controlled by this heading.
+    column: ProviderSort,
+    /// Visible column label.
+    label: &'static str,
+    /// Active sort column and whether it is descending.
+    sort: RwSignal<(ProviderSort, bool)>,
+) -> impl IntoView {
+    view! {
+        <th
+            scope="col"
+            class="py-3.5 px-4 text-sm font-normal text-left text-gray-500 dark:text-gray-400"
+            aria-sort=move || match sort.get() {
+                (active, _) if active != column => "none",
+                (_, true) => "descending",
+                _ => "ascending",
+            }
+        >
+            <button
+                type="button"
+                class="inline-flex items-center gap-1 cursor-pointer hover:text-gray-800 dark:hover:text-gray-200"
+                on:click=move |_| sort.update(|(active, descending)| {
+                    *descending = if *active == column { !*descending } else { column != ProviderSort::Name };
+                    *active = column;
+                })
+            >
+                {label}
+                <span aria-hidden="true">{move || match sort.get() {
+                    (active, _) if active != column => "↕",
+                    (_, true) => "↓",
+                    _ => "↑",
+                }}</span>
+            </button>
+        </th>
+    }
+}
+
+/// Renders provider summaries with sortable name, document count, and profile columns.
 #[component]
 fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
+    let providers = StoredValue::new(providers);
+    let sort = RwSignal::new((ProviderSort::Name, false));
+    let sorted_providers = move || {
+        let mut rows = providers.get_value();
+        let (column, descending) = sort.get();
+        rows.sort_by(|left, right| column.compare(left, right, descending));
+        rows
+    };
     view! {
         <Table>
             <Thead>
                 <tr>
-                    <Th>"Provider"</Th>
-                    <Th>"Documents"</Th>
-                    <Th>"Basic"</Th>
-                    <Th>"Extended"</Th>
-                    <Th>"Full"</Th>
+                    <ProviderSortHeading column=ProviderSort::Name label="Provider" sort=sort />
+                    <ProviderSortHeading column=ProviderSort::Documents label="Documents" sort=sort />
+                    <ProviderSortHeading column=ProviderSort::Basic label="Basic" sort=sort />
+                    <ProviderSortHeading column=ProviderSort::Extended label="Extended" sort=sort />
+                    <ProviderSortHeading column=ProviderSort::Full label="Full" sort=sort />
                     <Th>"Signatures"</Th>
                     <Th>"Errors"</Th>
                     <Th>"Last Validated"</Th>
                 </tr>
             </Thead>
             <Tbody>
-                {providers.into_iter().map(|p| {
+                {move || sorted_providers().into_iter().map(|p| {
                     let domain = p.provider.clone();
                     let href = format!("/providers/{}", encode_path_segment(&domain));
                     let display_domain = domain.clone();
