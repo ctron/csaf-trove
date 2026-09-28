@@ -3,6 +3,7 @@
 
 pub mod check_failure;
 pub mod document;
+pub mod document_version;
 pub mod provider_info;
 pub mod revision_history;
 pub mod sync_run;

@@ -370,3 +370,26 @@ async fn interrupted_manual_revalidation_forces_recovery() {
             .is_some()
     );
 }
+
+/// Existing installs backfill version history once, then record only new versions.
+#[tokio::test]
+async fn processing_backfills_and_extends_versions() {
+    let (_dir, state, source) = fixture();
+    process(&state, &source).await.unwrap();
+    let db = database(&state).await;
+    let versions = "SELECT COUNT(*) AS value FROM document_versions";
+    assert_eq!(scalar(&db, versions).await, 2);
+    // Simulate an install upgraded from before versions were recorded.
+    db.execute_unprepared("DELETE FROM document_versions")
+        .await
+        .unwrap();
+    process(&state, &source).await.unwrap();
+    assert_eq!(scalar(&db, versions).await, 2);
+    commit(&state, &[("example.com/a.json", b"second a")]);
+    process(&state, &source).await.unwrap();
+    assert_eq!(scalar(&db, versions).await, 3);
+    assert_eq!(
+        scalar(&db, "SELECT SUM(version_count) AS value FROM documents").await,
+        3
+    );
+}

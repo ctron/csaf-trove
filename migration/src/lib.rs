@@ -10,6 +10,7 @@ mod m20240105_000005_fix_provider_info_table;
 mod m20240106_000006_add_signature_warning;
 mod m20240107_000007_processing_checkpoint;
 mod m20240108_000008_add_sync_run_duration;
+mod m20240109_000009_document_versions;
 
 /// Migrator that applies all schema migrations in order.
 pub struct Migrator;
@@ -25,6 +26,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240106_000006_add_signature_warning::Migration),
             Box::new(m20240107_000007_processing_checkpoint::Migration),
             Box::new(m20240108_000008_add_sync_run_duration::Migration),
+            Box::new(m20240109_000009_document_versions::Migration),
         ]
     }
 }

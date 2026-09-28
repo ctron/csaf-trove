@@ -251,6 +251,15 @@ pub struct DocumentVersionInfo {
     pub message: String,
     /// Whether this is the most recent (HEAD) version.
     pub is_latest: bool,
+    /// CSAF tracking status at this version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// CSAF tracking version at this version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// CSAF tracking current release date at this version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_release_date: Option<String>,
 }
 
 /// Metadata extracted from a historical CSAF document blob.

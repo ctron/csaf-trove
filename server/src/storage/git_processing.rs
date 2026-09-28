@@ -23,7 +23,7 @@ pub struct ProcessingSelection {
 }
 
 /// Maps an advisory or integrity sidecar to its advisory path.
-fn advisory_path(path: &str) -> Option<String> {
+pub(super) fn advisory_path(path: &str) -> Option<String> {
     if path.starts_with("metadata/") {
         return None;
     }
@@ -207,10 +207,7 @@ pub fn materialize_processing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::git_repo::{
-        commit_snapshot, document_version_counts, prepare_worktree,
-        selected_document_version_counts,
-    };
+    use crate::storage::git_repo::{collect_versions, commit_snapshot, prepare_worktree};
     use std::fs;
 
     /// Publishes exact downloaded bytes without checking out unchanged advisories.
@@ -263,7 +260,7 @@ mod tests {
 
     /// Interrupted work is recovered even if a later commit reverts its bytes.
     #[test]
-    fn reverted_changes_remain_pending_and_counts_match_bulk() {
+    fn reverted_changes_remain_pending_and_record_versions() {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo.git");
         let work = dir.path().join("work");
@@ -284,10 +281,13 @@ mod tests {
             BTreeSet::from(["example.com/a.json".into()])
         );
         assert_eq!(selected.history, selected.advisories);
-        let urls = ["https://example.com/a.json"];
-        let counts = selected_document_version_counts(&repo, &urls).unwrap();
-        assert_eq!(counts[urls[0]], 3);
-        assert_eq!(counts, document_version_counts(&repo, &urls).unwrap());
+        let mut since_checkpoint = 0;
+        collect_versions(&repo, Some(&initial.checkpoint.commit_id), |commit| {
+            since_checkpoint += commit.documents.len();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(since_checkpoint, 2);
         let validation = dir.path().join("validation");
         materialize_processing(&repo, &selected, &validation).unwrap();
         assert_eq!(

@@ -10,9 +10,7 @@ use crate::{
     },
     storage::{
         ProviderInfo,
-        git_processing::{
-            include_recovered_downloads, materialize_processing, path_url, select_processing,
-        },
+        git_processing::{include_recovered_downloads, materialize_processing, select_processing},
         git_repo,
     },
 };
@@ -305,6 +303,9 @@ async fn process_snapshot(
     let summary_dirty = previous
         .as_ref()
         .is_some_and(|checkpoint| checkpoint.summary_dirty);
+    let previous_commit = previous
+        .as_ref()
+        .map(|checkpoint| checkpoint.commit_id.clone());
     if force_full {
         state.storage.clear_processing_checkpoint(domain).await?;
     }
@@ -348,26 +349,18 @@ async fn process_snapshot(
             .await;
         validate_provider(state, source, &validation_dir, selection.advisories.clone()).await?;
     }
-    if selection.baseline || !selection.history.is_empty() {
+    // Documents stored before versions were recorded need a one-time full history scan.
+    let backfill = !selection.baseline && state.storage.versions_missing(domain).await?;
+    if selection.baseline || backfill || !selection.history.is_empty() {
         state
             .update_job_phase(domain, PipelinePhase::VersionCounts)
             .await;
-        let urls: Vec<String> = selection
-            .history
-            .iter()
-            .map(|path| path_url(path))
-            .collect();
-        state
-            .storage
-            .update_selected_version_counts(
-                domain,
-                if selection.baseline {
-                    None
-                } else {
-                    Some(&urls)
-                },
-            )
-            .await?;
+        let since = if selection.baseline || backfill {
+            None
+        } else {
+            previous_commit.as_deref()
+        };
+        state.storage.record_versions(domain, since).await?;
     }
     if !retrieval_errors.is_empty() {
         let pairs = retrieval_errors

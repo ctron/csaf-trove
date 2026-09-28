@@ -101,7 +101,7 @@ pub async fn detail(
     }
 }
 
-/// Query parameters for the sync history endpoint.
+/// Pagination parameters for the sync and document version history endpoints.
 #[derive(Debug, Deserialize)]
 pub struct HistoryQuery {
     /// Zero-based offset for pagination.
@@ -211,15 +211,18 @@ pub async fn document_detail(
     Ok(HttpResponse::Ok().json(doc))
 }
 
-/// Returns the version history for a specific document from git.
+/// Returns a page of the version history for a specific document, newest first.
 pub async fn document_versions(
     state: web::Data<AppState>,
     path: web::Path<(String, String)>,
+    query: web::Query<HistoryQuery>,
 ) -> Result<HttpResponse, ApiError> {
     let (domain, tracking_id) = path.into_inner();
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(50).min(200);
     let versions = state
         .storage
-        .document_versions(&domain, &tracking_id)
+        .document_versions(&domain, &tracking_id, offset, limit)
         .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(versions))

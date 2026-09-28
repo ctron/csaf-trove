@@ -6,12 +6,13 @@ pub mod processing;
 pub mod results;
 pub mod scratch;
 pub mod state;
+pub mod versions;
 
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
-        DiffLineInfo, DistributionHealth, DocumentValidation, DocumentVersionInfo,
-        HistoricalDocument, ProviderDetail, ProviderSummary, RevisionEntry,
+        DistributionHealth, DocumentValidation, HistoricalDocument, ProviderDetail,
+        ProviderSummary, RevisionEntry,
     },
     source::sanitize_domain,
     state::SyncState,
@@ -327,13 +328,6 @@ impl Storage {
         documents::save_documents(&db, docs).await
     }
 
-    /// Computes version counts from git history and updates all documents.
-    pub async fn update_version_counts(&self, domain: &str) -> Result<()> {
-        let db = self.db.get(domain).await?;
-        let repo_path = self.repo_path(domain);
-        documents::update_version_counts(&db, &repo_path).await
-    }
-
     /// Builds a provider summary from all documents in the database.
     pub async fn build_summary_from_db(&self, domain: &str) -> Result<ProviderSummary> {
         let db = self.db.get(domain).await?;
@@ -400,99 +394,6 @@ impl Storage {
             return Ok(None);
         };
         documents::load_document(&db, tracking_id).await
-    }
-
-    /// Returns the version history for a specific document in a provider's repo.
-    pub async fn document_versions(
-        &self,
-        domain: &str,
-        tracking_id: &str,
-    ) -> Result<Option<Vec<DocumentVersionInfo>>> {
-        let repo_path = self.repo_path(domain);
-        if !repo_path.exists() {
-            return Ok(None);
-        }
-        let Some(db) = self.db.get_if_exists(domain).await? else {
-            return Ok(None);
-        };
-        let Some(url) = documents::document_url(&db, tracking_id).await? else {
-            return Ok(None);
-        };
-        let versions = git_repo::document_versions(&repo_path, &url, 50)?;
-        Ok(versions.map(|vs| {
-            vs.into_iter()
-                .map(|v| DocumentVersionInfo {
-                    commit_id: v.commit_id,
-                    timestamp: v.timestamp,
-                    message: v.message,
-                    is_latest: v.is_latest,
-                })
-                .collect()
-        }))
-    }
-
-    /// Computes a structured diff between a document version and its next newer version.
-    pub async fn diff_document_versions(
-        &self,
-        domain: &str,
-        tracking_id: &str,
-        commit_id: &str,
-    ) -> Result<Option<Vec<DiffLineInfo>>> {
-        let repo_path = self.repo_path(domain);
-        if !repo_path.exists() {
-            tracing::debug!("diff: repo not found for {domain}");
-            return Ok(None);
-        }
-        let Some(db) = self.db.get_if_exists(domain).await? else {
-            tracing::debug!("diff: no db for {domain}");
-            return Ok(None);
-        };
-        let Some(url) = documents::document_url(&db, tracking_id).await? else {
-            tracing::debug!("diff: no URL for {domain}/{tracking_id}");
-            return Ok(None);
-        };
-        let Some(versions) = git_repo::document_versions(&repo_path, &url, 50)? else {
-            tracing::debug!("diff: no versions for {domain}/{tracking_id}");
-            return Ok(None);
-        };
-        let Some(pos) = versions.iter().position(|v| v.commit_id == commit_id) else {
-            tracing::debug!(
-                "diff: commit {commit_id} not in {} versions for {domain}/{tracking_id}",
-                versions.len()
-            );
-            return Ok(None);
-        };
-        if pos == 0 {
-            tracing::debug!("diff: {commit_id} is the latest version, no newer version to diff");
-            return Ok(None);
-        }
-        let new_commit_id = &versions[pos - 1].commit_id;
-        git_repo::diff_document_versions(&repo_path, &url, commit_id, new_commit_id)
-    }
-
-    /// Reads a historical version of a document from git and extracts its metadata.
-    pub async fn read_historical_document(
-        &self,
-        domain: &str,
-        tracking_id: &str,
-        commit_id: &str,
-    ) -> Result<Option<HistoricalDocument>> {
-        let repo_path = self.repo_path(domain);
-        if !repo_path.exists() {
-            return Ok(None);
-        }
-        let Some(db) = self.db.get_if_exists(domain).await? else {
-            return Ok(None);
-        };
-        let Some(url) = documents::document_url(&db, tracking_id).await? else {
-            return Ok(None);
-        };
-        let Some((blob, timestamp)) = git_repo::read_document_blob(&repo_path, &url, commit_id)?
-        else {
-            return Ok(None);
-        };
-        let doc = extract_metadata_from_json(&blob, commit_id, timestamp)?;
-        Ok(Some(doc))
     }
 
     /// Saves provider metadata info for aggregator generation.

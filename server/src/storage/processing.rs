@@ -1,5 +1,5 @@
 //! Durable processing checkpoints and targeted document maintenance.
-use super::{Storage, documents, results};
+use super::{Storage, results};
 use crate::models::result::ProviderSummary;
 use anyhow::Result;
 use csaf_trove_entity::{check_failure, document, revision_history};
@@ -118,28 +118,5 @@ impl Storage {
             .into_iter()
             .map(|row| row.url)
             .collect())
-    }
-
-    /// Recomputes history only for selected advisory URLs, or all on baseline recovery.
-    pub async fn update_selected_version_counts(
-        &self,
-        domain: &str,
-        urls: Option<&[String]>,
-    ) -> Result<()> {
-        let db = self.db.get(domain).await?;
-        if let Some(urls) = urls {
-            // Bound SQLite parameters even when a provider publishes a very large batch.
-            for chunk in urls.chunks(500) {
-                documents::update_selected_version_counts(
-                    &db,
-                    &self.repo_path(domain),
-                    Some(chunk),
-                )
-                .await?;
-            }
-            Ok(())
-        } else {
-            documents::update_selected_version_counts(&db, &self.repo_path(domain), None).await
-        }
     }
 }

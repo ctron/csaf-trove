@@ -243,7 +243,16 @@ pub struct DocumentVersionInfo {
     pub timestamp: i64,
     pub message: String,
     pub is_latest: bool,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub current_release_date: Option<String>,
 }
+
+/// Paginated document version history.
+pub type PaginatedVersions = csaf_trove_common::Paginated<DocumentVersionInfo>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoricalDocument {

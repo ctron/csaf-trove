@@ -4,16 +4,20 @@ use crate::components::{
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     content_tabs::{ContentTab, ContentTabs},
     diff_view::DiffView,
+    pagination::Pagination,
     section_heading::SubHeading,
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{
-    DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, RevisionEntry,
-    encode_path_segment,
+    DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, PaginatedVersions,
+    RevisionEntry, encode_path_segment,
 };
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use std::cmp::Ordering;
+
+/// Number of versions shown per history page.
+const VERSIONS_PAGE_SIZE: u64 = 50;
 
 /// Compares dotted-numeric test IDs (e.g. `6.1.27.5`) segment by segment.
 fn numeric_test_id_cmp(a: &str, b: &str) -> Ordering {
@@ -52,20 +56,26 @@ async fn fetch_document(domain: String, tracking_id: String) -> Result<DocumentV
     resp.json().await.map_err(|e| e.to_string())
 }
 
-/// Fetches the git version history for a document.
+/// Fetches a page of the version history for a document, newest first.
 async fn fetch_versions(
     domain: String,
     tracking_id: String,
-) -> Result<Vec<DocumentVersionInfo>, String> {
+    offset: u64,
+) -> Result<PaginatedVersions, String> {
     let resp = gloo_net::http::Request::get(&format!(
-        "/api/providers/{}/document/{tracking_id}/versions",
+        "/api/providers/{}/document/{tracking_id}/versions?offset={offset}&limit={VERSIONS_PAGE_SIZE}",
         encode_path_segment(&domain)
     ))
     .send()
     .await
     .map_err(|e| e.to_string())?;
     if resp.status() == 404 {
-        return Ok(vec![]);
+        return Ok(PaginatedVersions {
+            items: vec![],
+            total: 0,
+            offset,
+            limit: VERSIONS_PAGE_SIZE,
+        });
     }
     resp.json().await.map_err(|e| e.to_string())
 }
@@ -131,10 +141,20 @@ pub fn DocumentPage() -> impl IntoView {
         async move { fetch_document(d, t).await }
     });
 
+    let (versions_offset, set_versions_offset) = signal(0u64);
+    // Only load history once the tab is opened.
     let versions = LocalResource::new(move || {
         let d = domain();
         let t = tracking_id();
-        async move { fetch_versions(d, t).await }
+        let active = tab.get() == "history";
+        let offset = versions_offset.get();
+        async move {
+            if active {
+                Some(fetch_versions(d, t, offset).await)
+            } else {
+                None
+            }
+        }
     });
 
     let historical = LocalResource::new(move || {
@@ -226,17 +246,30 @@ pub fn DocumentPage() -> impl IntoView {
                                 }.into_any()
                             } else {
                                 view! {
-                                    <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading versions..."</p> }>
-                                        {move || versions.get().map(|result| match result {
-                                            Ok(vs) => view! {
-                                                <VersionListTable
-                                                    versions=vs
-                                                    on_select=set_selected_version
-                                                />
-                                            }.into_any(),
+                                    <Transition fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading versions..."</p> }>
+                                        {move || versions.get().flatten().map(|result| match result {
+                                            Ok(page) => {
+                                                let total = page.total;
+                                                let count = page.items.len() as u64;
+                                                view! {
+                                                    <VersionListTable
+                                                        versions=page.items
+                                                        on_select=set_selected_version
+                                                    />
+                                                    {(total > VERSIONS_PAGE_SIZE).then(|| view! {
+                                                        <Pagination
+                                                            offset=versions_offset
+                                                            limit=VERSIONS_PAGE_SIZE
+                                                            total=total
+                                                            count=count
+                                                            on_change=Callback::new(move |o: u64| set_versions_offset.set(o))
+                                                        />
+                                                    })}
+                                                }.into_any()
+                                            }
                                             Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                                         })}
-                                    </Suspense>
+                                    </Transition>
                                 }.into_any()
                             }
                         }}
@@ -273,6 +306,9 @@ fn VersionListTable(
             <Thead>
                 <tr>
                     <Th>"Date"</Th>
+                    <Th>"Status"</Th>
+                    <Th>"Version"</Th>
+                    <Th>"Current Release"</Th>
                     <Th>"Message"</Th>
                     <Th>" "</Th>
                 </tr>
@@ -280,6 +316,9 @@ fn VersionListTable(
             <Tbody>
                 {versions.into_iter().map(|v| {
                     let date = format_timestamp(v.timestamp);
+                    let status = v.status.clone();
+                    let version = v.version.clone().unwrap_or_else(|| "—".to_string());
+                    let release = v.current_release_date.clone();
                     let message = v.message.lines().next().unwrap_or("").to_string();
                     let is_latest = v.is_latest;
                     let commit_id = v.commit_id.clone();
@@ -298,6 +337,9 @@ fn VersionListTable(
                             }
                         >
                             <Td>{date}</Td>
+                            <Td><TrackingStatusBadge status=status /></Td>
+                            <Td>{version}</Td>
+                            <Td><ReleaseDate value=release /></Td>
                             <Td>{message}</Td>
                             <Td>
                                 {is_latest.then(|| view! {
@@ -311,6 +353,30 @@ fn VersionListTable(
         </Table>
     }
     .into_any()
+}
+
+/// Renders a CSAF tracking status as a colored badge, or a dash when unknown.
+#[component]
+fn TrackingStatusBadge(status: Option<String>) -> impl IntoView {
+    let Some(status) = status else {
+        return view! { <span>"—"</span> }.into_any();
+    };
+    let variant = match status.as_str() {
+        "final" => BadgeVariant::Success,
+        "interim" => BadgeVariant::Warning,
+        _ => BadgeVariant::Neutral,
+    };
+    view! { <Badge variant=variant>{status}</Badge> }.into_any()
+}
+
+/// Shows the date part of a release timestamp, with the full value as a tooltip.
+#[component]
+fn ReleaseDate(value: Option<String>) -> impl IntoView {
+    let Some(value) = value else {
+        return view! { <span>"—"</span> }.into_any();
+    };
+    let date = value.split('T').next().unwrap_or(&value).to_string();
+    view! { <span title=value>{date}</span> }.into_any()
 }
 
 /// Displays metadata for a historical document version.
