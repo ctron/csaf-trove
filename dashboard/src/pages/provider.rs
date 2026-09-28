@@ -10,11 +10,11 @@ use crate::components::{
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     content_tabs::{ContentTab, ContentTabs},
     doc_profile_badge::DocProfileBadge,
+    document_checks::{CheckBadge, CheckSummaryView},
     empty_state::EmptyState,
     pagination::Pagination,
     progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate, format_rate},
     table::{Table, Tbody, Td, Th, Thead},
-    tabs::{Tab, Tabs},
     tlp_badge::TlpBadge,
 };
 use crate::models::{
@@ -97,35 +97,11 @@ fn profile_row(label: &'static str, profile: Option<ProfileSummary>) -> impl Int
             <div class="mb-4 last:mb-0">
                 <div class="flex items-center justify-between mb-1">
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
-                    <span class="text-sm text-gray-400 dark:text-gray-500">"not tested"</span>
+                    <span class="text-sm text-gray-400 dark:text-gray-500">"Not evaluated"</span>
                 </div>
             </div>
         }
         .into_any(),
-    }
-}
-
-/// A single problem badge entry for [`HealthRow`].
-struct HealthBadge {
-    count: u64,
-    label: &'static str,
-    variant: BadgeVariant,
-}
-
-/// A bordered health row: shows a green ok count plus any non-zero problem badges.
-#[component]
-fn HealthRow(label: &'static str, ok_count: u64, badges: Vec<HealthBadge>) -> impl IntoView {
-    let problems: Vec<_> = badges.into_iter().filter(|b| b.count > 0).collect();
-    view! {
-        <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
-            <div class="flex items-center gap-3">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{label}</span>
-                <Badge variant=BadgeVariant::Success>{ok_count}" ok"</Badge>
-                {problems.into_iter().map(|b| view! {
-                    <Badge variant=b.variant>{b.count}" "{b.label}</Badge>
-                }).collect_view()}
-            </div>
-        </div>
     }
 }
 
@@ -136,7 +112,7 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let summary = detail.summary;
     let distributions = detail.distributions;
     let tests = summary.top_failing_tests;
-    let retrieval_errors = summary.retrieval_errors;
+    let provider_url = format!("/providers/{}", encode_path_segment(&summary.provider));
     let domain = summary.provider.clone();
     let sync_href = format!("/sync/{}", encode_path_segment(&domain));
 
@@ -164,16 +140,19 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                     <p><span class="text-gray-500 dark:text-gray-500">"Last synced: "</span><span class="text-gray-700 dark:text-gray-300">{summary.validated_at}</span></p>
                 </div>
 
-                {summary.signatures.map(|sig| view! {
-                    <HealthRow label="Signatures" ok_count=sig.valid badges=vec![
-                        HealthBadge { count: sig.invalid, label: "invalid", variant: BadgeVariant::Danger },
-                        HealthBadge { count: sig.missing, label: "missing", variant: BadgeVariant::Warning },
-                    ] />
-                })}
-
-                <HealthRow label="Retrieval" ok_count={summary.document_count - retrieval_errors} badges=vec![
-                    HealthBadge { count: retrieval_errors, label: "failed", variant: BadgeVariant::Danger },
-                ] />
+                <div class="space-y-3 mt-4">
+                    {[
+                        ("Retrieval", "retrieval", summary.checks.as_ref().map(|c| c.retrieval.clone())),
+                        ("Parsing", "parsing", summary.checks.as_ref().map(|c| c.parsing.clone())),
+                        ("Signatures", "signature", summary.checks.as_ref().map(|c| c.signature.clone())),
+                        ("Digests", "digest", summary.checks.as_ref().map(|c| c.digest.clone())),
+                    ].into_iter().map(|(label, stage, counts)| view! {
+                        <div>
+                            <p class="text-sm text-gray-600 dark:text-gray-400 mb-1">{label}</p>
+                            <CheckSummaryView counts=counts provider_url=provider_url.clone() stage=stage />
+                        </div>
+                    }).collect::<Vec<_>>()}
+                </div>
 
                 <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
                     <a href={sync_href} class="text-sm text-blue-600 dark:text-blue-400 hover:underline">"Sync History \u{2192}"</a>
@@ -183,6 +162,7 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
             // Validation card
             <div class="bg-white rounded-lg shadow-md dark:bg-gray-800 p-6">
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-4">"Validation"</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">"Test pass rates for retrieved, parsed documents. Missing integrity checks do not count as failures."</p>
                 {profile_row("Basic", summary.profiles.basic.clone())}
                 {profile_row("Extended", summary.profiles.extended.clone())}
                 {profile_row("Full", summary.profiles.full)}
@@ -296,7 +276,7 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                         <Th>"Basic"</Th>
                         <Th>"Extended"</Th>
                         <Th>"Full"</Th>
-                        <Th>"Errors"</Th>
+                        <Th>"Retrieval Errors"</Th>
                     </tr>
                 </Thead>
                 <Tbody>
@@ -399,32 +379,42 @@ fn DocumentsTable(domain: String) -> impl IntoView {
 
     view! {
         <div class="mt-6 md:flex md:items-center md:justify-between">
-            <Tabs>
-                <Tab
-                    active=Signal::derive(move || status_filter.get().is_none())
-                    on_click=Callback::new(move |_| { set_status_param.set(None); set_offset_param.set(None); })
-                >"All"</Tab>
-                <Tab
-                    active=Signal::derive(move || status_filter.get().as_deref() == Some("failing"))
-                    on_click=Callback::new(move |_| { set_status_param.set(Some("failing".into())); set_offset_param.set(None); })
-                >"Errors"</Tab>
-                <Tab
-                    active=Signal::derive(move || status_filter.get().as_deref() == Some("warnings"))
-                    on_click=Callback::new(move |_| { set_status_param.set(Some("warnings".into())); set_offset_param.set(None); })
-                >"Warnings & Above"</Tab>
-                <Tab
-                    active=Signal::derive(move || status_filter.get().as_deref() == Some("passing"))
-                    on_click=Callback::new(move |_| { set_status_param.set(Some("passing".into())); set_offset_param.set(None); })
-                >"Passing"</Tab>
-                <Tab
-                    active=Signal::derive(move || status_filter.get().as_deref() == Some("errors"))
-                    on_click=Callback::new(move |_| { set_status_param.set(Some("errors".into())); set_offset_param.set(None); })
-                >"Retrieval Errors"</Tab>
-                <Tab
-                    active=Signal::derive(move || status_filter.get().as_deref() == Some("signature-errors"))
-                    on_click=Callback::new(move |_| { set_status_param.set(Some("signature-errors".into())); set_offset_param.set(None); })
-                >"Signature Errors"</Tab>
-            </Tabs>
+            <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 mb-4">
+                "Filter documents"
+                <select
+                    class="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2"
+                    prop:value=move || status_filter.get().unwrap_or_default()
+                    on:change=move |event| {
+                        let value = event_target_value(&event);
+                        set_status_param.set((!value.is_empty()).then_some(value));
+                        set_offset_param.set(None);
+                    }
+                >
+                    <option value="">"All"</option>
+                    <option value="failing">"Errors"</option>
+                    <option value="warnings">"Warnings & Above"</option>
+                    <option value="passing">"Passing"</option>
+                    <option value="errors">"Retrieval Errors"</option>
+                    <option value="parse-errors">"Parse Errors"</option>
+                    <option value="signature-errors">"Signature Errors"</option>
+                    <option value="digest-errors">"Digest Errors"</option>
+                    <option value="digest-warnings">"Digest Warnings"</option>
+                    <option value="missing-signatures">"Missing Signatures"</option>
+                    <option value="missing-digests">"Missing Digests"</option>
+                    <option value="not-evaluated">"Not Evaluated"</option>
+                    {[ ("Retrieval", "retrieval"), ("Parsing", "parsing"), ("Signature", "signature"), ("Digest", "digest") ].into_iter().map(|(label, stage)| view! {
+                        <optgroup label=label>
+                            {[ ("Passed", "passed"), ("Failed", "failed"), ("Warning", "warning"), ("Missing", "missing"), ("Not evaluated", "not_evaluated") ].into_iter().filter(move |(_, key)| match *key {
+                                "warning" => stage == "digest",
+                                "missing" => stage == "signature" || stage == "digest",
+                                _ => true,
+                            }).map(|(outcome, key)| view! {
+                                <option value=format!("{stage}-{key}")>{format!("{label}: {outcome}")}</option>
+                            }).collect::<Vec<_>>()}
+                        </optgroup>
+                    }).collect::<Vec<_>>()}
+                </select>
+            </label>
         </div>
 
         <Transition fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading documents..."</p> }>
@@ -442,7 +432,10 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     <Th>"Basic"</Th>
                                     <Th>"Extended"</Th>
                                     <Th>"Full"</Th>
-                                    <Th>"Integrity"</Th>
+                                    <Th>"Retrieval"</Th>
+                                    <Th>"Parsing"</Th>
+                                    <Th>"Signature"</Th>
+                                    <Th>"Digests"</Th>
                                     <Th>"Versions"</Th>
                                 </tr>
                             </Thead>
@@ -451,31 +444,19 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     let href = format!("/providers/{}/documents/{}", encode_path_segment(&d), doc.tracking_id);
                                     let tid = doc.tracking_id.clone();
                                     let title = doc.title.clone();
-                                    let retrieval_err = doc.retrieval_error.clone();
-                                    let (sig_variant, sig_label) = if doc.signature_error.is_some() {
-                                        (BadgeVariant::Danger, "Invalid")
-                                    } else if doc.signature_warning.is_some() {
-                                        (BadgeVariant::Warning, "Valid with warnings")
-                                    } else if doc.signature_present {
-                                        (BadgeVariant::Success, "Valid")
-                                    } else {
-                                        (BadgeVariant::Warning, "Missing")
-                                    };
                                     view! {
                                         <tr>
                                             <Td>
                                                 <a href={href}>{tid}</a>
-                                                {retrieval_err.map(|e| view! {
-                                                    <span class="ml-2" title={e}>
-                                                        <Badge variant=BadgeVariant::Danger>"Error"</Badge>
-                                                    </span>
-                                                })}
                                             </Td>
                                             <Td class="truncate max-w-xs">{title}</Td>
                                             <Td><DocProfileBadge detail=doc.profiles.basic /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.extended /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.full /></Td>
-                                            <Td><Badge variant=sig_variant>{sig_label}</Badge></Td>
+                                            <Td><CheckBadge outcome=doc.checks.retrieval /></Td>
+                                            <Td><CheckBadge outcome=doc.checks.parsing /></Td>
+                                            <Td><CheckBadge outcome=doc.checks.signature /></Td>
+                                            <Td><CheckBadge outcome=doc.checks.digest /></Td>
                                             <Td>{if doc.version_count > 1 {
                                                 view! { <Badge variant=BadgeVariant::Neutral>{doc.version_count}</Badge> }.into_any()
                                             } else {

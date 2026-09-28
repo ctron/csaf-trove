@@ -27,6 +27,8 @@ pub struct Model {
     pub extended_failing_test_count: Option<i64>,
     pub full_test_count: Option<i64>,
     pub full_failing_test_count: Option<i64>,
+    /// Serialized independent essential check outcomes.
+    pub document_checks: String,
     pub signature_present: i32,
     pub signature_error: Option<String>,
     /// Failed digest check when the other supplied digest matched.

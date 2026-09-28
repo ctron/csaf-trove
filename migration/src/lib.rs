@@ -13,6 +13,8 @@ mod m20240108_000008_add_sync_run_duration;
 mod m20240109_000009_document_versions;
 mod m20240110_000010_distribution_membership;
 
+mod m20240111_000011_document_checks;
+
 /// Migrator that applies all schema migrations in order.
 pub struct Migrator;
 
@@ -29,6 +31,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240108_000008_add_sync_run_duration::Migration),
             Box::new(m20240109_000009_document_versions::Migration),
             Box::new(m20240110_000010_distribution_membership::Migration),
+            Box::new(m20240111_000011_document_checks::Migration),
         ]
     }
 }

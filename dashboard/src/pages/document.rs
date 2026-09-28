@@ -4,6 +4,7 @@ use crate::components::{
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     content_tabs::{ContentTab, ContentTabs},
     diff_view::DiffView,
+    document_checks::CheckBadge,
     pagination::Pagination,
     section_heading::SubHeading,
     table::{Table, Tbody, Td, Th, Thead},
@@ -466,15 +467,6 @@ fn DocumentDetailContent(doc: DocumentValidation, tab: Signal<String>) -> impl I
                     <RevisionHistoryTable entries=d.revision_history />
                 }.into_any()
             } else {
-                let (sig_variant, sig_label) = if d.signature_error.is_some() {
-                    (BadgeVariant::Danger, "Invalid")
-                } else if d.signature_warning.is_some() {
-                                        (BadgeVariant::Warning, "Valid with warnings")
-                                    } else if d.signature_present {
-                    (BadgeVariant::Success, "Valid")
-                } else {
-                    (BadgeVariant::Warning, "Missing")
-                };
                 view! {
                     <SubHeading>"Document"</SubHeading>
                     <Table>
@@ -488,18 +480,21 @@ fn DocumentDetailContent(doc: DocumentValidation, tab: Signal<String>) -> impl I
                                 <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"URL"</Td>
                                 <Td><a href={d.url.clone()} target="_blank">{d.url.clone()}</a></Td>
                             </tr>
-                            <tr>
-                                <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"Integrity"</Td>
-                                <Td>
-                                    <Badge variant=sig_variant>{sig_label}</Badge>
-                                    {d.signature_warning.map(|e| view! {
-                                        <span class="text-sm text-amber-600 dark:text-amber-400 ml-2">{e}</span>
-                                    })}
-                                    {d.signature_error.map(|e| view! {
-                                        <span class="text-sm text-red-500 dark:text-red-400 ml-2">{e}</span>
-                                    })}
-                                </Td>
-                            </tr>
+                            {[
+                                ("Retrieval", d.checks.retrieval),
+                                ("Parsing", d.checks.parsing),
+                                ("Signature", d.checks.signature),
+                                ("Digests", d.checks.digest),
+                            ].into_iter().map(|(label, outcome)| view! {
+                                <tr>
+                                    <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">{label}</Td>
+                                    <Td>
+                                        <CheckBadge outcome=outcome.clone() />
+                                        {outcome.message.map(|message| view! { <span class="ml-2">{message}</span> })}
+                                    </Td>
+                                </tr>
+                            }).collect::<Vec<_>>()}
+
                         </Tbody>
                     </Table>
 
@@ -525,7 +520,12 @@ fn ProfileSection(
     detail: Option<crate::models::DocumentProfileDetail>,
 ) -> impl IntoView {
     match detail {
-        None => view! { <div /> }.into_any(),
+        None => view! {
+            <h3 class="text-base font-medium text-gray-800 dark:text-white mt-6 mb-3">
+                {title}" "<Badge variant=BadgeVariant::Neutral>"Not evaluated"</Badge>
+            </h3>
+        }
+        .into_any(),
         Some(d) => {
             let (variant, badge_label) = if d.passed {
                 (BadgeVariant::Success, "Pass".to_string())

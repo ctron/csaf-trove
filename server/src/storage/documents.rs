@@ -4,7 +4,7 @@ use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
     EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
-    Statement, TransactionTrait,
+    Statement, TransactionTrait, sea_query::Expr,
 };
 use std::collections::HashMap;
 
@@ -12,7 +12,10 @@ use crate::models::result::{
     DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
     FailingTest, ProfileResults, ProfileSummary, ProviderSummary, RevisionEntry, SignatureSummary,
 };
-use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
+use csaf_trove_common::{
+    CommitInfo, Paginated, SyncPoint,
+    document_checks::{CheckOutcome, CheckStatus, DocumentCheckSummary, DocumentChecks},
+};
 use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
 use time::{Duration, OffsetDateTime};
 
@@ -143,6 +146,7 @@ pub async fn save_documents(
         let full = profile_to_cols(doc.profiles.full.as_ref());
 
         let new_doc = document::ActiveModel {
+            document_checks: Set(serde_json::to_string(&doc.checks)?),
             tracking_id: Set(doc.tracking_id.clone()),
             title: Set(doc.title.clone()),
             url: Set(doc.url.clone()),
@@ -246,13 +250,31 @@ const ERROR_COUNT_COLUMNS: [document::Column; 3] = [
     document::Column::FullErrorCount,
 ];
 
-/// Matches documents with validation errors, an integrity error, or a retrieval error.
+/// Matches a typed essential check outcome in persisted JSON.
+fn check_condition(stage: &str, status: &str) -> sea_orm::sea_query::SimpleExpr {
+    Expr::cust_with_values(
+        "COALESCE(json_extract(document_checks, ?), 'not_evaluated') = ?",
+        [format!("$.{stage}.status"), status.to_string()],
+    )
+}
+
+/// Matches profile errors or any failed essential check.
 fn failing_condition() -> Condition {
-    ERROR_COUNT_COLUMNS
+    ["retrieval", "parsing", "signature", "digest"]
         .into_iter()
-        .fold(Condition::any(), |c, col| c.add(col.gt(0)))
-        .add(document::Column::SignatureError.is_not_null())
-        .add(document::Column::RetrievalError.is_not_null())
+        .fold(
+            Condition::any().add(
+                Condition::all()
+                    .add(check_condition("retrieval", "passed"))
+                    .add(check_condition("parsing", "passed"))
+                    .add(
+                        ERROR_COUNT_COLUMNS
+                            .into_iter()
+                            .fold(Condition::any(), |c, col| c.add(col.gt(0))),
+                    ),
+            ),
+            |c, stage| c.add(check_condition(stage, "failed")),
+        )
 }
 
 /// Warning counts that, together with [`failing_condition`], mark a document as needing attention.
@@ -264,13 +286,21 @@ const WARNING_COUNT_COLUMNS: [document::Column; 3] = [
 
 /// Matches documents with warnings (validation or integrity) or anything [`failing_condition`] matches.
 fn warning_condition() -> Condition {
-    WARNING_COUNT_COLUMNS
-        .into_iter()
-        .fold(failing_condition(), |c, col| c.add(col.gt(0)))
-        .add(document::Column::SignatureWarning.is_not_null())
+    failing_condition()
+        .add(
+            Condition::all()
+                .add(check_condition("retrieval", "passed"))
+                .add(check_condition("parsing", "passed"))
+                .add(
+                    WARNING_COUNT_COLUMNS
+                        .into_iter()
+                        .fold(Condition::any(), |c, col| c.add(col.gt(0))),
+                ),
+        )
+        .add(check_condition("digest", "warning"))
 }
 
-/// Matches exactly the documents [`warning_condition`] rejects, treating NULL counts as zero.
+/// Matches evaluated documents without errors or warnings; absent integrity inputs are allowed.
 fn passing_condition() -> Condition {
     ERROR_COUNT_COLUMNS
         .into_iter()
@@ -278,9 +308,18 @@ fn passing_condition() -> Condition {
         .fold(Condition::all(), |c, col| {
             c.add(Condition::any().add(col.is_null()).add(col.eq(0)))
         })
-        .add(document::Column::SignatureError.is_null())
-        .add(document::Column::SignatureWarning.is_null())
-        .add(document::Column::RetrievalError.is_null())
+        .add(check_condition("retrieval", "passed"))
+        .add(check_condition("parsing", "passed"))
+        .add(
+            Condition::any()
+                .add(check_condition("signature", "passed"))
+                .add(check_condition("signature", "missing")),
+        )
+        .add(
+            Condition::any()
+                .add(check_condition("digest", "passed"))
+                .add(check_condition("digest", "missing")),
+        )
 }
 
 /// Loads a paginated, optionally filtered list of document validation results.
@@ -296,11 +335,33 @@ pub async fn load_documents_paginated(
         Some("failing") => query = query.filter(failing_condition()),
         Some("warnings") => query = query.filter(warning_condition()),
         Some("passing") => query = query.filter(passing_condition()),
-        Some("errors") => query = query.filter(document::Column::RetrievalError.is_not_null()),
-        Some("signature-errors") => {
-            query = query.filter(document::Column::SignatureError.is_not_null());
+        Some("errors" | "retrieval-errors") => {
+            query = query.filter(check_condition("retrieval", "failed"))
         }
-        _ => {}
+        Some("parse-errors") => query = query.filter(check_condition("parsing", "failed")),
+        Some("signature-errors") => query = query.filter(check_condition("signature", "failed")),
+        Some("digest-errors") => query = query.filter(check_condition("digest", "failed")),
+        Some("digest-warnings") => query = query.filter(check_condition("digest", "warning")),
+        Some("missing-signatures") => query = query.filter(check_condition("signature", "missing")),
+        Some("missing-digests") => query = query.filter(check_condition("digest", "missing")),
+        Some("not-evaluated") => {
+            query = query.filter(
+                ["retrieval", "parsing", "signature", "digest"]
+                    .into_iter()
+                    .fold(Condition::any(), |c, stage| {
+                        c.add(check_condition(stage, "not_evaluated"))
+                    }),
+            )
+        }
+        Some(filter) => {
+            if let Some((stage, status)) = filter.split_once('-')
+                && ["retrieval", "parsing", "signature", "digest"].contains(&stage)
+                && ["passed", "failed", "warning", "missing", "not_evaluated"].contains(&status)
+            {
+                query = query.filter(check_condition(stage, status));
+            }
+        }
+        None => {}
     }
 
     let total = query.clone().count(db).await?;
@@ -390,14 +451,24 @@ async fn load_failures_for_docs(
         .iter()
         .map(|doc| {
             let doc_failures = failure_map.get(&doc.id);
-            DocumentValidation {
+            let checks: DocumentChecks = serde_json::from_str(&doc.document_checks)?;
+            let evaluated = checks.retrieval.status == CheckStatus::Passed
+                && checks.parsing.status == CheckStatus::Passed;
+            Ok(DocumentValidation {
+                checks,
                 tracking_id: doc.tracking_id.clone(),
                 title: doc.title.clone(),
                 url: doc.url.clone(),
                 profiles: DocumentProfileResults {
-                    basic: cols_to_profile(doc, doc_failures, "basic"),
-                    extended: cols_to_profile(doc, doc_failures, "extended"),
-                    full: cols_to_profile(doc, doc_failures, "full"),
+                    basic: evaluated
+                        .then(|| cols_to_profile(doc, doc_failures, "basic"))
+                        .flatten(),
+                    extended: evaluated
+                        .then(|| cols_to_profile(doc, doc_failures, "extended"))
+                        .flatten(),
+                    full: evaluated
+                        .then(|| cols_to_profile(doc, doc_failures, "full"))
+                        .flatten(),
                 },
                 signature_error: doc.signature_error.clone(),
                 signature_warning: doc.signature_warning.clone(),
@@ -413,9 +484,9 @@ async fn load_failures_for_docs(
                 revision_history: revision_map.get(&doc.id).cloned().unwrap_or_default(),
                 version_count: doc.version_count as u32,
                 retrieval_error: doc.retrieval_error.clone(),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(items)
 }
@@ -511,16 +582,16 @@ pub async fn build_summary_from_db(
             DbBackend::Sqlite,
             "SELECT
                 COUNT(*) AS total,
-                SUM(COALESCE(basic_test_count, 0) - COALESCE(basic_failing_test_count, 0)) AS bv,
-                SUM(COALESCE(basic_failing_test_count, 0)) AS bi,
-                SUM(COALESCE(extended_test_count, 0) - COALESCE(extended_failing_test_count, 0)) AS ev,
-                SUM(COALESCE(extended_failing_test_count, 0)) AS ei,
-                SUM(COALESCE(full_test_count, 0) - COALESCE(full_failing_test_count, 0)) AS fv,
-                SUM(COALESCE(full_failing_test_count, 0)) AS fi,
-                SUM(CASE WHEN signature_present = 1 AND signature_error IS NULL THEN 1 ELSE 0 END) AS sv,
-                SUM(CASE WHEN signature_present = 1 AND signature_error IS NOT NULL THEN 1 ELSE 0 END) AS si,
-                SUM(CASE WHEN signature_present = 0 THEN 1 ELSE 0 END) AS sm,
-                SUM(CASE WHEN retrieval_error IS NOT NULL THEN 1 ELSE 0 END) AS re
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(basic_test_count, 0) - COALESCE(basic_failing_test_count, 0) ELSE 0 END) AS bv,
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(basic_failing_test_count, 0) ELSE 0 END) AS bi,
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(extended_test_count, 0) - COALESCE(extended_failing_test_count, 0) ELSE 0 END) AS ev,
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(extended_failing_test_count, 0) ELSE 0 END) AS ei,
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(full_test_count, 0) - COALESCE(full_failing_test_count, 0) ELSE 0 END) AS fv,
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(full_failing_test_count, 0) ELSE 0 END) AS fi,
+                SUM(CASE WHEN json_extract(document_checks, '$.signature.status') = 'passed' THEN 1 ELSE 0 END) AS sv,
+                SUM(CASE WHEN json_extract(document_checks, '$.signature.status') = 'failed' THEN 1 ELSE 0 END) AS si,
+                SUM(CASE WHEN json_extract(document_checks, '$.signature.status') = 'missing' THEN 1 ELSE 0 END) AS sm,
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'failed' THEN 1 ELSE 0 END) AS re
             FROM documents",
         ))
         .await?;
@@ -570,7 +641,9 @@ pub async fn build_summary_from_db(
             .query_all_raw(Statement::from_string(
                 DbBackend::Sqlite,
                 "SELECT test_id, COUNT(*) AS cnt, severity
-                 FROM check_failures
+                 FROM check_failures JOIN documents ON documents.id = check_failures.document_id
+                 WHERE json_extract(document_checks, '$.retrieval.status') = 'passed'
+                   AND json_extract(document_checks, '$.parsing.status') = 'passed'
                  GROUP BY test_id, severity
                  ORDER BY cnt DESC
                  LIMIT 10",
@@ -609,15 +682,17 @@ pub async fn build_summary_from_db(
         }
     };
 
+    let checks = document_check_summary(db).await?;
     Ok(ProviderSummary {
+        checks: Some(checks),
         provider: domain.to_string(),
         publisher_name,
         validated_at: OffsetDateTime::now_utc(),
         document_count: total,
         profiles: ProfileResults {
-            basic: Some(basic),
-            extended: Some(extended),
-            full: Some(full),
+            basic: (basic.valid + basic.invalid > 0).then_some(basic),
+            extended: (extended.valid + extended.invalid > 0).then_some(extended),
+            full: (full.valid + full.invalid > 0).then_some(full),
         },
         signatures: Some(signatures),
         top_failing_tests,
@@ -688,13 +763,13 @@ pub async fn distribution_health(
         DbBackend::Sqlite,
         "SELECT
             COUNT(*) AS total,
-            SUM(COALESCE(basic_test_count, 0) - COALESCE(basic_failing_test_count, 0)) AS bv,
-            SUM(COALESCE(basic_failing_test_count, 0)) AS bi,
-            SUM(COALESCE(extended_test_count, 0) - COALESCE(extended_failing_test_count, 0)) AS ev,
-            SUM(COALESCE(extended_failing_test_count, 0)) AS ei,
-            SUM(COALESCE(full_test_count, 0) - COALESCE(full_failing_test_count, 0)) AS fv,
-            SUM(COALESCE(full_failing_test_count, 0)) AS fi,
-            SUM(CASE WHEN retrieval_error IS NOT NULL THEN 1 ELSE 0 END) AS re
+            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(basic_test_count, 0) - COALESCE(basic_failing_test_count, 0) ELSE 0 END) AS bv,
+            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(basic_failing_test_count, 0) ELSE 0 END) AS bi,
+            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(extended_test_count, 0) - COALESCE(extended_failing_test_count, 0) ELSE 0 END) AS ev,
+            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(extended_failing_test_count, 0) ELSE 0 END) AS ei,
+            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(full_test_count, 0) - COALESCE(full_failing_test_count, 0) ELSE 0 END) AS fv,
+            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(full_failing_test_count, 0) ELSE 0 END) AS fi,
+            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'failed' THEN 1 ELSE 0 END) AS re
         FROM documents
         WHERE EXISTS (SELECT 1 FROM distribution_membership AS membership
             WHERE membership.distribution_url = ?1 AND membership.document_url = documents.url)",
@@ -864,6 +939,10 @@ pub async fn save_retrieval_errors(
 
     for (url, error) in errors {
         let tracking_id = tracking_id_from_url(url);
+        let checks = serde_json::to_string(&DocumentChecks {
+            retrieval: CheckOutcome::failed(error.clone()),
+            ..Default::default()
+        })?;
 
         let existing = document::Entity::find()
             .filter(document::Column::Url.eq(url))
@@ -876,11 +955,13 @@ pub async fn save_retrieval_errors(
             }
             let mut active: document::ActiveModel = doc.into();
             active.retrieval_error = Set(Some(error.clone()));
+            active.document_checks = Set(checks);
             active.update(&txn).await?;
         } else {
             document::ActiveModel {
                 tracking_id: Set(tracking_id),
                 title: Set("Retrieval failed".to_string()),
+                document_checks: Set(checks),
                 url: Set(url.clone()),
                 retrieval_error: Set(Some(error.clone())),
                 signature_present: Set(0),
@@ -967,4 +1048,22 @@ pub async fn backfill_test_counts(db: &DatabaseConnection) -> Result<()> {
 
     tracing::info!("Test count backfill complete");
     Ok(())
+}
+
+/// Counts each essential outcome independently using the same stored states as the filters.
+pub async fn document_check_summary(db: &DatabaseConnection) -> Result<DocumentCheckSummary> {
+    let rows = db.query_all_raw(Statement::from_string(DbBackend::Sqlite,
+        "SELECT document_checks, COUNT(*) AS count FROM documents GROUP BY json_extract(document_checks, '$.retrieval.status'), json_extract(document_checks, '$.parsing.status'), json_extract(document_checks, '$.signature.status'), json_extract(document_checks, '$.digest.status')"
+    )).await?;
+    let mut summary = DocumentCheckSummary::default();
+    for row in rows {
+        let checks: DocumentChecks =
+            serde_json::from_str(&row.try_get::<String>("", "document_checks")?)?;
+        let count = row.try_get::<i64>("", "count")? as u64;
+        summary.retrieval.add(checks.retrieval.status, count);
+        summary.parsing.add(checks.parsing.status, count);
+        summary.signature.add(checks.signature.status, count);
+        summary.digest.add(checks.digest.status, count);
+    }
+    Ok(summary)
 }

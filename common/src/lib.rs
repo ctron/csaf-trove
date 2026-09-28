@@ -1,5 +1,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod document_checks;
+
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};

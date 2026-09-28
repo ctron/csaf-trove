@@ -1,3 +1,4 @@
+use csaf_trove_common::document_checks::DocumentCheckSummary;
 use serde::{Deserialize, Serialize};
 
 /// Rolling time series of daily validation snapshots for a provider.
@@ -12,6 +13,9 @@ pub struct MetricsTimeSeries {
 /// A single daily validation snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsEntry {
+    /// Independent outcomes, absent for historical snapshots predating these checks.
+    #[serde(default)]
+    pub checks: Option<DocumentCheckSummary>,
     /// Date of the snapshot (`YYYY-MM-DD`).
     pub date: String,
     /// Total documents evaluated.

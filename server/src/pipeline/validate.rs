@@ -20,6 +20,7 @@ use crate::{
     },
 };
 use anyhow::Result;
+use csaf_trove_common::document_checks::{CheckOutcome, CheckStatus, DocumentChecks};
 use csaf_walker::{
     check::CheckError,
     common::{
@@ -65,6 +66,8 @@ fn total_tests_for_profile(version: CsafVersionTag, profile: &str) -> u64 {
 
 #[derive(Debug)]
 struct DocumentResult {
+    /// Independent essential document outcomes.
+    checks: DocumentChecks,
     /// CSAF tracking ID.
     tracking_id: String,
     /// Document title.
@@ -208,13 +211,32 @@ pub async fn validate_provider(
                             }),
                         ]);
 
+                        let digest = CheckOutcome {
+                            status: if integrity.error.is_some() {
+                                CheckStatus::Failed
+                            } else if integrity.warning.is_some() {
+                                CheckStatus::Warning
+                            } else if integrity.present {
+                                CheckStatus::Passed
+                            } else {
+                                CheckStatus::Missing
+                            },
+                            message: integrity
+                                .error
+                                .clone()
+                                .or_else(|| integrity.warning.clone()),
+                        };
+                        let mut signature_outcome = CheckOutcome::new(CheckStatus::Missing);
+
                         // OpenPGP authenticity is independent of digest integrity.
                         if let Some(signature) = &verified.advisory.signature {
                             integrity.present = true;
+                            signature_outcome = CheckOutcome::new(CheckStatus::Passed);
                             if let Err(error) =
                                 validate_signature(&opts, &keys, signature, &verified.advisory.data)
                             {
                                 let message = format!("Invalid signature: {error}");
+                                signature_outcome = CheckOutcome::failed(message.clone());
                                 integrity.error = Some(match integrity.error {
                                     Some(digest_error) => format!("{message}; {digest_error}"),
                                     None => message,
@@ -246,6 +268,12 @@ pub async fn validate_provider(
                         let vtag = Some(csaf_version_tag(&verified.csaf));
 
                         DocumentResult {
+                            checks: DocumentChecks {
+                                retrieval: CheckOutcome::new(CheckStatus::Passed),
+                                parsing: CheckOutcome::new(CheckStatus::Passed),
+                                signature: signature_outcome,
+                                digest,
+                            },
                             tracking_id,
                             title,
                             url,
@@ -276,16 +304,38 @@ pub async fn validate_provider(
                             .unwrap_or(&url)
                             .trim_end_matches(".json")
                             .to_string();
+                        let checks = match &e {
+                            VerificationError::Parsing { .. } => DocumentChecks {
+                                retrieval: CheckOutcome::new(CheckStatus::Passed),
+                                parsing: CheckOutcome::failed(e.to_string()),
+                                ..Default::default()
+                            },
+                            VerificationError::Upstream(_) => DocumentChecks {
+                                retrieval: CheckOutcome::failed(e.to_string()),
+                                ..Default::default()
+                            },
+                            VerificationError::Check { .. } => {
+                                return Err(anyhow::anyhow!(
+                                    "Validation could not complete for {url}: {e}"
+                                ));
+                            }
+                        };
+                        let parse_failed = checks.parsing.status == CheckStatus::Failed;
                         DocumentResult {
+                            checks,
                             tracking_id,
-                            title: format!("Parse error: {e}"),
+                            title: if parse_failed {
+                                format!("Parse error: {e}")
+                            } else {
+                                "Retrieval failed".into()
+                            },
                             url,
                             failures: HashMap::new(),
                             warnings: HashMap::new(),
                             infos: HashMap::new(),
                             successes: vec![],
                             version_tag: None,
-                            signature_error: Some(format!("Document error: {e}")),
+                            signature_error: parse_failed.then(|| format!("Document error: {e}")),
                             signature_present: false,
                             signature_warning: None,
                             category: None,
@@ -338,7 +388,11 @@ fn build_document_validation(doc: DocumentResult) -> DocumentValidation {
         extended: build_doc_profile_detail(&doc, "extended"),
         full: build_doc_profile_detail(&doc, "full"),
     };
+    let retrieval_error = (doc.checks.retrieval.status == CheckStatus::Failed)
+        .then(|| doc.checks.retrieval.message.clone())
+        .flatten();
     DocumentValidation {
+        checks: doc.checks,
         tracking_id: doc.tracking_id,
         title: doc.title,
         url: doc.url,
@@ -356,7 +410,7 @@ fn build_document_validation(doc: DocumentResult) -> DocumentValidation {
         csaf_version: doc.csaf_version,
         revision_history: doc.revision_history,
         version_count: 1,
-        retrieval_error: None,
+        retrieval_error,
     }
 }
 

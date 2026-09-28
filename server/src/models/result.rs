@@ -1,5 +1,6 @@
 use super::metrics::MetricsTimeSeries;
 use csaf_trove_common::CommitInfo;
+use csaf_trove_common::document_checks::{DocumentCheckSummary, DocumentChecks};
 use serde::{Deserialize, Serialize};
 
 /// Combined detail view for a provider including summary, metrics, and sync history.
@@ -57,6 +58,9 @@ pub struct DistributionHealth {
 /// Validation summary for a single CSAF provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSummary {
+    /// Independent essential document outcome counts; absent in old cached summaries.
+    #[serde(default)]
+    pub checks: Option<DocumentCheckSummary>,
     /// Domain name of the provider.
     pub provider: String,
     /// Publisher name from the CSAF metadata, if available.
@@ -136,6 +140,9 @@ pub struct FailingTest {
 /// Validation results for a single CSAF document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentValidation {
+    /// Independent essential document outcomes.
+    #[serde(default)]
+    pub checks: DocumentChecks,
     /// CSAF tracking ID (e.g. `RHSA-2024:1234`).
     pub tracking_id: String,
     /// Document title from the CSAF metadata.
@@ -144,12 +151,12 @@ pub struct DocumentValidation {
     pub url: String,
     /// Per-profile validation results.
     pub profiles: DocumentProfileResults,
-    /// Signature validation error message, if the signature was invalid.
+    /// Legacy combined parse/signature/digest diagnostic; use `checks` for independent results.
     pub signature_error: Option<String>,
-    /// Failed digest check when the other supplied digest matched.
+    /// Legacy digest warning; use `checks.digest` for its outcome and diagnostic.
     #[serde(default)]
     pub signature_warning: Option<String>,
-    /// Whether any signature or checksum was supplied for this document.
+    /// Legacy combined signature/checksum presence; use `checks` for separate outcomes.
     pub signature_present: bool,
     /// Document category (e.g. `csaf_security_advisory`, `csaf_vex`).
     #[serde(default, skip_serializing_if = "Option::is_none")]

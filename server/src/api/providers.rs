@@ -23,6 +23,7 @@ pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> 
     for (domain, source) in sources.iter() {
         if source.enabled && !known.contains(domain) {
             providers.push(ProviderSummary {
+                checks: Some(Default::default()),
                 provider: domain.clone(),
                 publisher_name: None,
                 validated_at: time::OffsetDateTime::now_utc(),
@@ -76,6 +77,7 @@ pub async fn detail(
         None if is_known_source => {
             let stub = ProviderDetail {
                 summary: ProviderSummary {
+                    checks: Some(Default::default()),
                     provider: domain,
                     publisher_name: None,
                     validated_at: time::OffsetDateTime::now_utc(),
@@ -136,8 +138,10 @@ pub struct DocumentsQuery {
     /// Maximum number of results (default 50, max 200).
     pub limit: Option<u64>,
     /// Filter by status: `failing` (errors), `warnings` (warnings or errors),
-    /// `passing` (no errors or warnings), `errors` (retrieval errors),
-    /// `signature-errors` (signature/integrity errors), or omit for all.
+    /// `passing` (evaluated, without errors or warnings), `errors` (retrieval errors),
+    /// `signature-errors`, `parse-errors`, `digest-errors`, `digest-warnings`,
+    /// `missing-signatures`, `missing-digests`, `not-evaluated`, or omit for all.
+    /// Individual outcomes use `<stage>-<outcome>`, for example `parsing-failed`.
     pub status: Option<String>,
 }
 

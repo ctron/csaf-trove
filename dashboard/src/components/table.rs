@@ -4,7 +4,7 @@ use leptos::prelude::*;
 #[component]
 pub fn Table(children: Children) -> impl IntoView {
     view! {
-        <div class="overflow-hidden border border-gray-200 dark:border-gray-700 rounded-lg">
+        <div class="overflow-x-auto border border-gray-200 dark:border-gray-700 rounded-lg">
             <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                 {children()}
             </table>

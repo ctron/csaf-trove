@@ -21,6 +21,7 @@ pub async fn generate_report(state: &Arc<AppState>, source: &Source) -> Result<(
     let mut metrics = state.storage.load_metrics(domain).await?;
 
     let entry = MetricsEntry {
+        checks: summary.checks.clone(),
         date: Utc::now().format("%Y-%m-%d").to_string(),
         document_count: summary.document_count,
         basic: summary

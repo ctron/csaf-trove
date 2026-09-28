@@ -1,8 +1,8 @@
 use crate::components::{
+    document_checks::CheckSummaryView,
     note_indicator::NoteIndicator,
     profile_badge::ProfileBadge,
     section_heading::SectionHeading,
-    signature_badge::SignatureBadge,
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{ProviderSummary, encode_path_segment};
@@ -158,8 +158,10 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                     <ProviderSortHeading column=ProviderSort::Basic label="Basic" sort=sort />
                     <ProviderSortHeading column=ProviderSort::Extended label="Extended" sort=sort />
                     <ProviderSortHeading column=ProviderSort::Full label="Full" sort=sort />
+                    <Th>"Retrieval"</Th>
+                    <Th>"Parsing"</Th>
                     <Th>"Signatures"</Th>
-                    <Th>"Errors"</Th>
+                    <Th>"Digests"</Th>
                     <Th>"Last Validated"</Th>
                 </tr>
             </Thead>
@@ -170,11 +172,20 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                     let display_domain = domain.clone();
                     let validated_at = p.validated_at.clone();
                     let note = p.note.clone();
+                    let check_cells = [
+                        ("retrieval", p.checks.as_ref().map(|c| c.retrieval.clone())),
+                        ("parsing", p.checks.as_ref().map(|c| c.parsing.clone())),
+                        ("signature", p.checks.as_ref().map(|c| c.signature.clone())),
+                        ("digest", p.checks.as_ref().map(|c| c.digest.clone())),
+                    ].into_iter().map(|(stage, counts)| {
+                        let provider_url = href.clone();
+                        view! { <Td><CheckSummaryView counts=counts provider_url=provider_url stage=stage /></Td> }
+                    }).collect::<Vec<_>>();
                     view! {
                         <tr>
                             <Td>
                                 <span class="inline-flex items-center gap-1.5">
-                                    <a href={href}>{display_domain}</a>
+                                    <a href={href.clone()}>{display_domain}</a>
                                     {note.map(|text| view! { <NoteIndicator text=text /> })}
                                 </span>
                             </Td>
@@ -182,8 +193,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                             <Td><ProfileBadge profile=p.profiles.basic /></Td>
                             <Td><ProfileBadge profile=p.profiles.extended /></Td>
                             <Td><ProfileBadge profile=p.profiles.full /></Td>
-                            <Td><SignatureBadge signatures=p.signatures /></Td>
-                            <Td>{if p.retrieval_errors > 0 { p.retrieval_errors.to_string() } else { "-".to_string() }}</Td>
+                            {check_cells}
                             <Td>{format_validated_at(&validated_at)}</Td>
                         </tr>
                     }

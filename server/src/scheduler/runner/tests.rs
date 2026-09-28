@@ -393,3 +393,98 @@ async fn processing_backfills_and_extends_versions() {
         3
     );
 }
+
+/// Real validation distinguishes parsing, OpenPGP authenticity, and mixed digest outcomes.
+#[tokio::test]
+async fn essential_checks_remain_independent_through_processing() {
+    use csaf_trove_common::document_checks::CheckStatus;
+    use sha2::{Digest, Sha256, Sha512};
+
+    let (_dir, state, source) = fixture();
+    let advisory = serde_json::to_vec(&serde_json::json!({
+        "document": {
+            "category": "csaf_base", "csaf_version": "2.0", "title": "Example",
+            "publisher": {"category": "vendor", "name": "Example", "namespace": "https://example.com"},
+            "tracking": {
+                "id": "a", "status": "final", "version": "1",
+                "initial_release_date": "2026-01-01T00:00:00Z",
+                "current_release_date": "2026-01-01T00:00:00Z",
+                "revision_history": [{"date": "2026-01-01T00:00:00Z", "number": "1", "summary": "Initial"}]
+            }
+        }
+    })).unwrap();
+    let sha256 = hex::encode(Sha256::digest(&advisory));
+    let sha512 = hex::encode(Sha512::digest(&advisory));
+    commit(
+        &state,
+        &[
+            ("example.com/a.json", &advisory),
+            ("example.com/a.json.sha256", sha256.as_bytes()),
+            ("example.com/a.json.sha512", sha512.as_bytes()),
+        ],
+    );
+    process(&state, &source).await.unwrap();
+    let load = async || {
+        state
+            .storage
+            .load_document(&source.domain, "a")
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    let checks = load().await.checks;
+    assert_eq!(
+        checks.parsing.status,
+        CheckStatus::Passed,
+        "{:?}",
+        checks.parsing
+    );
+    assert_eq!(checks.signature.status, CheckStatus::Missing);
+    assert_eq!(checks.digest.status, CheckStatus::Passed);
+
+    commit(
+        &state,
+        &[("example.com/a.json.asc", b"not an OpenPGP signature")],
+    );
+    process(&state, &source).await.unwrap();
+    let checks = load().await.checks;
+    assert_eq!(checks.signature.status, CheckStatus::Failed);
+    assert_eq!(checks.digest.status, CheckStatus::Passed);
+
+    commit(&state, &[("example.com/a.json.sha512", b"incorrect")]);
+    process(&state, &source).await.unwrap();
+    let checks = load().await.checks;
+    assert_eq!(checks.signature.status, CheckStatus::Failed);
+    assert_eq!(checks.digest.status, CheckStatus::Warning);
+    assert!(checks.digest.message.unwrap().contains("SHA-512 mismatch"));
+
+    commit(&state, &[("example.com/a.json.sha256", b"incorrect")]);
+    process(&state, &source).await.unwrap();
+    let checks = load().await.checks;
+    assert_eq!(checks.digest.status, CheckStatus::Failed);
+    assert_eq!(checks.signature.status, CheckStatus::Failed);
+    let summary = state
+        .storage
+        .load_summary(&source.domain)
+        .await
+        .unwrap()
+        .unwrap();
+    let counts = summary.checks.unwrap();
+    assert_eq!(counts.signature.failed, 1);
+    assert_eq!(counts.digest.failed, 1);
+    assert_eq!(counts.parsing.failed, 1); // The fixture's other document is unparsable.
+    let metrics = state.storage.load_metrics(&source.domain).await.unwrap();
+    assert_eq!(
+        metrics.entries.last().unwrap().checks.as_ref(),
+        Some(&counts)
+    );
+
+    commit(&state, &[("example.com/a.json", b"not JSON")]);
+    process(&state, &source).await.unwrap();
+    let doc = load().await;
+    assert_eq!(doc.checks.retrieval.status, CheckStatus::Passed);
+    assert_eq!(doc.checks.parsing.status, CheckStatus::Failed);
+    assert_eq!(doc.checks.signature.status, CheckStatus::NotEvaluated);
+    assert_eq!(doc.checks.digest.status, CheckStatus::NotEvaluated);
+    assert!(doc.profiles.basic.is_none());
+}

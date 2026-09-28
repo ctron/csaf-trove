@@ -47,6 +47,6 @@ pub fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
             };
             view! { <Badge variant=variant>{label}</Badge> }.into_any()
         }
-        None => view! { <Badge variant=BadgeVariant::Neutral>"-"</Badge> }.into_any(),
+        None => view! { <Badge variant=BadgeVariant::Neutral>"Not evaluated"</Badge> }.into_any(),
     }
 }

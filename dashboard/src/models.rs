@@ -1,3 +1,4 @@
+use csaf_trove_common::document_checks::{DocumentCheckSummary, DocumentChecks};
 use csaf_trove_common::{PipelinePhase, SyncPoint};
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +8,9 @@ fn default_version_count() -> u32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSummary {
+    /// Independent essential document outcome counts; absent in old cached summaries.
+    #[serde(default)]
+    pub checks: Option<DocumentCheckSummary>,
     pub provider: String,
     pub publisher_name: Option<String>,
     pub validated_at: String,
@@ -95,6 +99,9 @@ pub struct MetricsTimeSeries {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsEntry {
+    /// Independent outcomes, absent for historical snapshots predating these checks.
+    #[serde(default)]
+    pub checks: Option<DocumentCheckSummary>,
     pub date: String,
     pub document_count: u64,
     pub basic: Option<MetricsProfileEntry>,
@@ -161,6 +168,9 @@ pub struct JobStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentValidation {
+    /// Independent essential document outcomes.
+    #[serde(default)]
+    pub checks: DocumentChecks,
     pub tracking_id: String,
     pub title: String,
     pub url: String,

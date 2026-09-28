@@ -52,6 +52,7 @@ async fn fixture() -> (TempDir, Storage, DatabaseConnection) {
     db.execute_raw(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "UPDATE documents SET retrieval_error = NULL,
+            document_checks = json_set(document_checks, '$.retrieval.status', 'passed', '$.parsing.status', 'passed'),
             basic_test_count = 4, basic_failing_test_count = 1,
             extended_test_count = 5, extended_failing_test_count = 1,
             full_test_count = 10, full_failing_test_count = 1 WHERE url = ?",
