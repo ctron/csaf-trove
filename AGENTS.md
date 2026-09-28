@@ -14,3 +14,9 @@
 * Try to avoid -C for git
 * Use conventional commits
 * Use gitflow branches
+
+## Release
+
+* Increment the version in `Cargo.toml` and `deploy/roles/csaf-trove/defaults/main.yml`
+* Run `cargo generate-lockfile`
+* Commit and create a tag with a `v` prefix
