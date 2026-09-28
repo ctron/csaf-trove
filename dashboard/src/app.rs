@@ -44,6 +44,8 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/") view=HomePage />
                         <Route path=path!("/providers/:domain") view=ProviderPage />
                         <Route path=path!("/providers/:domain/documents/:tracking_id") view=DocumentPage />
+                        <Route path=path!("/providers/:domain/documents/:tracking_id/:tab") view=DocumentPage />
+                        <Route path=path!("/providers/:domain/documents/:tracking_id/:tab/:commit_id") view=DocumentPage />
                         <Route path=path!("/sync") view=SyncStatusPage />
                         <Route path=path!("/sync/:domain") view=SyncDetailPage />
                     </Routes>

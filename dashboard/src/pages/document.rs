@@ -13,7 +13,7 @@ use crate::models::{
     RevisionEntry, encode_path_segment,
 };
 use leptos::prelude::*;
-use leptos_router::hooks::use_params_map;
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 use std::cmp::Ordering;
 
 /// Number of versions shown per history page.
@@ -132,8 +132,37 @@ pub fn DocumentPage() -> impl IntoView {
     let domain = move || params.read().get("domain").unwrap_or_default();
     let tracking_id = move || params.read().get("tracking_id").unwrap_or_default();
 
-    let (selected_version, set_selected_version) = signal(Option::<String>::None);
-    let (tab, set_tab) = signal("overview".to_string());
+    let query = use_query_map();
+    let navigate = use_navigate();
+    let navigate = Callback::new(move |url: String| navigate(&url, Default::default()));
+    let selected_version = Signal::derive(move || params.read().get("commit_id"));
+    let tab = Signal::derive(move || {
+        params
+            .read()
+            .get("tab")
+            .unwrap_or_else(|| "overview".into())
+    });
+    let document_url = move || {
+        format!(
+            "/providers/{}/documents/{}",
+            encode_path_segment(&domain()),
+            encode_path_segment(&tracking_id()),
+        )
+    };
+    let versions_offset = Signal::derive(move || {
+        query
+            .read()
+            .get("offset")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0)
+    });
+    let history_url = move || {
+        format!(
+            "{}/history?offset={}",
+            document_url(),
+            versions_offset.get()
+        )
+    };
 
     let detail = LocalResource::new(move || {
         let d = domain();
@@ -141,7 +170,6 @@ pub fn DocumentPage() -> impl IntoView {
         async move { fetch_document(d, t).await }
     });
 
-    let (versions_offset, set_versions_offset) = signal(0u64);
     // Only load history once the tab is opened.
     let versions = LocalResource::new(move || {
         let d = domain();
@@ -186,34 +214,45 @@ pub fn DocumentPage() -> impl IntoView {
             <Breadcrumb>
                 <BreadcrumbItem href=Signal::derive(|| "/".to_string())>"Providers"</BreadcrumbItem>
                 <BreadcrumbItem href=Signal::derive(move || format!("/providers/{}", encode_path_segment(&domain())))>{move || domain()}</BreadcrumbItem>
-                <BreadcrumbCurrent>{move || tracking_id()}</BreadcrumbCurrent>
+                {move || if tab.get() == "history" {
+                    view! {
+                        <BreadcrumbItem href=Signal::derive(document_url)>{move || tracking_id()}</BreadcrumbItem>
+                        {move || if let Some(commit_id) = selected_version.get() {
+                            view! {
+                                <BreadcrumbItem href=Signal::derive(history_url)>"History"</BreadcrumbItem>
+                                <BreadcrumbCurrent>{commit_id}</BreadcrumbCurrent>
+                            }.into_any()
+                        } else {
+                            view! { <BreadcrumbCurrent>"History"</BreadcrumbCurrent> }.into_any()
+                        }}
+                    }.into_any()
+                } else {
+                    view! { <BreadcrumbCurrent>{move || tracking_id()}</BreadcrumbCurrent> }.into_any()
+                }}
             </Breadcrumb>
 
             <ContentTabs>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "overview")
                     on_click=Callback::new(move |_| {
-                        set_tab.set("overview".into());
-                        set_selected_version.set(None);
+                        navigate.run(document_url());
                     })
                 >"Overview"</ContentTab>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "validation")
                     on_click=Callback::new(move |_| {
-                        set_tab.set("validation".into());
-                        set_selected_version.set(None);
+                        navigate.run(format!("{}/validation", document_url()));
                     })
                 >"Validation"</ContentTab>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "revision")
                     on_click=Callback::new(move |_| {
-                        set_tab.set("revision".into());
-                        set_selected_version.set(None);
+                        navigate.run(format!("{}/revision", document_url()));
                     })
                 >"Revision"</ContentTab>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "history")
-                    on_click=Callback::new(move |_| set_tab.set("history".into()))
+                    on_click=Callback::new(move |_| navigate.run(history_url()))
                 >"History"</ContentTab>
             </ContentTabs>
 
@@ -223,12 +262,6 @@ pub fn DocumentPage() -> impl IntoView {
                         {move || {
                             if selected_version.get().is_some() {
                                 view! {
-                                    <button
-                                        class="text-sm text-blue-600 dark:text-blue-400 hover:underline mb-4 cursor-pointer"
-                                        on:click=move |_| set_selected_version.set(None)
-                                    >
-                                        "← Back to version list"
-                                    </button>
                                     <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading version..."</p> }>
                                         {move || historical.get().map(|outer| match outer {
                                             Some(Ok(doc)) => view! { <HistoricalVersionDetail doc=doc /> }.into_any(),
@@ -254,7 +287,9 @@ pub fn DocumentPage() -> impl IntoView {
                                                 view! {
                                                     <VersionListTable
                                                         versions=page.items
-                                                        on_select=set_selected_version
+                                                        on_select=Callback::new(move |commit_id: String| navigate.run(format!(
+                                                            "{}/history/{}?offset={}", document_url(), encode_path_segment(&commit_id), versions_offset.get()
+                                                        )))
                                                     />
                                                     {(total > VERSIONS_PAGE_SIZE).then(|| view! {
                                                         <Pagination
@@ -262,7 +297,7 @@ pub fn DocumentPage() -> impl IntoView {
                                                             limit=VERSIONS_PAGE_SIZE
                                                             total=total
                                                             count=count
-                                                            on_change=Callback::new(move |o: u64| set_versions_offset.set(o))
+                                                            on_change=Callback::new(move |o: u64| navigate.run(format!("{}/history?offset={o}", document_url())))
                                                         />
                                                     })}
                                                 }.into_any()
@@ -293,7 +328,7 @@ pub fn DocumentPage() -> impl IntoView {
 #[component]
 fn VersionListTable(
     versions: Vec<DocumentVersionInfo>,
-    on_select: WriteSignal<Option<String>>,
+    on_select: Callback<String>,
 ) -> impl IntoView {
     if versions.is_empty() {
         return view! {
@@ -332,7 +367,7 @@ fn VersionListTable(
                             class=row_class
                             on:click=move |_| {
                                 if !is_latest {
-                                    on_select.set(Some(commit_id.clone()));
+                                    on_select.run(commit_id.clone());
                                 }
                             }
                         >
@@ -413,7 +448,7 @@ fn HistoricalVersionDetail(doc: HistoricalDocument) -> impl IntoView {
 
 /// Renders document content for the Overview, Validation, and Revision tabs.
 #[component]
-fn DocumentDetailContent(doc: DocumentValidation, tab: ReadSignal<String>) -> impl IntoView {
+fn DocumentDetailContent(doc: DocumentValidation, tab: Signal<String>) -> impl IntoView {
     let doc = StoredValue::new(doc);
 
     view! {
