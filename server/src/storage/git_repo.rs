@@ -85,13 +85,10 @@ fn open_worktree(worktree: &PreparedWorktree) -> Result<Repository> {
 
 /// Prepares a private index without copying objects or transferring Git history.
 ///
-/// Incremental runs start empty; full runs materialize HEAD with compressed advisories.
+/// Scratch always starts empty: the index carries HEAD, so files absent from scratch keep
+/// their committed content and only downloaded files need to be written.
 /// The caller must hold the provider's pipeline lock until committing and cleanup.
-pub fn prepare_worktree(
-    repo_path: &Path,
-    worktree_path: &Path,
-    incremental: bool,
-) -> Result<PreparedWorktree> {
+pub fn prepare_worktree(repo_path: &Path, worktree_path: &Path) -> Result<PreparedWorktree> {
     let started = Instant::now();
     let repo = init_bare(repo_path)?;
     let (branch, base_commit) = resolve_branch(&repo)?;
@@ -110,19 +107,10 @@ pub fn prepare_worktree(
     if let Some(oid) = base_commit {
         let tree = repo.find_commit(oid)?.tree()?;
         index.read_tree(&tree)?;
-        if !incremental {
-            for entry in index.iter() {
-                let relative = Path::new(from_utf8(&entry.path)?);
-                let blob = repo.find_blob(entry.id)?;
-                scratch::write(&worktree.worktree_path, relative, blob.content())
-                    .with_context(|| format!("Failed to materialize {}", relative.display()))?;
-            }
-        }
     }
     index.write()?;
     tracing::info!(
         repository = %repo_path.display(),
-        incremental,
         entries = index.len(),
         elapsed_ms = started.elapsed().as_millis(),
         "Prepared worktree using existing Git objects"
@@ -526,7 +514,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bare_path = dir.path().join("repo.git");
         let work_path = dir.path().join("work");
-        let prepared = prepare_worktree(&bare_path, &work_path, false).unwrap();
+        let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
         for (path, content) in files {
             let full = work_path.join(path);
             fs::create_dir_all(full.parent().unwrap()).unwrap();
@@ -546,7 +534,7 @@ mod tests {
         // Simulate a legacy clone left behind by a killed process.
         fs::create_dir_all(work_path.join(".git/objects/pack")).unwrap();
         fs::write(work_path.join(".git/objects/pack/abandoned.pack"), b"old").unwrap();
-        let prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+        let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
         assert!(!work_path.join("example.com").exists());
         assert!(!work_path.join(".git/objects").exists());
         assert_eq!(fs::read_dir(work_path.join(".git")).unwrap().count(), 1);
@@ -571,18 +559,14 @@ mod tests {
         );
     }
 
-    /// Full syncs compress existing history and commit original bytes without extra versions.
+    /// Syncs keep unchanged history without materializing it and commit original bytes.
     #[test]
-    fn full_worktree_checks_out_current_tree() {
+    fn worktree_keeps_history_without_materializing() {
         let (dir, bare_path) = create_test_repo(&[("example.com/doc.json", b"old")]);
         let work_path = dir.path().join("full");
-        let prepared = prepare_worktree(&bare_path, &work_path, false).unwrap();
-        assert_eq!(
-            scratch::read(&work_path.join("example.com/doc.json.zst")).unwrap(),
-            b"old"
-        );
+        let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
+        assert!(!work_path.join("example.com").exists());
         assert!(!commit_all(&prepared, "unchanged").unwrap());
-        assert!(!work_path.join("example.com/doc.json").exists());
         scratch::write(&work_path, Path::new("example.com/doc.json"), b"new").unwrap();
         assert!(commit_all(&prepared, "changed").unwrap());
         assert_eq!(
@@ -601,7 +585,7 @@ mod tests {
         let bare = init_bare(&bare_path).unwrap();
         bare.set_head("refs/heads/provider/history").unwrap();
         let work_path = dir.path().join("work");
-        let prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+        let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
         assert_eq!(prepared.base_commit, None);
         fs::write(work_path.join("doc.json"), b"initial").unwrap();
         assert!(commit_all(&prepared, "initial").unwrap());
@@ -627,7 +611,7 @@ mod tests {
         let original = bare.head().unwrap().name().unwrap().to_owned();
         let oid = bare.head().unwrap().target().unwrap();
         bare.set_head("refs/heads/missing").unwrap();
-        let prepared = prepare_worktree(&bare_path, &dir.path().join("work"), true).unwrap();
+        let prepared = prepare_worktree(&bare_path, &dir.path().join("work")).unwrap();
         assert_eq!(prepared.branch, original);
         assert_eq!(prepared.base_commit, Some(oid));
         assert_eq!(bare.head().unwrap().target(), Some(oid));
@@ -641,7 +625,7 @@ mod tests {
         let oid = bare.head().unwrap().target().unwrap().to_string();
         drop(bare);
         fs::remove_file(bare_path.join("objects").join(&oid[..2]).join(&oid[2..])).unwrap();
-        assert!(prepare_worktree(&bare_path, &dir.path().join("work"), true).is_err());
+        assert!(prepare_worktree(&bare_path, &dir.path().join("work")).is_err());
     }
 
     /// Competing updates are rejected for both existing and initially absent branches.
@@ -651,14 +635,14 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let bare_path = dir.path().join("repo.git");
             let work_path = dir.path().join("work");
-            let mut prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+            let mut prepared = prepare_worktree(&bare_path, &work_path).unwrap();
             if !initial {
                 fs::write(work_path.join("doc.json"), b"old").unwrap();
                 commit_all(&prepared, "initial").unwrap();
-                prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+                prepared = prepare_worktree(&bare_path, &work_path).unwrap();
             }
             let competing_path = dir.path().join("competing");
-            let competing = prepare_worktree(&bare_path, &competing_path, true).unwrap();
+            let competing = prepare_worktree(&bare_path, &competing_path).unwrap();
             fs::write(competing_path.join("doc.json"), b"competing").unwrap();
             commit_all(&competing, "competing").unwrap();
             fs::write(work_path.join("doc.json"), b"stale").unwrap();
@@ -679,7 +663,7 @@ mod tests {
     fn direct_commit_rejects_missing_index() {
         let (dir, bare_path) = create_test_repo(&[("doc.json", b"old")]);
         let work_path = dir.path().join("work");
-        let prepared = prepare_worktree(&bare_path, &work_path, true).unwrap();
+        let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
         fs::remove_file(work_path.join(".git/index")).unwrap();
         assert!(commit_all(&prepared, "lost index").is_err());
         assert_eq!(
@@ -701,7 +685,7 @@ mod tests {
         let started = Instant::now();
         let entries = match mode.as_str() {
             "direct" => {
-                let prepared = prepare_worktree(&repo_path, &work_path, true).unwrap();
+                let prepared = prepare_worktree(&repo_path, &work_path).unwrap();
                 assert!(!work_path.join(".git/objects").exists());
                 let count = open_worktree(&prepared).unwrap().index().unwrap().len();
                 assert_eq!(fs::read_dir(&work_path).unwrap().count(), 1);
@@ -794,7 +778,7 @@ mod tests {
         let (_dir, bare_path) = create_test_repo(files);
 
         let inc_work = _dir.path().join("incremental");
-        let prepared = prepare_worktree(&bare_path, &inc_work, true).unwrap();
+        let prepared = prepare_worktree(&bare_path, &inc_work).unwrap();
 
         // Add one new file to the working directory (simulating incremental sync).
         scratch::write(
@@ -821,7 +805,7 @@ mod tests {
     /// Records an incremental update directly in the persistent repository.
     fn add_commit(work_path: &Path, file: &str, content: &[u8], msg: &str) {
         let bare_path = work_path.parent().unwrap().join("repo.git");
-        let prepared = prepare_worktree(&bare_path, work_path, true).unwrap();
+        let prepared = prepare_worktree(&bare_path, work_path).unwrap();
         scratch::write(work_path, Path::new(file), content).unwrap();
         assert!(commit_all(&prepared, msg).unwrap());
     }

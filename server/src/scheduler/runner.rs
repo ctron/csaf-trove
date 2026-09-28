@@ -188,23 +188,11 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let worktree_dir = state.work_dir().join(sanitize_domain(domain));
 
     let result = async {
-        let sync_state = state.storage.load_sync_state(domain).await?;
-        let db_count = state.storage.document_count(domain).await?;
-        let incremental = sync_state.since_token.is_some() && db_count > 0;
-
-        if incremental {
-            tracing::info!(
-                "{domain}: incremental mode — skipping worktree checkout ({db_count} docs in DB)"
-            );
-        }
-
         let prepared = {
             let repo = repo_path.clone();
             let worktree = worktree_dir.clone();
-            tokio::task::spawn_blocking(move || {
-                git_repo::prepare_worktree(&repo, &worktree, incremental)
-            })
-            .await??
+            tokio::task::spawn_blocking(move || git_repo::prepare_worktree(&repo, &worktree))
+                .await??
         };
 
         state

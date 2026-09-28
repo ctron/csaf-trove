@@ -25,7 +25,7 @@ async fn fixture() -> (TempDir, Storage, DatabaseConnection) {
     let dir = tempfile::tempdir().unwrap();
     let storage = Storage::new(dir.path()).unwrap();
     let work = dir.path().join("work");
-    let prepared = prepare_worktree(&storage.repo_path("example.com"), &work, false).unwrap();
+    let prepared = prepare_worktree(&storage.repo_path("example.com"), &work).unwrap();
     fs::create_dir_all(work.join("metadata")).unwrap();
     fs::write(
         work.join("metadata/provider-metadata.json"),

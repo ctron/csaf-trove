@@ -38,13 +38,13 @@ fn advisory(data: Bytes) -> RetrievedAdvisory {
     }
 }
 
-/// Exercises download, validation input, Git publication, and compressed full checkout.
+/// Exercises download, validation input, Git publication, and a repeated download.
 #[tokio::test]
 async fn compressed_advisories_preserve_bytes_paths_and_integrity() {
     let dir = tempdir().unwrap();
     let repo = dir.path().join("repo.git");
     let work = dir.path().join("work");
-    let prepared = prepare_worktree(&repo, &work, false).unwrap();
+    let prepared = prepare_worktree(&repo, &work).unwrap();
     let data = Bytes::from(format!(
         "{{\n  \"description\": {:?}\n}}\n",
         "repeated text ".repeat(10_000)
@@ -94,8 +94,8 @@ async fn compressed_advisories_preserve_bytes_paths_and_integrity() {
                     .unwrap(),
                 b"original detached signature\n"
             );
-            let full = prepare_worktree(&repo, &work, false).unwrap();
-            // A full download replaces an existing compressed checkout without staging zstd bytes.
+            let full = prepare_worktree(&repo, &work).unwrap();
+            // A repeated download replaces an existing compressed file without staging zstd bytes.
             <TroveStoreVisitor as RetrievedVisitor<TroveFileSource>>::visit_advisory(
                 &store,
                 &(),
@@ -105,14 +105,10 @@ async fn compressed_advisories_preserve_bytes_paths_and_integrity() {
             .unwrap();
             assert!(!logical.exists());
             assert!(compressed.exists());
-            assert_eq!(
-                fs::read(work.join("metadata/provider-metadata.json")).unwrap(),
-                b"{}"
-            );
-            assert_eq!(
-                fs::read(work.join("metadata/keys/0.key")).unwrap(),
-                b"public key"
-            );
+            // Scratch starts empty, so metadata is only present once downloaded again.
+            assert!(!work.join("metadata").exists());
+            scratch::write(&work, Path::new("metadata/provider-metadata.json"), b"{}").unwrap();
+            scratch::write(&work, Path::new("metadata/keys/0.key"), b"public key").unwrap();
             assert!(!commit_all(&full, "unchanged").unwrap());
         }
         let source = TroveFileSource::new(&work).unwrap();
@@ -143,7 +139,7 @@ async fn legacy_scratch_and_corrupt_compressed_advisories() {
     let dir = tempdir().unwrap();
     let repo = dir.path().join("repo.git");
     let work = dir.path().join("work");
-    let prepared = prepare_worktree(&repo, &work, false).unwrap();
+    let prepared = prepare_worktree(&repo, &work).unwrap();
     let relative = Path::new("example.com/advisories/doc.json");
     let logical = work.join(relative);
     fs::create_dir_all(logical.parent().unwrap()).unwrap();
@@ -164,7 +160,8 @@ async fn legacy_scratch_and_corrupt_compressed_advisories() {
     );
     commit_all(&prepared, "legacy").unwrap();
 
-    let full = prepare_worktree(&repo, &work, false).unwrap();
+    let full = prepare_worktree(&repo, &work).unwrap();
+    fs::create_dir_all(logical.parent().unwrap()).unwrap();
     fs::write(scratch::compressed_path(&logical), b"broken zstd").unwrap();
     let discovered = source.load_index(context).await.unwrap().pop().unwrap();
     assert!(source.load_advisory(discovered).await.is_err());

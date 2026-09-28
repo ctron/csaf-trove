@@ -47,12 +47,12 @@ fn head(repo: &Path) -> String {
 
 /// Records two versions of one document and one version of an untouched document.
 fn history(repo: &Path, work: &Path) {
-    let prepared = prepare_worktree(repo, work, false).unwrap();
+    let prepared = prepare_worktree(repo, work).unwrap();
     fs::create_dir_all(work.join("example.com")).unwrap();
     fs::write(work.join("example.com/a.json"), "first").unwrap();
     fs::write(work.join("example.com/b.json"), "unchanged").unwrap();
     commit_all(&prepared, "initial").unwrap();
-    let prepared = prepare_worktree(repo, work, true).unwrap();
+    let prepared = prepare_worktree(repo, work).unwrap();
     fs::create_dir_all(work.join("example.com")).unwrap();
     fs::write(work.join("example.com/a.json"), "second").unwrap();
     commit_all(&prepared, "update").unwrap();
@@ -157,7 +157,7 @@ async fn incremental_recording_is_idempotent_and_paginated() {
     assert!(!versions_missing(&db).await.unwrap());
     let checkpoint = head(&repo);
 
-    let prepared = prepare_worktree(&repo, &work, true).unwrap();
+    let prepared = prepare_worktree(&repo, &work).unwrap();
     fs::create_dir_all(work.join("example.com")).unwrap();
     fs::write(work.join("example.com/a.json"), "third").unwrap();
     commit_all(&prepared, "third").unwrap();
@@ -216,7 +216,7 @@ async fn storage_reads_versions_by_blob() {
         .unwrap()
     };
     for n in 1..=60 {
-        let prepared = prepare_worktree(&repo, &work, n > 1).unwrap();
+        let prepared = prepare_worktree(&repo, &work).unwrap();
         fs::create_dir_all(work.join("example.com")).unwrap();
         fs::write(work.join("example.com/a.json"), doc(n)).unwrap();
         commit_all(&prepared, &format!("v{n}")).unwrap();

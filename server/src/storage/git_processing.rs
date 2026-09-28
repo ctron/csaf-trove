@@ -212,7 +212,7 @@ mod tests {
 
     /// Publishes exact downloaded bytes without checking out unchanged advisories.
     fn commit(repo: &Path, work: &Path, files: &[(&str, &[u8])]) {
-        let prepared = prepare_worktree(repo, work, true).unwrap();
+        let prepared = prepare_worktree(repo, work).unwrap();
         for (path, data) in files {
             scratch::write(work, Path::new(path), data).unwrap();
         }
@@ -404,7 +404,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo.git");
         let work = dir.path().join("work");
-        let prepared = prepare_worktree(&repo, &work, true).unwrap();
+        let prepared = prepare_worktree(&repo, &work).unwrap();
         fs::create_dir_all(work.join("example.com")).unwrap();
         for n in 0..10_000 {
             fs::write(work.join(format!("example.com/{n}.json")), b"{}").unwrap();

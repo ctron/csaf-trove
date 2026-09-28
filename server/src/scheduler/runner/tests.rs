@@ -51,7 +51,7 @@ fn fixture() -> (TempDir, Arc<AppState>, Source) {
 fn commit(state: &AppState, files: &[(&str, &[u8])]) {
     let repo = state.storage.repo_path("example.com");
     let work = state.work_dir().join("example.com");
-    let prepared = git_repo::prepare_worktree(&repo, &work, true).unwrap();
+    let prepared = git_repo::prepare_worktree(&repo, &work).unwrap();
     for (path, data) in files {
         scratch::write(&work, Path::new(path), data).unwrap();
     }
