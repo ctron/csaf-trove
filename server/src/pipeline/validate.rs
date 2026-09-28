@@ -435,9 +435,9 @@ fn build_doc_profile_detail(doc: &DocumentResult, profile: &str) -> Option<Docum
     }
 }
 
-/// Reconstructs the original HTTP(S) URL from a `file://` URL produced by [`FileSource`].
+/// Reconstructs the original HTTPS URL from a local advisory URL.
 ///
-/// The worktree stores files under a percent-encoded distribution URL directory.
+/// The worktree stores files under `<domain>/<url_path>`, independently of distribution URLs.
 /// Falls back to the file URL string if reconstruction fails.
 fn reconstruct_original_url(file_url: &url::Url, worktree_dir: &Path) -> String {
     try_reconstruct_url(file_url, worktree_dir).unwrap_or_else(|| file_url.to_string())

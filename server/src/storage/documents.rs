@@ -674,14 +674,13 @@ impl DistributionHealthRow {
     }
 }
 
-/// Computes health metrics for documents whose URL starts with the given prefix.
+/// Computes health metrics for exact members of a discovered distribution.
 ///
 /// Returns `(document_count, retrieval_errors, basic_pass_rate, extended_pass_rate, full_pass_rate)`.
 pub async fn distribution_health(
     db: &DatabaseConnection,
-    url_prefix: &str,
+    distribution_url: &str,
 ) -> Result<(u64, u64, Option<f64>, Option<f64>, Option<f64>)> {
-    let like_pattern = format!("{url_prefix}%");
     let row = DistributionHealthRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "SELECT
@@ -694,8 +693,9 @@ pub async fn distribution_health(
             SUM(COALESCE(full_failing_test_count, 0)) AS fi,
             SUM(CASE WHEN retrieval_error IS NOT NULL THEN 1 ELSE 0 END) AS re
         FROM documents
-        WHERE url LIKE ?1",
-        [like_pattern.into()],
+        WHERE EXISTS (SELECT 1 FROM distribution_membership AS membership
+            WHERE membership.distribution_url = ?1 AND membership.document_url = documents.url)",
+        [distribution_url.into()],
     ))
     .one(db)
     .await?;

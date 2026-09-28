@@ -2,6 +2,7 @@ pub mod db;
 pub mod documents;
 pub mod git_processing;
 pub mod git_repo;
+mod membership;
 pub mod processing;
 pub mod results;
 pub mod scratch;
@@ -172,11 +173,11 @@ impl Storage {
         let mut results = Vec::new();
         for entry in &entries {
             let (document_count, retrieval_errors, basic, extended, full) =
-                documents::distribution_health(&db, &entry.prefix).await?;
+                documents::distribution_health(&db, &entry.url).await?;
 
             let distribution_error = dist_errors
                 .iter()
-                .find(|e| entry.feed_urls.iter().any(|u| u == &e.url) || e.url == entry.url)
+                .find(|e| e.url == entry.url)
                 .map(|e| e.error.clone());
 
             let skipped = entry.kind == "directory" && skip_directories.contains(&entry.url);
@@ -429,13 +430,16 @@ impl Storage {
     }
 }
 
+/// One independently reported directory or ROLIE feed from provider metadata.
 struct DistributionEntry {
+    /// Display name derived from the distribution URL path.
     label: String,
+    /// Distribution protocol used for display and skip handling.
     kind: String,
+    /// Exact discovery URL used to look up persisted membership and errors.
     url: String,
-    prefix: String,
+    /// Traffic light labels advertised by this feed.
     tlp_labels: Vec<String>,
-    feed_urls: Vec<String>,
 }
 
 /// Extracts distribution entries from the `distributions` array in provider-metadata.json.
@@ -468,7 +472,6 @@ fn extract_distribution_entries(distributions: &[serde_json::Value]) -> Vec<Dist
             .unwrap_or_default();
 
         if let Some(ref dir) = dir_url {
-            let prefix = normalize_url_prefix(dir);
             let label = url::Url::parse(dir)
                 .ok()
                 .map(|u| u.path().to_string())
@@ -477,14 +480,11 @@ fn extract_distribution_entries(distributions: &[serde_json::Value]) -> Vec<Dist
                 label,
                 kind: "directory".to_string(),
                 url: dir.clone(),
-                prefix,
                 tlp_labels: vec![],
-                feed_urls: vec![],
             });
         }
 
         for (feed_url, tlp) in &rolie_feeds {
-            let prefix = rolie_feed_to_prefix(feed_url);
             let label = url::Url::parse(feed_url)
                 .ok()
                 .map(|u| u.path().to_string())
@@ -494,33 +494,12 @@ fn extract_distribution_entries(distributions: &[serde_json::Value]) -> Vec<Dist
                 label,
                 kind: "rolie".to_string(),
                 url: feed_url.to_string(),
-                prefix,
                 tlp_labels,
-                feed_urls: vec![feed_url.to_string()],
             });
         }
     }
 
     entries
-}
-
-/// Normalizes a directory URL to use as a LIKE prefix, ensuring trailing slash.
-fn normalize_url_prefix(url: &str) -> String {
-    if url.ends_with('/') {
-        url.to_string()
-    } else {
-        format!("{url}/")
-    }
-}
-
-/// Derives a URL prefix from a ROLIE feed URL by taking the parent directory.
-fn rolie_feed_to_prefix(feed_url: &str) -> String {
-    if let Some(pos) = feed_url.rfind('/') {
-        let prefix = &feed_url[..=pos];
-        prefix.to_string()
-    } else {
-        feed_url.to_string()
-    }
 }
 
 /// Extracts document metadata from raw CSAF JSON via `serde_json::Value`.

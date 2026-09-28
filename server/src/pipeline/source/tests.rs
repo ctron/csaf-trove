@@ -176,3 +176,47 @@ async fn legacy_scratch_and_corrupt_compressed_advisories() {
         b"{\"legacy\":true}"
     );
 }
+
+/// Full local discovery finds off-feed advisories once and excludes provider metadata.
+#[tokio::test]
+async fn local_discovery_does_not_infer_feed_directories() {
+    let dir = tempdir().unwrap();
+    let metadata = serde_json::to_vec(&serde_json::json!({
+        "canonical_url":"https://example.com/.well-known/csaf/provider-metadata.json",
+        "metadata_version":"2.0", "last_updated":"2026-09-28T00:00:00Z",
+        "publisher":{"name":"Example", "category":"vendor", "namespace":"https://example.com"},
+        "distributions":[{"rolie":{"feeds":[
+            {"url":"https://example.com/.well-known/csaf/white.json", "tlp_label":"CLEAR"},
+            {"url":"https://example.com/.well-known/csaf/green.json", "tlp_label":"GREEN"}
+        ]}}]
+    }))
+    .unwrap();
+    scratch::write(
+        dir.path(),
+        Path::new("metadata/provider-metadata.json"),
+        &metadata,
+    )
+    .unwrap();
+    scratch::write(dir.path(), Path::new("metadata/keys/ignore.json"), b"{}").unwrap();
+    let paths = [
+        "example.com/csaf/white/2026/doc.json",
+        "cdn.example/advisory.json",
+    ];
+    for relative in paths {
+        scratch::write(dir.path(), Path::new(relative), b"{}").unwrap();
+    }
+    let source = TroveFileSource::new(dir.path()).unwrap();
+    let metadata = source.load_metadata().await.unwrap();
+    assert_eq!(metadata.distributions.len(), 1);
+    let context =
+        DistributionContext::Directory(metadata.distributions[0].directory_url.clone().unwrap());
+    let discovered = source.load_index(context).await.unwrap();
+    let actual: BTreeSet<_> = discovered
+        .iter()
+        .map(|a| a.url.to_file_path().unwrap())
+        .collect();
+    assert_eq!(
+        actual,
+        paths.map(|p| dir.path().join(p)).into_iter().collect()
+    );
+}

@@ -52,22 +52,6 @@ impl TroveFileSource {
         Ok(source)
     }
 
-    /// Maps an HTTP(S) distribution URL to the corresponding local directory.
-    fn url_to_local_dir(&self, url_str: &str) -> anyhow::Result<PathBuf> {
-        let parsed =
-            Url::parse(url_str).with_context(|| format!("Invalid distribution URL: {url_str}"))?;
-        let domain = parsed
-            .host_str()
-            .ok_or_else(|| anyhow!("Distribution URL has no host: {url_str}"))?;
-        let path = parsed.path().trim_start_matches('/');
-        let trimmed = path.trim_end_matches('/');
-        if trimmed.is_empty() {
-            Ok(self.base.join(domain))
-        } else {
-            Ok(self.base.join(domain).join(trimmed))
-        }
-    }
-
     /// Scans `metadata/keys/` and returns key entries.
     async fn scan_keys(&self) -> anyhow::Result<Vec<metadata::Key>> {
         let dir = self.base.join(DIR_METADATA).join("keys");
@@ -117,9 +101,11 @@ impl TroveFileSource {
             return Ok(rx);
         }
 
+        let metadata_dir = self.base.join(DIR_METADATA);
         spawn_blocking(move || {
             for entry in WalkDir::new(path).into_iter().filter_entry(|entry| {
-                !entry.file_type().is_file() || scratch::is_advisory(entry.path())
+                entry.path() != metadata_dir
+                    && (!entry.file_type().is_file() || scratch::is_advisory(entry.path()))
             }) {
                 if tx.blocking_send(entry).is_err() {
                     return;
@@ -147,55 +133,13 @@ impl Source for TroveFileSource {
 
         metadata.public_openpgp_keys = self.scan_keys().await?;
 
-        if self.selected.is_some() {
-            metadata.distributions = vec![Distribution {
-                directory_url: Some(
-                    Url::from_directory_path(&self.base)
-                        .map_err(|()| anyhow!("Invalid validation root"))?,
-                ),
-                rolie: None,
-            }];
-            return Ok(metadata);
-        }
-
-        for dist in &mut metadata.distributions {
-            if let Some(ref directory_url) = dist.directory_url {
-                let local_dir = self.url_to_local_dir(directory_url.as_str())?;
-                dist.directory_url = Some(Url::from_directory_path(&local_dir).map_err(|()| {
-                    anyhow!(
-                        "Failed to convert directory to URL: {}",
-                        local_dir.display()
-                    )
-                })?);
-            }
-
-            if let Some(ref mut rolie) = dist.rolie {
-                for feed in &mut rolie.feeds {
-                    let feed_str = feed.url.as_str();
-                    let parsed = Url::parse(feed_str)?;
-                    let domain = parsed
-                        .host_str()
-                        .ok_or_else(|| anyhow!("Feed URL has no host: {feed_str}"))?;
-                    let path = parsed.path().trim_start_matches('/');
-                    let parent = Path::new(path)
-                        .parent()
-                        .unwrap_or(Path::new(""))
-                        .to_str()
-                        .unwrap_or("");
-                    let local_dir = if parent.is_empty() {
-                        self.base.join(domain)
-                    } else {
-                        self.base.join(domain).join(parent)
-                    };
-                    feed.url = Url::from_directory_path(&local_dir).map_err(|()| {
-                        anyhow!(
-                            "Failed to convert directory to URL: {}",
-                            local_dir.display()
-                        )
-                    })?;
-                }
-            }
-        }
+        metadata.distributions = vec![Distribution {
+            directory_url: Some(
+                Url::from_directory_path(&self.base)
+                    .map_err(|()| anyhow!("Invalid validation root"))?,
+            ),
+            rolie: None,
+        }];
 
         Ok(metadata)
     }

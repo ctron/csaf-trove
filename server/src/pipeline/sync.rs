@@ -1,4 +1,7 @@
-use super::store::{TroveStoreError, TroveStoreVisitor};
+use super::{
+    membership::{DistributionMembership, MembershipSource},
+    store::{TroveStoreError, TroveStoreVisitor},
+};
 use crate::{AppState, models::source::Source as AppSource};
 use anyhow::Result;
 use csaf_walker::{
@@ -36,6 +39,8 @@ pub struct RetrievalFailure {
 
 /// Result of a successful sync run.
 pub struct SyncResult {
+    /// Complete indexes discovered before filtering unchanged advisories.
+    pub membership: DistributionMembership,
     /// Documents that could not be retrieved.
     pub retrieval_errors: Vec<RetrievalFailure>,
     /// Distribution feeds that could not be loaded (e.g. 403 on restricted TLP feeds).
@@ -176,15 +181,12 @@ pub async fn sync_provider(
     let fetcher = Fetcher::from(client);
     let metadata = MetadataRetriever::new(domain);
 
-    let mut http_options = HttpOptions::default();
-    if let Some(since) = sync_state.since_token {
-        http_options = http_options.since(SystemTime::from(since));
-    }
+    let membership = Arc::new(Mutex::new(DistributionMembership::new()));
 
     let retrieval_errors = Arc::new(Mutex::new(Vec::new()));
     let distribution_errors = Arc::new(Mutex::new(Vec::new()));
 
-    let http_source = HttpSource::new(metadata, fetcher, http_options);
+    let http_source = HttpSource::new(metadata, fetcher, HttpOptions::default());
     let store = TroveStoreVisitor::new(worktree_dir);
     let counting_store = CountingStoreVisitor {
         inner: store,
@@ -198,7 +200,11 @@ pub async fn sync_provider(
     let de = distribution_errors.clone();
     let skip_dirs = source.skip_directories.clone();
     let dt = distributions_total.clone();
-    let mut walker = Walker::new(http_source);
+    let mut walker = Walker::new(MembershipSource {
+        inner: http_source,
+        since: sync_state.since_token.map(SystemTime::from),
+        membership: membership.clone(),
+    });
     walker = walker.with_distribution_filter(move |ctx: &DistributionContext| {
         if let DistributionContext::Directory(url) = ctx
             && skip_dirs.iter().any(|s| s == url.as_str())
@@ -263,7 +269,9 @@ pub async fn sync_provider(
         );
     }
 
+    let membership = std::mem::take(&mut *membership.lock());
     Ok(SyncResult {
+        membership,
         retrieval_errors,
         distribution_errors,
         started_at,

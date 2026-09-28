@@ -250,6 +250,11 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         )
         .await?;
 
+        state
+            .storage
+            .save_distribution_membership(domain, &sync_result.membership)
+            .await?;
+
         // only advance the since token once the full run succeeded, so a failure in a later
         // phase causes the affected documents to be processed again on the next run
         let mut sync_state = state.storage.load_sync_state(domain).await?;
