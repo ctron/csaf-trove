@@ -165,9 +165,10 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
     }
 
     let now = OffsetDateTime::now_utc();
+    let duration = job.completed_at.unwrap_or(now) - job.started_at;
     if let Err(e) = state
         .storage
-        .save_sync_run(domain, now, job.documents_synced)
+        .save_sync_run(domain, now, job.documents_synced, duration)
         .await
     {
         tracing::warn!("Failed to save sync run for {domain}: {e}");

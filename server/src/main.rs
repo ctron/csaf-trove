@@ -31,7 +31,10 @@ use tracing_actix_web::TracingLogger;
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 use crate::{
-    models::{source::Source, state::JobStatus},
+    models::{
+        source::Source,
+        state::{JobPhase, JobStatus},
+    },
     storage::Storage,
 };
 
@@ -418,30 +421,44 @@ async fn main() -> Result<()> {
     });
 
     if let Ok(sync_states) = state.storage.list_sync_states().await {
-        let mut jobs = state.jobs.write().await;
+        let mut restored = Vec::new();
         for ss in sync_states {
             if let Some(last_sync) = ss.last_sync {
-                jobs.insert(
-                    ss.domain.clone(),
-                    models::state::JobStatus {
-                        status: models::state::JobPhase::Completed,
-                        started_at: last_sync,
-                        completed_at: Some(last_sync),
-                        phase: None,
-                        documents_synced: ss.documents_synced,
-                        documents_validated: ss.documents_validated,
-                        documents_total: ss.documents_total,
-                        distributions_total: 0,
-                        distribution_index: 0,
-                        distribution_documents_current: 0,
-                        distribution_documents_total: 0,
-                        error: None,
-                        completed_phases: vec![],
-                        last_completed_at: Some(last_sync),
-                        phase_started_at: None,
-                    },
-                );
+                let duration = state
+                    .storage
+                    .last_sync_duration(&ss.domain)
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("Failed to load last sync duration for {}: {e}", ss.domain);
+                        None
+                    })
+                    .unwrap_or_default();
+                restored.push((ss, last_sync, duration));
             }
+        }
+
+        let mut jobs = state.jobs.write().await;
+        for (ss, last_sync, duration) in restored {
+            jobs.insert(
+                ss.domain.clone(),
+                JobStatus {
+                    status: JobPhase::Completed,
+                    started_at: last_sync - duration,
+                    completed_at: Some(last_sync),
+                    phase: None,
+                    documents_synced: ss.documents_synced,
+                    documents_validated: ss.documents_validated,
+                    documents_total: ss.documents_total,
+                    distributions_total: 0,
+                    distribution_index: 0,
+                    distribution_documents_current: 0,
+                    distribution_documents_total: 0,
+                    error: None,
+                    completed_phases: vec![],
+                    last_completed_at: Some(last_sync),
+                    phase_started_at: None,
+                },
+            );
         }
         tracing::info!("Restored {} job statuses from persisted state", jobs.len());
     }

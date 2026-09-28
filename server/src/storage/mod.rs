@@ -19,7 +19,7 @@ use crate::models::{
 use anyhow::Result;
 use csaf_trove_common::{Paginated, SyncPoint};
 use std::path::{Path, PathBuf};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 
 pub use documents::ProviderInfo;
 
@@ -229,15 +229,24 @@ impl Storage {
         Ok(Some(points))
     }
 
-    /// Records a completed sync run with the number of documents changed.
+    /// Records a completed sync run with the number of documents changed and its duration.
     pub async fn save_sync_run(
         &self,
         domain: &str,
         timestamp: OffsetDateTime,
         documents_changed: u64,
+        duration: Duration,
     ) -> Result<()> {
         let db = self.db.get(domain).await?;
-        documents::save_sync_run(&db, timestamp, documents_changed).await
+        documents::save_sync_run(&db, timestamp, documents_changed, duration).await
+    }
+
+    /// Returns the duration of the most recent sync run of a provider, if recorded.
+    pub async fn last_sync_duration(&self, domain: &str) -> Result<Option<Duration>> {
+        let Some(db) = self.db.get_if_exists(domain).await? else {
+            return Ok(None);
+        };
+        documents::load_last_sync_duration(&db).await
     }
 
     /// Loads the sync state for a provider, creating a default if absent.

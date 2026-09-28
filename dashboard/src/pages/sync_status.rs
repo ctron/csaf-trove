@@ -173,7 +173,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     <Th>"Status"</Th>
                                     <Th>"Phase"</Th>
                                     <Th>"Progress"</Th>
-                                    <Th>"ETA"</Th>
+                                    <Th>"Duration"</Th>
                                     <Th>"Last Run"</Th>
                                     <Th>"History"</Th>
                                     <Th>"Error"</Th>
@@ -190,10 +190,16 @@ pub fn SyncStatusPage() -> impl IntoView {
                                     let status = job.status.clone();
                                     let phase_view = render_pipeline_phase(&job);
                                     let progress = format_progress(&job);
-                                    let eta_display = if job.status == "running" {
-                                        job.eta.clone().unwrap_or_else(|| "-".to_string())
-                                    } else {
-                                        "-".to_string()
+                                    let (duration_display, duration_title) = match job.status.as_str() {
+                                        "running" => (
+                                            job.eta.clone().unwrap_or_else(|| "-".to_string()),
+                                            "Estimated time remaining",
+                                        ),
+                                        "completed" | "failed" => (
+                                            format_duration(job.duration_seconds),
+                                            "Duration of the last run",
+                                        ),
+                                        _ => ("-".to_string(), ""),
                                     };
                                     let last_run_display = if job.status == "running" {
                                         format_duration(job.duration_seconds)
@@ -217,7 +223,7 @@ pub fn SyncStatusPage() -> impl IntoView {
                                             <Td><Badge variant=variant>{status}</Badge></Td>
                                             <Td>{phase_view}</Td>
                                             <Td class="whitespace-nowrap">{progress}</Td>
-                                            <Td class="whitespace-nowrap">{eta_display}</Td>
+                                            <Td class="whitespace-nowrap"><span title={duration_title}>{duration_display}</span></Td>
                                             <Td class="whitespace-nowrap"><span title={last_run_title}>{last_run_display}</span></Td>
                                             <Td><Sparkline points=points global_max=global_max /></Td>
                                             <Td>{error}</Td>

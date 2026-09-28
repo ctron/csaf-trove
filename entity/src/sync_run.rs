@@ -9,6 +9,7 @@ pub struct Model {
     pub id: i64,
     pub timestamp: OffsetDateTime,
     pub documents_changed: i64,
+    pub duration_ms: Option<i64>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

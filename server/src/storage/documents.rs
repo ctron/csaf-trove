@@ -18,7 +18,7 @@ use crate::models::result::{
 };
 use csaf_trove_common::{CommitInfo, Paginated, SyncPoint};
 use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use tokio::task::spawn_blocking;
 
 /// Persisted provider metadata fields for aggregator generation.
@@ -710,20 +710,34 @@ pub async fn distribution_health(
         .unwrap_or((0, 0, None, None, None)))
 }
 
-/// Records a completed sync run with the number of documents that changed.
+/// Records a completed sync run with the number of documents that changed and its duration.
 pub async fn save_sync_run(
     db: &DatabaseConnection,
     timestamp: OffsetDateTime,
     documents_changed: u64,
+    duration: Duration,
 ) -> Result<()> {
     sync_run::ActiveModel {
         timestamp: Set(timestamp),
         documents_changed: Set(documents_changed as i64),
+        duration_ms: Set(Some(duration.whole_milliseconds() as i64)),
         ..Default::default()
     }
     .insert(db)
     .await?;
     Ok(())
+}
+
+/// Loads the duration of the most recent sync run, if it was recorded.
+pub async fn load_last_sync_duration(db: &DatabaseConnection) -> Result<Option<Duration>> {
+    let row = sync_run::Entity::find()
+        .order_by_desc(sync_run::Column::Id)
+        .one(db)
+        .await?;
+
+    Ok(row
+        .and_then(|row| row.duration_ms)
+        .map(Duration::milliseconds))
 }
 
 /// Loads the most recent sync runs for a provider.
