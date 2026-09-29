@@ -213,8 +213,5 @@ async fn local_discovery_does_not_infer_feed_directories() {
         .map(|a| a.url.to_file_path().unwrap())
         .collect();
     let base = std::fs::canonicalize(dir.path()).unwrap();
-    assert_eq!(
-        actual,
-        paths.map(|p| base.join(p)).into_iter().collect()
-    );
+    assert_eq!(actual, paths.map(|p| base.join(p)).into_iter().collect());
 }

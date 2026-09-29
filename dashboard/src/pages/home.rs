@@ -146,7 +146,11 @@ fn ProviderChecks(checks: Option<DocumentCheckSummary>) -> impl IntoView {
         return view! { <Badge variant=BadgeVariant::Neutral>"-"</Badge> };
     };
     let issues = checks.total_issues();
-    let variant = if issues > 0 { BadgeVariant::Danger } else { BadgeVariant::Success };
+    let variant = if issues > 0 {
+        BadgeVariant::Danger
+    } else {
+        BadgeVariant::Success
+    };
     view! { <Badge variant=variant>{issues.to_string()}</Badge> }
 }
 

@@ -302,12 +302,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
             progress
                 .run(state, domain, async {
                     tokio::task::spawn_blocking(move || {
-                        git_repo::commit_snapshot_with_progress(
-                            &prepared,
-                            &msg,
-                            pack_threshold,
-                            cb,
-                        )
+                        git_repo::commit_snapshot_with_progress(&prepared, &msg, pack_threshold, cb)
                     })
                     .await?
                 })
@@ -396,9 +391,7 @@ async fn process_snapshot(
     }
     let repo = state.storage.repo_path(domain);
     let identity = validator_identity(source);
-    state
-        .update_job_phase(domain, PipelinePhase::Prepare)
-        .await;
+    state.update_job_phase(domain, PipelinePhase::Prepare).await;
     let selection_repo = repo.clone();
     let mut selection = tokio::task::spawn_blocking(move || {
         select_processing(&selection_repo, previous.as_ref(), &identity, force_full)
