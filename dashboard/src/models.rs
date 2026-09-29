@@ -150,6 +150,10 @@ pub struct JobStatus {
     pub distribution_documents_current: u64,
     #[serde(default)]
     pub distribution_documents_total: u64,
+    #[serde(default)]
+    pub phase_current: u64,
+    #[serde(default)]
+    pub phase_total: u64,
     pub error: Option<String>,
     /// Pipeline phases that have already completed.
     #[serde(default)]

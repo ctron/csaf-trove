@@ -51,6 +51,8 @@ pub enum PipelinePhase {
     Discover,
     Sync,
     Commit,
+    /// Selecting and extracting advisory inputs for validation.
+    Prepare,
     Validate,
     /// Recording document version history and counts.
     VersionCounts,

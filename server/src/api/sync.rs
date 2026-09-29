@@ -95,6 +95,8 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
                         distribution_index: 0,
                         distribution_documents_current: 0,
                         distribution_documents_total: 0,
+                        phase_current: 0,
+                        phase_total: 0,
                         error: None,
                         completed_phases: vec![],
                         last_completed_at: None,
@@ -123,22 +125,26 @@ fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
         return None;
     }
 
-    let current = match job.phase {
-        Some(PipelinePhase::Sync) => job.documents_synced,
-        Some(PipelinePhase::Validate) => job.documents_validated,
+    let (current, total) = match job.phase {
+        Some(PipelinePhase::Sync) => (job.documents_synced, job.documents_total),
+        Some(PipelinePhase::Validate) => (job.documents_validated, job.documents_total),
+        _ if job.phase_total > 0 => (job.phase_current, job.phase_total),
         _ => return None,
     };
 
-    if current == 0 || job.documents_total == 0 {
+    if current == 0 || total == 0 {
         return None;
     }
 
     let rate = current as f64 / elapsed;
 
-    let mut remaining = job.documents_total.saturating_sub(current) as f64;
-    if job.distributions_total > 0 && job.distribution_index < job.distributions_total {
+    let mut remaining = total.saturating_sub(current) as f64;
+    if matches!(job.phase, Some(PipelinePhase::Sync))
+        && job.distributions_total > 0
+        && job.distribution_index < job.distributions_total
+    {
         let remaining_dists = (job.distributions_total - job.distribution_index) as f64;
-        let avg_dist_docs = job.documents_total as f64 / job.distribution_index.max(1) as f64;
+        let avg_dist_docs = total as f64 / job.distribution_index.max(1) as f64;
         remaining += remaining_dists * avg_dist_docs;
     }
 

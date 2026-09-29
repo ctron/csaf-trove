@@ -67,6 +67,8 @@ fn format_progress(job: &JobStatus) -> String {
             job.distribution_documents_current,
             job.distribution_documents_total,
         )
+    } else if job.phase_total > 0 {
+        format!("{} / {}", job.phase_current, job.phase_total)
     } else if job.documents_total > 0 {
         format!("{current} / {}", job.documents_total)
     } else if current > 0 {

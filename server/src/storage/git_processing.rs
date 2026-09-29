@@ -167,6 +167,16 @@ pub fn materialize_processing(
     selection: &ProcessingSelection,
     output: &Path,
 ) -> Result<()> {
+    materialize_processing_with_progress(repo_path, selection, output, |_, _| {})
+}
+
+/// Like [`materialize_processing`], but calls `progress(current, total)` per extracted file.
+pub fn materialize_processing_with_progress(
+    repo_path: &Path,
+    selection: &ProcessingSelection,
+    output: &Path,
+    progress: impl Fn(u64, u64),
+) -> Result<()> {
     std::fs::create_dir_all(output)?;
     let repo = Repository::open_bare(repo_path)?;
     let tree = repo
@@ -194,12 +204,16 @@ pub fn materialize_processing(
             }
         }
     }
+    let total = paths.len() as u64;
+    let mut current = 0u64;
     for path in paths {
         let entry = tree
             .get_path(Path::new(&path))
             .with_context(|| format!("Missing selected input {path}"))?;
         let blob = repo.find_blob(entry.id())?;
         scratch::write(output, Path::new(&path), blob.content())?;
+        current += 1;
+        progress(current, total);
     }
     Ok(())
 }

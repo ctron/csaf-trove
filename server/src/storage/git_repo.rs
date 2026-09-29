@@ -124,6 +124,15 @@ pub fn prepare_worktree(repo_path: &Path, worktree_path: &Path) -> Result<Prepar
 /// index entries are preserved for files absent from incremental scratch directories.
 /// Returns `false` if nothing changed.
 pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
+    commit_all_with_progress(worktree, message, |_, _| {})
+}
+
+/// Like [`commit_all`], but calls `progress(current, total)` after staging each file.
+pub fn commit_all_with_progress(
+    worktree: &PreparedWorktree,
+    message: &str,
+    progress: impl Fn(u64, u64),
+) -> Result<bool> {
     let worktree_path = &worktree.worktree_path;
     // Index::open would silently create an empty index if scratch data was lost.
     fs::metadata(worktree_path.join(".git/index")).context("Missing prepared worktree index")?;
@@ -150,6 +159,15 @@ pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
         }
     }
 
+    let git_dir = worktree_path.join(".git");
+    let total = WalkDir::new(worktree_path)
+        .into_iter()
+        .filter_entry(|e| e.path() != git_dir)
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .count() as u64;
+
+    let mut staged = 0u64;
     let git_dir = worktree_path.join(".git");
     for entry in WalkDir::new(worktree_path)
         .into_iter()
@@ -201,6 +219,8 @@ pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
             } else {
                 index.add_path(relative)?;
             }
+            staged += 1;
+            progress(staged, total);
         }
     }
     index.write()?;
@@ -249,7 +269,16 @@ pub struct CommitOutcome {
 
 /// Commits downloaded files and returns the resulting snapshot identity.
 pub fn commit_snapshot(worktree: &PreparedWorktree, message: &str) -> Result<CommitOutcome> {
-    commit_all(worktree, message)?;
+    commit_snapshot_with_progress(worktree, message, |_, _| {})
+}
+
+/// Like [`commit_snapshot`], but reports staging progress via the callback.
+pub fn commit_snapshot_with_progress(
+    worktree: &PreparedWorktree,
+    message: &str,
+    progress: impl Fn(u64, u64),
+) -> Result<CommitOutcome> {
+    commit_all_with_progress(worktree, message, progress)?;
     let repo = Repository::open_bare(&worktree.repo_path)?;
     Ok(CommitOutcome {
         commit_id: repo.head()?.peel_to_commit()?.id().to_string(),

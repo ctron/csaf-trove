@@ -63,6 +63,12 @@ pub struct JobStatus {
     pub distribution_documents_current: u64,
     /// Total documents expected in the current distribution.
     pub distribution_documents_total: u64,
+    /// Items processed in the current phase (generic, phase-agnostic).
+    #[serde(default)]
+    pub phase_current: u64,
+    /// Total items expected in the current phase (generic, phase-agnostic).
+    #[serde(default)]
+    pub phase_total: u64,
     /// Error message if the job failed.
     pub error: Option<String>,
     /// Pipeline phases that have already completed.

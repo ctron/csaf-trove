@@ -10,7 +10,9 @@ use crate::{
     },
     storage::{
         ProviderInfo,
-        git_processing::{include_recovered_downloads, materialize_processing, select_processing},
+        git_processing::{
+            include_recovered_downloads, materialize_processing_with_progress, select_processing,
+        },
         git_repo,
     },
 };
@@ -19,9 +21,79 @@ use csaf_trove_common::PipelinePhase;
 use csaf_walker::model::metadata::{ProviderMetadata, Role};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering::Relaxed},
+    },
 };
 use time::OffsetDateTime;
+
+/// Bridges progress from a `spawn_blocking` closure to async job status updates.
+///
+/// The blocking side calls the callback returned by [`Self::callback`] (atomic stores,
+/// zero overhead). A background task polls every 250ms and calls [`AppState::set_phase_progress`]
+/// only when progress has changed, capping WebSocket updates at ~4/sec per provider.
+struct BlockingProgress {
+    current: Arc<AtomicU64>,
+    total: Arc<AtomicU64>,
+}
+
+impl BlockingProgress {
+    fn new() -> Self {
+        Self {
+            current: Arc::new(AtomicU64::new(0)),
+            total: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Returns a `Send + Sync` closure for use inside `spawn_blocking`.
+    fn callback(&self) -> impl Fn(u64, u64) + Send + Sync + 'static {
+        let current = self.current.clone();
+        let total = self.total.clone();
+        move |c, t| {
+            current.store(c, Relaxed);
+            total.store(t, Relaxed);
+        }
+    }
+
+    /// Awaits a future while polling progress atomics every 250ms.
+    ///
+    /// Sends a final progress update after the future completes to ensure 100% is shown.
+    async fn run<F, T>(&self, state: &Arc<AppState>, domain: &str, future: F) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        let poll_handle = tokio::spawn({
+            let state = state.clone();
+            let domain = domain.to_string();
+            let current = self.current.clone();
+            let total = self.total.clone();
+            async move {
+                let mut last = 0u64;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    let c = current.load(Relaxed);
+                    let t = total.load(Relaxed);
+                    if t > 0 && c != last {
+                        state.set_phase_progress(&domain, c, t).await;
+                        last = c;
+                    }
+                }
+            }
+        });
+
+        let result = future.await;
+        poll_handle.abort();
+
+        let c = self.current.load(Relaxed);
+        let t = self.total.load(Relaxed);
+        if t > 0 {
+            state.set_phase_progress(domain, c, t).await;
+        }
+
+        result
+    }
+}
 
 /// Kind of work a tracked provider job performs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +148,8 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
         distribution_index: 0,
         distribution_documents_current: 0,
         distribution_documents_total: 0,
+        phase_current: 0,
+        phase_total: 0,
         error: None,
         completed_phases: vec![],
         last_completed_at: last_completed,
@@ -102,6 +176,8 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 distribution_index: 0,
                 distribution_documents_current: 0,
                 distribution_documents_total: 0,
+                phase_current: 0,
+                phase_total: 0,
                 error: None,
                 completed_phases: vec![],
                 last_completed_at: None,
@@ -129,6 +205,8 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 distribution_index: 0,
                 distribution_documents_current: 0,
                 distribution_documents_total: 0,
+                phase_current: 0,
+                phase_total: 0,
                 error: None,
                 completed_phases: vec![],
                 last_completed_at: None,
@@ -218,8 +296,16 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
                 now.hour(),
                 now.minute(),
             );
-            tokio::task::spawn_blocking(move || git_repo::commit_snapshot(&prepared, &msg))
-                .await??
+            let progress = BlockingProgress::new();
+            let cb = progress.callback();
+            progress
+                .run(state, domain, async {
+                    tokio::task::spawn_blocking(move || {
+                        git_repo::commit_snapshot_with_progress(&prepared, &msg, cb)
+                    })
+                    .await?
+                })
+                .await?
         };
         tracing::debug!(commit = %committed.commit_id, "Committed provider snapshot");
 
@@ -304,6 +390,9 @@ async fn process_snapshot(
     }
     let repo = state.storage.repo_path(domain);
     let identity = validator_identity(source);
+    state
+        .update_job_phase(domain, PipelinePhase::Prepare)
+        .await;
     let selection_repo = repo.clone();
     let mut selection = tokio::task::spawn_blocking(move || {
         select_processing(&selection_repo, previous.as_ref(), &identity, force_full)
@@ -313,16 +402,22 @@ async fn process_snapshot(
     include_recovered_downloads(&mut selection, &failed_urls, download_dir)?;
     let validation_dir = download_dir.join("validation");
     let work = validation_dir.clone();
-    let selection = tokio::task::spawn_blocking(move || {
-        if work.exists() {
-            std::fs::remove_dir_all(&work)?;
-        }
-        if !selection.advisories.is_empty() {
-            materialize_processing(&repo, &selection, &work)?;
-        }
-        Ok::<_, anyhow::Error>(selection)
-    })
-    .await??;
+    let progress = BlockingProgress::new();
+    let cb = progress.callback();
+    let selection = progress
+        .run(state, domain, async {
+            tokio::task::spawn_blocking(move || {
+                if work.exists() {
+                    std::fs::remove_dir_all(&work)?;
+                }
+                if !selection.advisories.is_empty() {
+                    materialize_processing_with_progress(&repo, &selection, &work, cb)?;
+                }
+                Ok::<_, anyhow::Error>(selection)
+            })
+            .await?
+        })
+        .await?;
     let mut changed = summary_dirty
         || selection.full
         || !selection.advisories.is_empty()

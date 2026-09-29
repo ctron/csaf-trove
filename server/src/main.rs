@@ -234,6 +234,8 @@ impl AppState {
             job.phase = Some(phase);
             job.phase_started_at = Some(OffsetDateTime::now_utc());
             job.documents_total = 0;
+            job.phase_current = 0;
+            job.phase_total = 0;
             job.distributions_total = 0;
             job.distribution_index = 0;
             job.distribution_documents_current = 0;
@@ -261,6 +263,17 @@ impl AppState {
             job.distribution_index += 1;
             job.distribution_documents_total = doc_count as u64;
             job.distribution_documents_current = 0;
+        }
+        drop(jobs);
+        self.job_notify.send(()).ok();
+    }
+
+    /// Updates the generic phase progress counters for a running job.
+    pub async fn set_phase_progress(&self, domain: &str, current: u64, total: u64) {
+        let mut jobs = self.jobs.write().await;
+        if let Some(job) = jobs.get_mut(domain) {
+            job.phase_current = current;
+            job.phase_total = total;
         }
         drop(jobs);
         self.job_notify.send(()).ok();
@@ -468,6 +481,8 @@ async fn main() -> Result<()> {
                     distribution_index: 0,
                     distribution_documents_current: 0,
                     distribution_documents_total: 0,
+                    phase_current: 0,
+                    phase_total: 0,
                     error: None,
                     completed_phases: vec![],
                     last_completed_at: Some(last_sync),
