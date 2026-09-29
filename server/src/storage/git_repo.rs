@@ -294,6 +294,7 @@ fn flush_mempack(
         let mut packwriter = odb.packwriter()?;
         packwriter.write_all(&buf)?;
         packwriter.commit()?;
+        odb.refresh()?;
     }
     mempack.reset()?;
     Ok(())
