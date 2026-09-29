@@ -43,9 +43,7 @@ pub fn App() -> impl IntoView {
                     <Routes fallback=|| view! { <p class="text-gray-500 dark:text-gray-400">"Page not found."</p> }>
                         <Route path=path!("/") view=HomePage />
                         <Route path=path!("/providers/:domain") view=ProviderPage />
-                        <Route path=path!("/providers/:domain/documents/:tracking_id") view=DocumentPage />
-                        <Route path=path!("/providers/:domain/documents/:tracking_id/:tab") view=DocumentPage />
-                        <Route path=path!("/providers/:domain/documents/:tracking_id/:tab/:commit_id") view=DocumentPage />
+                        <Route path=path!("/providers/:domain/documents/:tracking_id/:tab?/:commit_id?") view=DocumentPage />
                         <Route path=path!("/sync") view=SyncStatusPage />
                         <Route path=path!("/sync/:domain") view=SyncDetailPage />
                     </Routes>

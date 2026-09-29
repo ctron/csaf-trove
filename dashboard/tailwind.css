@@ -4,6 +4,10 @@
 @custom-variant dark (&:where([data-theme="dark"] *, [data-theme="dark"]));
 
 @layer base {
+    html {
+        scrollbar-gutter: stable;
+    }
+
     *, ::before, ::after {
         border-color: var(--color-gray-200);
     }

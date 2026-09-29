@@ -21,7 +21,10 @@ use csaf_trove_common::{
     },
 };
 use leptos::prelude::*;
-use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
+use leptos_router::{
+    NavigateOptions,
+    hooks::{use_navigate, use_params_map, use_query_map},
+};
 use std::cmp::Ordering;
 
 /// Number of versions shown per history page.
@@ -156,14 +159,30 @@ fn format_timestamp(ts: i64) -> String {
 #[component]
 pub fn DocumentPage() -> impl IntoView {
     let params = use_params_map();
-    let domain = move || params.read().get("domain").unwrap_or_default();
-    let tracking_id = move || params.read().get("tracking_id").unwrap_or_default();
+    // Tab and version changes must not invalidate the current document's resources.
+    let document_key = Memo::new(move |_| {
+        let params = params.read();
+        (
+            params.get("domain").unwrap_or_default(),
+            params.get("tracking_id").unwrap_or_default(),
+        )
+    });
+    let domain = move || document_key.with(|(domain, _)| domain.clone());
+    let tracking_id = move || document_key.with(|(_, tracking_id)| tracking_id.clone());
 
     let query = use_query_map();
     let navigate = use_navigate();
-    let navigate = Callback::new(move |url: String| navigate(&url, Default::default()));
-    let selected_version = Signal::derive(move || params.read().get("commit_id"));
-    let tab = Signal::derive(move || {
+    let navigate = Callback::new(move |url: String| {
+        navigate(
+            &url,
+            NavigateOptions {
+                scroll: false,
+                ..Default::default()
+            },
+        );
+    });
+    let selected_version = Memo::new(move |_| params.read().get("commit_id"));
+    let tab = Memo::new(move |_| {
         params
             .read()
             .get("tab")
@@ -176,7 +195,7 @@ pub fn DocumentPage() -> impl IntoView {
             encode_path_segment(&tracking_id()),
         )
     };
-    let versions_offset = Signal::derive(move || {
+    let versions_offset = Memo::new(move |_| {
         query
             .read()
             .get("offset")
@@ -205,17 +224,25 @@ pub fn DocumentPage() -> impl IntoView {
     });
     let loaded_content = Signal::derive(move || content.get().and_then(Result::ok).flatten());
 
-    // Only load history once the tab is opened.
-    let versions = LocalResource::new(move || {
+    // Keep the last requested history page while visiting other tabs in this document.
+    let versions_request = Memo::new(move |previous: Option<&Option<(String, String, u64)>>| {
         let d = domain();
         let t = tracking_id();
-        let active = tab.get() == "history";
-        let offset = versions_offset.get();
+        if tab.get() == "history" {
+            Some((d, t, versions_offset.get()))
+        } else {
+            previous
+                .cloned()
+                .flatten()
+                .filter(|(domain, tracking_id, _)| domain == &d && tracking_id == &t)
+        }
+    });
+    let versions = LocalResource::new(move || {
+        let request = versions_request.get();
         async move {
-            if active {
-                Some(fetch_versions(d, t, offset).await)
-            } else {
-                None
+            match request {
+                Some((d, t, offset)) => Some(fetch_versions(d, t, offset).await),
+                None => None,
             }
         }
     });
@@ -397,7 +424,7 @@ pub fn DocumentPage() -> impl IntoView {
                     view! {
                         <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading..."</p> }>
                             {move || detail.get().map(|result| match result {
-                                Ok(doc) => view! { <DocumentDetailContent doc=doc tab=tab content=loaded_content /> }.into_any(),
+                                Ok(doc) => view! { <DocumentDetailContent doc=doc tab=tab.into() content=loaded_content /> }.into_any(),
                                 Err(e) => view! { <p class="text-red-500 dark:text-red-400 text-center py-12">{e}</p> }.into_any(),
                             })}
                         </Suspense>
