@@ -18,6 +18,7 @@ use std::{
 use actix_web::{App, HttpServer, web};
 use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
+use bytesize::ByteSize;
 use clap::Parser;
 use csaf_trove_common::{PipelinePhase, SyncPoint};
 use serde::Deserialize;
@@ -110,6 +111,13 @@ pub struct ServerConfig {
 pub struct DataConfig {
     /// Root directory for repos, state, results, and metrics.
     pub dir: PathBuf,
+    /// Flush in-memory Git objects to a packfile after buffering this many bytes.
+    #[serde(default = "default_git_pack_threshold")]
+    pub git_pack_threshold: ByteSize,
+}
+
+fn default_git_pack_threshold() -> ByteSize {
+    ByteSize::mib(128)
 }
 
 /// GitHub integration configuration.

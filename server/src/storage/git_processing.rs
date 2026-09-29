@@ -162,6 +162,7 @@ pub fn include_recovered_downloads(
 }
 
 /// Materializes selected advisories and shared metadata from one immutable snapshot.
+#[cfg(test)]
 pub fn materialize_processing(
     repo_path: &Path,
     selection: &ProcessingSelection,

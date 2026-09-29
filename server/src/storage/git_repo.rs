@@ -12,8 +12,10 @@ use super::{
 use crate::models::result::{DiffLineInfo, DiffTag};
 use anyhow::{Context, Result, ensure};
 use git2::{
-    BranchType, Delta, ErrorCode, Index, IndexEntry, IndexTime, Oid, Repository, Signature, Tree,
+    BranchType, Buf, Delta, ErrorCode, Index, IndexEntry, IndexTime, Oid, Repository, Signature,
+    Tree,
 };
+use std::io::Write;
 use serde::Deserialize;
 use walkdir::WalkDir;
 
@@ -123,14 +125,19 @@ pub fn prepare_worktree(repo_path: &Path, worktree_path: &Path) -> Result<Prepar
 /// Decompresses advisories individually into Git under their original paths. Existing
 /// index entries are preserved for files absent from incremental scratch directories.
 /// Returns `false` if nothing changed.
+#[cfg(test)]
 pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
-    commit_all_with_progress(worktree, message, |_, _| {})
+    commit_all_with_progress(worktree, message, u64::MAX, |_, _| {})
 }
 
 /// Like [`commit_all`], but calls `progress(current, total)` after staging each file.
+///
+/// `pack_threshold` controls how many bytes of blob data are buffered in memory
+/// before flushing to a packfile. Pass `u64::MAX` to flush once at the end.
 pub fn commit_all_with_progress(
     worktree: &PreparedWorktree,
     message: &str,
+    pack_threshold: u64,
     progress: impl Fn(u64, u64),
 ) -> Result<bool> {
     let worktree_path = &worktree.worktree_path;
@@ -146,6 +153,9 @@ pub fn commit_all_with_progress(
         return Err(WorktreeError::BranchChanged(worktree.branch.clone()).into());
     }
     let mut index = repo.index()?;
+
+    let odb = repo.odb()?;
+    let mempack = odb.add_new_mempack_backend(1000)?;
 
     // Downloaded key sets replace the old set, including keys removed by rotation.
     if worktree_path.join("metadata/keys").is_dir() {
@@ -168,6 +178,7 @@ pub fn commit_all_with_progress(
         .count() as u64;
 
     let mut staged = 0u64;
+    let mut buffered_bytes = 0u64;
     let git_dir = worktree_path.join(".git");
     for entry in WalkDir::new(worktree_path)
         .into_iter()
@@ -197,6 +208,7 @@ pub fn commit_all_with_progress(
                     logical.display()
                 );
                 let data = scratch::read(entry.path())?;
+                buffered_bytes += data.len() as u64;
                 let entry = index.get_path(&logical, 0).unwrap_or(IndexEntry {
                     ctime: IndexTime::new(0, 0),
                     mtime: IndexTime::new(0, 0),
@@ -217,10 +229,16 @@ pub fn commit_all_with_progress(
                 });
                 index.add_frombuffer(&entry, &data)?;
             } else {
+                buffered_bytes += entry.metadata()?.len();
                 index.add_path(relative)?;
             }
             staged += 1;
             progress(staged, total);
+
+            if buffered_bytes >= pack_threshold {
+                flush_mempack(&mempack, &repo, &odb)?;
+                buffered_bytes = 0;
+            }
         }
     }
     index.write()?;
@@ -244,6 +262,9 @@ pub fn commit_all_with_progress(
 
     let parents: Vec<&git2::Commit> = parent.as_ref().map(|p| vec![p]).unwrap_or_default();
     let oid = repo.commit(None, &sig, &sig, message, &tree, &parents)?;
+
+    flush_mempack(&mempack, &repo, &odb)?;
+
     match repo.reference_matching(
         &worktree.branch,
         oid,
@@ -261,6 +282,23 @@ pub fn commit_all_with_progress(
     Ok(true)
 }
 
+/// Dumps buffered mempack objects to a packfile and resets the mempack.
+fn flush_mempack(
+    mempack: &git2::Mempack<'_>,
+    repo: &Repository,
+    odb: &git2::Odb<'_>,
+) -> Result<()> {
+    let mut buf = Buf::new();
+    mempack.dump(repo, &mut buf)?;
+    if !buf.is_empty() {
+        let mut packwriter = odb.packwriter()?;
+        packwriter.write_all(&buf)?;
+        packwriter.commit()?;
+    }
+    mempack.reset()?;
+    Ok(())
+}
+
 /// Snapshot published by a sync commit, including unchanged runs.
 pub struct CommitOutcome {
     /// Resulting immutable Git commit.
@@ -268,17 +306,19 @@ pub struct CommitOutcome {
 }
 
 /// Commits downloaded files and returns the resulting snapshot identity.
+#[cfg(test)]
 pub fn commit_snapshot(worktree: &PreparedWorktree, message: &str) -> Result<CommitOutcome> {
-    commit_snapshot_with_progress(worktree, message, |_, _| {})
+    commit_snapshot_with_progress(worktree, message, u64::MAX, |_, _| {})
 }
 
 /// Like [`commit_snapshot`], but reports staging progress via the callback.
 pub fn commit_snapshot_with_progress(
     worktree: &PreparedWorktree,
     message: &str,
+    pack_threshold: u64,
     progress: impl Fn(u64, u64),
 ) -> Result<CommitOutcome> {
-    commit_all_with_progress(worktree, message, progress)?;
+    commit_all_with_progress(worktree, message, pack_threshold, progress)?;
     let repo = Repository::open_bare(&worktree.repo_path)?;
     Ok(CommitOutcome {
         commit_id: repo.head()?.peel_to_commit()?.id().to_string(),
@@ -573,12 +613,6 @@ mod tests {
         assert_eq!(fs::read(bare_path.join("HEAD")).unwrap(), head);
         assert!(!bare_path.join("index").exists());
         assert!(Repository::open_bare(&bare_path).unwrap().is_bare());
-        assert_eq!(
-            fs::read_dir(bare_path.join("objects/pack"))
-                .unwrap()
-                .count(),
-            0
-        );
         fs::remove_dir_all(&work_path).unwrap();
         assert_eq!(
             read_head_blob(&bare_path, "example.com/doc.json")
@@ -650,10 +684,10 @@ mod tests {
     #[test]
     fn worktree_propagates_missing_commit_object() {
         let (dir, bare_path) = create_test_repo(&[("doc.json", b"old")]);
-        let bare = Repository::open_bare(&bare_path).unwrap();
-        let oid = bare.head().unwrap().target().unwrap().to_string();
-        drop(bare);
-        fs::remove_file(bare_path.join("objects").join(&oid[..2]).join(&oid[2..])).unwrap();
+        let pack_dir = bare_path.join("objects/pack");
+        for entry in fs::read_dir(&pack_dir).unwrap() {
+            fs::remove_file(entry.unwrap().path()).unwrap();
+        }
         assert!(prepare_worktree(&bare_path, &dir.path().join("work")).is_err());
     }
 

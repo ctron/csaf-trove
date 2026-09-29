@@ -296,12 +296,18 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
                 now.hour(),
                 now.minute(),
             );
+            let pack_threshold = state.config.data.git_pack_threshold.0;
             let progress = BlockingProgress::new();
             let cb = progress.callback();
             progress
                 .run(state, domain, async {
                     tokio::task::spawn_blocking(move || {
-                        git_repo::commit_snapshot_with_progress(&prepared, &msg, cb)
+                        git_repo::commit_snapshot_with_progress(
+                            &prepared,
+                            &msg,
+                            pack_threshold,
+                            cb,
+                        )
                     })
                     .await?
                 })

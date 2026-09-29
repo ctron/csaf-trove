@@ -8,6 +8,7 @@ actix-web = { workspace = true }
 actix-web-static-files = { workspace = true }
 actix-ws = { workspace = true }
 anyhow = { workspace = true }
+bytesize = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
