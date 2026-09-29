@@ -422,6 +422,7 @@ async fn check_filters_match_summary_counts() {
         }
     }
     for (filter, count) in [
+        ("document-issues", 5),
         ("signature-errors", 1),
         ("digest-errors", 2),
         ("digest-warnings", 1),

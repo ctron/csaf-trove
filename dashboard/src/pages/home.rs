@@ -1,11 +1,12 @@
 use crate::components::{
-    document_checks::CheckSummaryView,
+    badge::{Badge, BadgeVariant},
     note_indicator::NoteIndicator,
     profile_badge::ProfileBadge,
     section_heading::SectionHeading,
     table::{Table, Tbody, Td, Th, Thead},
 };
 use crate::models::{ProviderSummary, encode_path_segment};
+use csaf_trove_common::document_checks::DocumentCheckSummary;
 use leptos::prelude::*;
 use std::cmp::Ordering;
 use time::{
@@ -138,6 +139,35 @@ fn ProviderSortHeading(
     }
 }
 
+/// Displays the combined essential checks, highlighting any known problem in red.
+#[component]
+fn ProviderChecks(
+    /// Aggregate results, absent for providers without recorded checks.
+    checks: Option<DocumentCheckSummary>,
+) -> impl IntoView {
+    let (label, variant) = checks
+        .map(|checks| {
+            let stages = [
+                checks.retrieval,
+                checks.parsing,
+                checks.signature,
+                checks.digest,
+            ];
+            if stages
+                .iter()
+                .any(|c| c.failed > 0 || c.warning > 0 || c.missing > 0)
+            {
+                ("Issues", BadgeVariant::Danger)
+            } else if stages.iter().any(|c| c.passed > 0) {
+                ("Passed", BadgeVariant::Success)
+            } else {
+                ("-", BadgeVariant::Neutral)
+            }
+        })
+        .unwrap_or(("-", BadgeVariant::Neutral));
+    view! { <Badge variant=variant>{label}</Badge> }
+}
+
 /// Renders provider summaries with sortable name, document count, and profile columns.
 #[component]
 fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
@@ -158,10 +188,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                     <ProviderSortHeading column=ProviderSort::Basic label="Basic" sort=sort />
                     <ProviderSortHeading column=ProviderSort::Extended label="Extended" sort=sort />
                     <ProviderSortHeading column=ProviderSort::Full label="Full" sort=sort />
-                    <Th>"Retrieval"</Th>
-                    <Th>"Parsing"</Th>
-                    <Th>"Signatures"</Th>
-                    <Th>"Digests"</Th>
+                    <Th>"Document Issues"</Th>
                     <Th>"Last Validated"</Th>
                 </tr>
             </Thead>
@@ -169,18 +196,10 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                 {move || sorted_providers().into_iter().map(|p| {
                     let domain = p.provider.clone();
                     let href = format!("/providers/{}", encode_path_segment(&domain));
+                    let checks_href = href.clone();
                     let display_domain = domain.clone();
                     let validated_at = p.validated_at.clone();
                     let note = p.note.clone();
-                    let check_cells = [
-                        ("retrieval", p.checks.as_ref().map(|c| c.retrieval.clone())),
-                        ("parsing", p.checks.as_ref().map(|c| c.parsing.clone())),
-                        ("signature", p.checks.as_ref().map(|c| c.signature.clone())),
-                        ("digest", p.checks.as_ref().map(|c| c.digest.clone())),
-                    ].into_iter().map(|(stage, counts)| {
-                        let provider_url = href.clone();
-                        view! { <Td><CheckSummaryView counts=counts provider_url=provider_url stage=stage /></Td> }
-                    }).collect::<Vec<_>>();
                     view! {
                         <tr>
                             <Td>
@@ -193,7 +212,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                             <Td><ProfileBadge profile=p.profiles.basic /></Td>
                             <Td><ProfileBadge profile=p.profiles.extended /></Td>
                             <Td><ProfileBadge profile=p.profiles.full /></Td>
-                            {check_cells}
+                            <Td><a href=checks_href><ProviderChecks checks=p.checks /></a></Td>
                             <Td>{format_validated_at(&validated_at)}</Td>
                         </tr>
                     }

@@ -332,6 +332,18 @@ pub async fn load_documents_paginated(
     let mut query = document::Entity::find();
 
     match status_filter {
+        Some("document-issues") => {
+            let condition = ["retrieval", "parsing", "signature", "digest"]
+                .into_iter()
+                .fold(Condition::any(), |condition, stage| {
+                    ["failed", "warning", "missing"]
+                        .into_iter()
+                        .fold(condition, |condition, status| {
+                            condition.add(check_condition(stage, status))
+                        })
+                });
+            query = query.filter(condition);
+        }
         Some("failing") => query = query.filter(failing_condition()),
         Some("warnings") => query = query.filter(warning_condition()),
         Some("passing") => query = query.filter(passing_condition()),
@@ -726,7 +738,8 @@ struct DistributionHealthRow {
     ei: Option<i64>,
     fv: Option<i64>,
     fi: Option<i64>,
-    re: Option<i64>,
+    /// Documents with any essential check issue, counted once.
+    check_issues: Option<i64>,
 }
 
 impl DistributionHealthRow {
@@ -744,7 +757,7 @@ impl DistributionHealthRow {
     fn into_tuple(self) -> (u64, u64, Option<f64>, Option<f64>, Option<f64>) {
         (
             self.total as u64,
-            self.re.unwrap_or(0) as u64,
+            self.check_issues.unwrap_or(0) as u64,
             Self::pass_rate(self.bv, self.bi),
             Self::pass_rate(self.ev, self.ei),
             Self::pass_rate(self.fv, self.fi),
@@ -754,7 +767,7 @@ impl DistributionHealthRow {
 
 /// Computes health metrics for exact members of a discovered distribution.
 ///
-/// Returns `(document_count, retrieval_errors, basic_pass_rate, extended_pass_rate, full_pass_rate)`.
+/// Returns `(document_count, check_issues, basic_pass_rate, extended_pass_rate, full_pass_rate)`.
 pub async fn distribution_health(
     db: &DatabaseConnection,
     distribution_url: &str,
@@ -769,7 +782,12 @@ pub async fn distribution_health(
             SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(extended_failing_test_count, 0) ELSE 0 END) AS ei,
             SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(full_test_count, 0) - COALESCE(full_failing_test_count, 0) ELSE 0 END) AS fv,
             SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'passed' AND json_extract(document_checks, '$.parsing.status') = 'passed' THEN COALESCE(full_failing_test_count, 0) ELSE 0 END) AS fi,
-            SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'failed' THEN 1 ELSE 0 END) AS re
+            SUM(CASE WHEN
+                json_extract(document_checks, '$.retrieval.status') IN ('failed', 'warning', 'missing') OR
+                json_extract(document_checks, '$.parsing.status') IN ('failed', 'warning', 'missing') OR
+                json_extract(document_checks, '$.signature.status') IN ('failed', 'warning', 'missing') OR
+                json_extract(document_checks, '$.digest.status') IN ('failed', 'warning', 'missing')
+                THEN 1 ELSE 0 END) AS check_issues
         FROM documents
         WHERE EXISTS (SELECT 1 FROM distribution_membership AS membership
             WHERE membership.distribution_url = ?1 AND membership.document_url = documents.url)",

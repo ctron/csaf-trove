@@ -1,3 +1,4 @@
+use crate::components::badge::{Badge, BadgeVariant};
 use leptos::prelude::*;
 
 /// A line-style tab bar for switching between content sections.
@@ -18,6 +19,9 @@ pub fn ContentTab(
     /// Called when the tab is clicked.
     #[prop(into)]
     on_click: Callback<()>,
+    /// Item count, hidden until the corresponding data is available.
+    #[prop(optional)]
+    count: Option<Signal<Option<u64>>>,
     children: Children,
 ) -> impl IntoView {
     let class = move || {
@@ -31,6 +35,9 @@ pub fn ContentTab(
     view! {
         <button class=class on:click=move |_| on_click.run(())>
             {children()}
+            {move || count.and_then(|count| count.get()).map(|count| view! {
+                <span class="ml-2"><Badge variant=BadgeVariant::Neutral>{count}</Badge></span>
+            })}
         </button>
     }
 }

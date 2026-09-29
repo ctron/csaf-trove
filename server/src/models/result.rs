@@ -36,8 +36,8 @@ pub struct DistributionHealth {
     pub tlp_labels: Vec<String>,
     /// Number of documents matched to this distribution.
     pub document_count: u64,
-    /// Number of documents with retrieval errors.
-    pub retrieval_errors: u64,
+    /// Number of documents with essential check failures, warnings, or missing inputs; excludes CSAF tests.
+    pub check_issues: u64,
     /// Whether this distribution was skipped by configuration.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub skipped: bool,

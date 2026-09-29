@@ -1,7 +1,7 @@
 //! Shared presentation of essential document outcomes and provider counts.
 
 use crate::components::badge::{Badge, BadgeVariant};
-use csaf_trove_common::document_checks::{CheckCounts, CheckOutcome, CheckStatus};
+use csaf_trove_common::document_checks::{CheckCounts, CheckOutcome, CheckStatus, DocumentChecks};
 use leptos::prelude::*;
 
 /// Returns a human-readable label and color for an outcome.
@@ -22,9 +22,44 @@ pub fn CheckBadge(
     outcome: CheckOutcome,
 ) -> impl IntoView {
     let (label, variant) = presentation(outcome.status);
+    let label = if outcome.status == CheckStatus::NotEvaluated {
+        "-"
+    } else {
+        label
+    };
     view! {
         <span title=outcome.message><Badge variant=variant>{label}</Badge></span>
     }
+}
+
+/// Displays one combined document status, excluding CSAF test results.
+#[component]
+pub fn DocumentIssuesBadge(
+    /// Retrieval, parsing, signature, and digest outcomes.
+    checks: DocumentChecks,
+) -> impl IntoView {
+    let outcomes = [
+        checks.retrieval,
+        checks.parsing,
+        checks.signature,
+        checks.digest,
+    ];
+    let (label, variant) = if outcomes.iter().any(|outcome| {
+        matches!(
+            outcome.status,
+            CheckStatus::Failed | CheckStatus::Warning | CheckStatus::Missing
+        )
+    }) {
+        ("Issues", BadgeVariant::Danger)
+    } else if outcomes
+        .iter()
+        .any(|outcome| outcome.status == CheckStatus::Passed)
+    {
+        ("0", BadgeVariant::Success)
+    } else {
+        ("-", BadgeVariant::Neutral)
+    };
+    view! { <Badge variant=variant>{label}</Badge> }
 }
 
 /// Displays outcome counts linked to the corresponding document filter.
@@ -38,10 +73,10 @@ pub fn CheckSummaryView(
     stage: &'static str,
 ) -> impl IntoView {
     let Some(counts) = counts else {
-        return view! { <span class="text-gray-500">"Not evaluated"</span> }.into_any();
+        return view! { <span class="text-gray-500">"-"</span> }.into_any();
     };
     if counts.passed + counts.failed + counts.warning + counts.missing + counts.not_evaluated == 0 {
-        return view! { <span class="text-gray-500">"—"</span> }.into_any();
+        return view! { <span class="text-gray-500">"-"</span> }.into_any();
     }
     let outcomes = [
         (CheckStatus::Passed, "passed", counts.passed),

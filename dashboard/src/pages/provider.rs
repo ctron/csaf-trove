@@ -10,7 +10,7 @@ use crate::components::{
     breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
     content_tabs::{ContentTab, ContentTabs},
     doc_profile_badge::DocProfileBadge,
-    document_checks::{CheckBadge, CheckSummaryView},
+    document_checks::{CheckSummaryView, DocumentIssuesBadge},
     empty_state::EmptyState,
     pagination::Pagination,
     progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate, format_rate},
@@ -112,6 +112,8 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
     let summary = detail.summary;
     let distributions = detail.distributions;
     let tests = summary.top_failing_tests;
+    let document_count = summary.document_count;
+    let failing_test_count = tests.len() as u64;
     let provider_url = format!("/providers/{}", encode_path_segment(&summary.provider));
     let domain = summary.provider.clone();
     let sync_href = format!("/sync/{}", encode_path_segment(&domain));
@@ -140,15 +142,15 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                     <p><span class="text-gray-500 dark:text-gray-500">"Last synced: "</span><span class="text-gray-700 dark:text-gray-300">{summary.validated_at}</span></p>
                 </div>
 
-                <div class="space-y-3 mt-4">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mt-4">
                     {[
                         ("Retrieval", "retrieval", summary.checks.as_ref().map(|c| c.retrieval.clone())),
                         ("Parsing", "parsing", summary.checks.as_ref().map(|c| c.parsing.clone())),
                         ("Signatures", "signature", summary.checks.as_ref().map(|c| c.signature.clone())),
                         ("Digests", "digest", summary.checks.as_ref().map(|c| c.digest.clone())),
                     ].into_iter().map(|(label, stage, counts)| view! {
-                        <div>
-                            <p class="text-sm text-gray-600 dark:text-gray-400 mb-1">{label}</p>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="text-sm text-gray-600 dark:text-gray-400">{label}</span>
                             <CheckSummaryView counts=counts provider_url=provider_url.clone() stage=stage />
                         </div>
                     }).collect::<Vec<_>>()}
@@ -178,10 +180,12 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
         <ContentTabs>
             <ContentTab
                 active=Signal::derive(move || active_tab.get() == "documents")
+                count=Signal::derive(move || Some(document_count))
                 on_click=Callback::new(move |_| set_active_tab.set("documents".to_string()))
             >"Documents"</ContentTab>
             <ContentTab
                 active=Signal::derive(move || active_tab.get() == "tests")
+                count=Signal::derive(move || Some(failing_test_count))
                 on_click=Callback::new(move |_| set_active_tab.set("tests".to_string()))
             >"Failing Tests"</ContentTab>
         </ContentTabs>
@@ -276,7 +280,7 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                         <Th>"Basic"</Th>
                         <Th>"Extended"</Th>
                         <Th>"Full"</Th>
-                        <Th>"Retrieval Errors"</Th>
+                        <Th>"Document Issues"</Th>
                     </tr>
                 </Thead>
                 <Tbody>
@@ -298,13 +302,13 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                 <Badge variant=BadgeVariant::Danger>{error}</Badge>
                             }.into_any()
                         } else {
-                            let err_variant = if d.retrieval_errors > 0 {
+                            let err_variant = if d.check_issues > 0 {
                                 BadgeVariant::Danger
                             } else {
                                 BadgeVariant::Success
                             };
                             view! {
-                                <Badge variant=err_variant>{d.retrieval_errors}</Badge>
+                                <Badge variant=err_variant>{d.check_issues}</Badge>
                             }.into_any()
                         };
                         view! {
@@ -354,7 +358,7 @@ async fn fetch_documents(
     resp.json().await.map_err(|e| e.to_string())
 }
 
-/// Paginated documents table with status filter tabs.
+/// Paginated documents table with compact status filtering.
 #[component]
 fn DocumentsTable(domain: String) -> impl IntoView {
     let nav = NavigateOptions {
@@ -382,7 +386,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
             <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 mb-4">
                 "Filter documents"
                 <select
-                    class="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2"
+                    class="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1"
                     prop:value=move || status_filter.get().unwrap_or_default()
                     on:change=move |event| {
                         let value = event_target_value(&event);
@@ -392,27 +396,16 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                 >
                     <option value="">"All"</option>
                     <option value="failing">"Errors"</option>
-                    <option value="warnings">"Warnings & Above"</option>
+                    <option value="warnings">"Warnings & Errors"</option>
                     <option value="passing">"Passing"</option>
-                    <option value="errors">"Retrieval Errors"</option>
-                    <option value="parse-errors">"Parse Errors"</option>
-                    <option value="signature-errors">"Signature Errors"</option>
-                    <option value="digest-errors">"Digest Errors"</option>
-                    <option value="digest-warnings">"Digest Warnings"</option>
-                    <option value="missing-signatures">"Missing Signatures"</option>
-                    <option value="missing-digests">"Missing Digests"</option>
+                    <option value="document-issues">"Document Issues"</option>
                     <option value="not-evaluated">"Not Evaluated"</option>
-                    {[ ("Retrieval", "retrieval"), ("Parsing", "parsing"), ("Signature", "signature"), ("Digest", "digest") ].into_iter().map(|(label, stage)| view! {
-                        <optgroup label=label>
-                            {[ ("Passed", "passed"), ("Failed", "failed"), ("Warning", "warning"), ("Missing", "missing"), ("Not evaluated", "not_evaluated") ].into_iter().filter(move |(_, key)| match *key {
-                                "warning" => stage == "digest",
-                                "missing" => stage == "signature" || stage == "digest",
-                                _ => true,
-                            }).map(|(outcome, key)| view! {
-                                <option value=format!("{stage}-{key}")>{format!("{label}: {outcome}")}</option>
-                            }).collect::<Vec<_>>()}
-                        </optgroup>
-                    }).collect::<Vec<_>>()}
+                    {move || status_filter.get()
+                        .filter(|status| !["", "failing", "warnings", "passing", "document-issues", "not-evaluated"].contains(&status.as_str()))
+                        .map(|status| {
+                            let label = format!("Selected: {}", status.replace(['-', '_'], " "));
+                            view! { <option value=status>{label}</option> }
+                        })}
                 </select>
             </label>
         </div>
@@ -432,10 +425,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                     <Th>"Basic"</Th>
                                     <Th>"Extended"</Th>
                                     <Th>"Full"</Th>
-                                    <Th>"Retrieval"</Th>
-                                    <Th>"Parsing"</Th>
-                                    <Th>"Signature"</Th>
-                                    <Th>"Digests"</Th>
+                                    <Th>"Document Issues"</Th>
                                     <Th>"Versions"</Th>
                                 </tr>
                             </Thead>
@@ -453,10 +443,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                             <Td><DocProfileBadge detail=doc.profiles.basic /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.extended /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.full /></Td>
-                                            <Td><CheckBadge outcome=doc.checks.retrieval /></Td>
-                                            <Td><CheckBadge outcome=doc.checks.parsing /></Td>
-                                            <Td><CheckBadge outcome=doc.checks.signature /></Td>
-                                            <Td><CheckBadge outcome=doc.checks.digest /></Td>
+                                            <Td><DocumentIssuesBadge checks=doc.checks /></Td>
                                             <Td>{if doc.version_count > 1 {
                                                 view! { <Badge variant=BadgeVariant::Neutral>{doc.version_count}</Badge> }.into_any()
                                             } else {

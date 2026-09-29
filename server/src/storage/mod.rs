@@ -173,7 +173,7 @@ impl Storage {
 
         let mut results = Vec::new();
         for entry in &entries {
-            let (document_count, retrieval_errors, basic, extended, full) =
+            let (document_count, check_issues, basic, extended, full) =
                 documents::distribution_health(&db, &entry.url).await?;
 
             let distribution_error = dist_errors
@@ -189,7 +189,7 @@ impl Storage {
                 url: entry.url.clone(),
                 tlp_labels: entry.tlp_labels.clone(),
                 document_count,
-                retrieval_errors,
+                check_issues,
                 skipped,
                 distribution_error,
                 basic_pass_rate: basic,

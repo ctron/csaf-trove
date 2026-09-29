@@ -14,8 +14,11 @@ use crate::models::{
     DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, PaginatedVersions,
     RevisionEntry, encode_path_segment,
 };
-use csaf_trove_common::document_content::{
-    DocumentContent, Note, ProductStatusCount, Publisher, Reference, Vulnerability,
+use csaf_trove_common::{
+    document_checks::CheckStatus,
+    document_content::{
+        DocumentContent, Note, ProductStatusCount, Publisher, Reference, Vulnerability,
+    },
 };
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
@@ -148,7 +151,7 @@ fn format_timestamp(ts: i64) -> String {
         .unwrap_or_else(|| ts.to_string())
 }
 
-/// Document detail page with Overview, Notes & References, Vulnerabilities, Validation,
+/// Document detail page with Overview, Document Health, Notes & References, Vulnerabilities, Validation,
 /// Revision, and History tabs.
 #[component]
 pub fn DocumentPage() -> impl IntoView {
@@ -271,34 +274,53 @@ pub fn DocumentPage() -> impl IntoView {
                     })
                 >"Overview"</ContentTab>
                 <ContentTab
+                    active=Signal::derive(move || tab.get() == "health")
+                    count=Signal::derive(move || detail.get().and_then(Result::ok).and_then(|d| {
+                        let outcomes = [d.checks.retrieval, d.checks.parsing, d.checks.signature, d.checks.digest];
+                        outcomes.iter().any(|outcome| outcome.status != CheckStatus::NotEvaluated).then(|| {
+                            outcomes.iter().filter(|outcome| matches!(outcome.status,
+                                CheckStatus::Failed | CheckStatus::Warning | CheckStatus::Missing
+                            )).count() as u64
+                        })
+                    }))
+                    on_click=Callback::new(move |_| navigate.run(format!("{}/health", document_url())))
+                >"Document Health"</ContentTab>
+                <ContentTab
                     active=Signal::derive(move || tab.get() == "notes")
+                    count=Signal::derive(move || loaded_content.get().map(|c| (c.notes.len() + c.references.len()) as u64))
                     on_click=Callback::new(move |_| {
                         navigate.run(format!("{}/notes", document_url()));
                     })
                 >"Notes & References"</ContentTab>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "vulnerabilities")
+                    count=Signal::derive(move || loaded_content.get().map(|c| c.vulnerabilities.len() as u64))
                     on_click=Callback::new(move |_| {
                         navigate.run(format!("{}/vulnerabilities", document_url()));
                     })
                 >
                     "Vulnerabilities"
-                    {move || loaded_content.get().map(|c| format!(" ({})", c.vulnerabilities.len()))}
                 </ContentTab>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "validation")
+                    count=Signal::derive(move || detail.get().and_then(Result::ok).map(|d| {
+                        [d.profiles.basic, d.profiles.extended, d.profiles.full]
+                            .into_iter().flatten().map(|p| p.failing_tests.len() as u64).sum()
+                    }))
                     on_click=Callback::new(move |_| {
                         navigate.run(format!("{}/validation", document_url()));
                     })
                 >"Validation"</ContentTab>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "revision")
+                    count=Signal::derive(move || detail.get().and_then(Result::ok).map(|d| d.revision_history.len() as u64))
                     on_click=Callback::new(move |_| {
                         navigate.run(format!("{}/revision", document_url()));
                     })
                 >"Revision"</ContentTab>
                 <ContentTab
                     active=Signal::derive(move || tab.get() == "history")
+                    count=Signal::derive(move || detail.get().and_then(Result::ok).map(|d| u64::from(d.version_count)))
                     on_click=Callback::new(move |_| navigate.run(history_url()))
                 >"History"</ContentTab>
             </ContentTabs>
@@ -508,7 +530,7 @@ fn HistoricalVersionDetail(doc: HistoricalDocument) -> impl IntoView {
     }
 }
 
-/// Renders document content for the Overview, Validation, and Revision tabs.
+/// Renders document content for the Overview, Document Health, Validation, and Revision tabs.
 #[component]
 fn DocumentDetailContent(
     doc: DocumentValidation,
@@ -527,6 +549,34 @@ fn DocumentDetailContent(
                     <ProfileSection title="Basic" detail=d.profiles.basic />
                     <ProfileSection title="Extended" detail=d.profiles.extended />
                     <ProfileSection title="Full" detail=d.profiles.full />
+                }.into_any()
+            } else if t == "health" {
+                view! {
+                    <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+                        {[
+                            ("Retrieval", d.checks.retrieval),
+                            ("Parsing", d.checks.parsing),
+                            ("Signature", d.checks.signature),
+                            ("Digests", d.checks.digest),
+                        ].into_iter().map(|(label, outcome)| view! {
+                            <div>
+                                {if let Some(message) = outcome.message.clone() {
+                                    view! {
+                                        <details>
+                                            <summary class="cursor-pointer">
+                                                <span class="mr-1.5">{label}</span><CheckBadge outcome=outcome />
+                                            </summary>
+                                            <p class="mt-2 max-w-prose break-words">{message}</p>
+                                        </details>
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <span class="mr-1.5">{label}</span><CheckBadge outcome=outcome />
+                                    }.into_any()
+                                }}
+                            </div>
+                        }).collect::<Vec<_>>()}
+                    </div>
                 }.into_any()
             } else if t == "revision" {
                 view! {
@@ -558,20 +608,7 @@ fn DocumentDetailContent(
                                 <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">"URL"</Td>
                                 <Td><a href={d.url.clone()} target="_blank">{d.url.clone()}</a></Td>
                             </tr>
-                            {[
-                                ("Retrieval", d.checks.retrieval),
-                                ("Parsing", d.checks.parsing),
-                                ("Signature", d.checks.signature),
-                                ("Digests", d.checks.digest),
-                            ].into_iter().map(|(label, outcome)| view! {
-                                <tr>
-                                    <Td class="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400 w-48">{label}</Td>
-                                    <Td>
-                                        <CheckBadge outcome=outcome.clone() />
-                                        {outcome.message.map(|message| view! { <span class="ml-2">{message}</span> })}
-                                    </Td>
-                                </tr>
-                            }).collect::<Vec<_>>()}
+
 
                         </Tbody>
                     </Table>

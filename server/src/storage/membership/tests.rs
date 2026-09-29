@@ -96,12 +96,12 @@ async fn health_uses_exact_membership_and_survives_unchanged_syncs() {
     assert_eq!(health.len(), 3);
     let white = health.iter().find(|h| h.url == WHITE).unwrap();
     assert_eq!(white.document_count, 1);
-    assert_eq!(white.retrieval_errors, 0);
+    assert_eq!(white.check_issues, 0);
     assert_eq!(white.basic_pass_rate, Some(0.75));
     assert_eq!(white.extended_pass_rate, Some(0.8));
     assert_eq!(white.full_pass_rate, Some(0.9));
     let green = health.iter().find(|h| h.url == GREEN).unwrap();
-    assert_eq!((green.document_count, green.retrieval_errors), (1, 1));
+    assert_eq!((green.document_count, green.check_issues), (1, 1));
     assert_eq!(green.basic_pass_rate, None);
     assert!(health.iter().find(|h| h.url == DIRECTORY).unwrap().skipped);
 
@@ -137,6 +137,48 @@ async fn health_uses_exact_membership_and_survives_unchanged_syncs() {
     assert_eq!(distribution_health(&db, GREEN).await.unwrap().0, 1);
     assert_eq!(distribution_health(&db, DIRECTORY).await.unwrap().0, 1);
     assert_eq!(storage.document_count("example.com").await.unwrap(), 2);
+}
+
+/// Essential issues count each document once and exclude CSAF test failures.
+#[tokio::test]
+async fn health_counts_essential_issues_without_csaf_tests() {
+    let (_dir, storage, db) = fixture().await;
+    storage
+        .save_distribution_membership("example.com", &membership(&[(WHITE, &[DOCUMENT])]))
+        .await
+        .unwrap();
+
+    // The fixture has failing CSAF tests but no essential check issues.
+    assert_eq!(distribution_health(&db, WHITE).await.unwrap().1, 0);
+    for stage in ["retrieval", "parsing", "signature", "digest"] {
+        for status in ["failed", "warning", "missing", "passed", "not_evaluated"] {
+            db.execute_raw(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE documents SET document_checks = json_set('{}', ?, ?) WHERE url = ?",
+                [
+                    format!("$.{stage}.status").into(),
+                    status.into(),
+                    DOCUMENT.into(),
+                ],
+            ))
+            .await
+            .unwrap();
+            let expected = u64::from(matches!(status, "failed" | "warning" | "missing"));
+            assert_eq!(
+                distribution_health(&db, WHITE).await.unwrap().1,
+                expected,
+                "{stage}: {status}"
+            );
+        }
+    }
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "UPDATE documents SET document_checks = json_set('{}', '$.signature.status', 'failed', '$.digest.status', 'failed') WHERE url = ?",
+        [DOCUMENT.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(distribution_health(&db, WHITE).await.unwrap().1, 1);
 }
 
 /// Large indexes are batched and partially failed updates roll back as a unit.

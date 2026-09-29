@@ -78,7 +78,8 @@ pub struct DistributionHealth {
     #[serde(default)]
     pub tlp_labels: Vec<String>,
     pub document_count: u64,
-    pub retrieval_errors: u64,
+    /// Documents with essential check issues, excluding CSAF test results.
+    pub check_issues: u64,
     #[serde(default)]
     pub skipped: bool,
     #[serde(default)]
