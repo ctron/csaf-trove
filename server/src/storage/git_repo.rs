@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     str::from_utf8,
     time::Instant,
@@ -12,10 +13,9 @@ use super::{
 use crate::models::result::{DiffLineInfo, DiffTag};
 use anyhow::{Context, Result, ensure};
 use git2::{
-    BranchType, Buf, Delta, ErrorCode, Index, IndexEntry, IndexTime, Oid, Repository, Signature,
-    Tree,
+    BranchType, Buf, Delta, ErrorCode, Index, IndexEntry, IndexTime, Mempack, Odb, Oid, Repository,
+    Signature, Tree,
 };
-use std::io::Write;
 use serde::Deserialize;
 use walkdir::WalkDir;
 
@@ -179,6 +179,7 @@ pub fn commit_all_with_progress(
 
     let mut staged = 0u64;
     let mut buffered_bytes = 0u64;
+    let mut buffered_objects = Vec::new();
     let git_dir = worktree_path.join(".git");
     for entry in WalkDir::new(worktree_path)
         .into_iter()
@@ -232,11 +233,18 @@ pub fn commit_all_with_progress(
                 buffered_bytes += entry.metadata()?.len();
                 index.add_path(relative)?;
             }
+            buffered_objects.push(
+                index
+                    .get_path(&logical, 0)
+                    .context("Missing staged index entry")?
+                    .id,
+            );
             staged += 1;
             progress(staged, total);
 
             if buffered_bytes >= pack_threshold {
-                flush_mempack(&mempack, &repo, &odb)?;
+                flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
+                buffered_objects.clear();
                 buffered_bytes = 0;
             }
         }
@@ -263,7 +271,8 @@ pub fn commit_all_with_progress(
     let parents: Vec<&git2::Commit> = parent.as_ref().map(|p| vec![p]).unwrap_or_default();
     let oid = repo.commit(None, &sig, &sig, message, &tree, &parents)?;
 
-    flush_mempack(&mempack, &repo, &odb)?;
+    buffered_objects.push(oid);
+    flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
 
     match repo.reference_matching(
         &worktree.branch,
@@ -282,14 +291,21 @@ pub fn commit_all_with_progress(
     Ok(true)
 }
 
-/// Dumps buffered mempack objects to a packfile and resets the mempack.
+/// Persists staged blobs or a completed commit before resetting the mempack.
 fn flush_mempack(
-    mempack: &git2::Mempack<'_>,
+    mempack: &Mempack<'_>,
     repo: &Repository,
-    odb: &git2::Odb<'_>,
+    odb: &Odb<'_>,
+    objects: &[Oid],
 ) -> Result<()> {
+    // Mempack::dump only walks commits, so a threshold flush before commit creation
+    // would discard every staged blob. Include those blobs explicitly instead.
+    let mut builder = repo.packbuilder()?;
+    for &oid in objects {
+        builder.insert_recursive(oid, None)?;
+    }
     let mut buf = Buf::new();
-    mempack.dump(repo, &mut buf)?;
+    builder.write_buf(&mut buf)?;
     if !buf.is_empty() {
         let mut packwriter = odb.packwriter()?;
         packwriter.write_all(&buf)?;
@@ -592,6 +608,50 @@ mod tests {
         }
         assert!(commit_all(&prepared, "initial").unwrap());
         (dir, bare_path)
+    }
+
+    /// Threshold flushes preserve plain and compressed blobs across incremental commits.
+    #[test]
+    fn mempack_threshold_flush_preserves_objects() {
+        for threshold in [1, 16, u64::MAX] {
+            let dir = tempfile::tempdir().unwrap();
+            let bare_path = dir.path().join("repo.git");
+            let work_path = dir.path().join("work");
+            for revision in ["initial", "updated"] {
+                let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
+                scratch::write(
+                    &work_path,
+                    Path::new("example.com/advisories/rhsa-2022_5775.json"),
+                    revision.as_bytes(),
+                )
+                .unwrap();
+                fs::write(work_path.join("plain.txt"), revision).unwrap();
+                if revision == "initial" {
+                    fs::write(work_path.join("preserved.txt"), b"unchanged").unwrap();
+                }
+                assert!(
+                    commit_all_with_progress(&prepared, revision, threshold, |_, _| {}).unwrap()
+                );
+                for path in ["example.com/advisories/rhsa-2022_5775.json", "plain.txt"] {
+                    assert_eq!(
+                        read_head_blob(&bare_path, path).unwrap().unwrap(),
+                        revision.as_bytes()
+                    );
+                }
+                assert_eq!(
+                    read_head_blob(&bare_path, "preserved.txt")
+                        .unwrap()
+                        .unwrap(),
+                    b"unchanged"
+                );
+                let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
+                fs::write(work_path.join("plain.txt"), revision).unwrap();
+                assert!(
+                    !commit_all_with_progress(&prepared, "unchanged", threshold, |_, _| {})
+                        .unwrap()
+                );
+            }
+        }
     }
 
     /// Verifies that scratch state never duplicates objects or alters bare config.
