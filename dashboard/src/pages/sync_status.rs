@@ -85,7 +85,7 @@ fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
         .map(|p| p.as_ref().to_string())
         .unwrap_or_else(|| "-".to_string());
 
-    view! { <span class="whitespace-nowrap text-xs">{label}</span> }.into_any()
+    view! { <span class="whitespace-nowrap">{label}</span> }.into_any()
 }
 
 /// Builds the WebSocket URL from the current page origin.
