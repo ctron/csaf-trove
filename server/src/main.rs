@@ -44,6 +44,9 @@ struct Cli {
     /// Path to the TOML configuration file.
     #[arg(short, long, default_value = "/etc/csaf-trove/config.toml")]
     config: PathBuf,
+    /// Rebuild cached summaries for these providers and exit without starting the server or syncing.
+    #[arg(long, value_name = "PROVIDER", num_args = 1..)]
+    refresh_summaries: Vec<String>,
 }
 
 /// Top-level server configuration.
@@ -361,6 +364,18 @@ async fn main() -> Result<()> {
     let data_dir = config.data.dir.clone();
 
     let storage = Storage::new(&data_dir).context("Failed to initialize storage")?;
+
+    if !cli.refresh_summaries.is_empty() {
+        for domain in &cli.refresh_summaries {
+            tracing::info!("Refreshing cached summary for {domain}");
+            storage
+                .refresh_summary(domain)
+                .await
+                .with_context(|| format!("Failed to refresh summary for {domain}"))?;
+            tracing::info!("Refreshed cached summary for {domain}");
+        }
+        return Ok(());
+    }
 
     fs::create_dir_all(data_dir.join("work"))?;
     fs::create_dir_all(data_dir.join("sources"))?;

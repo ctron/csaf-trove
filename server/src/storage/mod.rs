@@ -98,21 +98,9 @@ impl Storage {
         Ok(())
     }
 
-    /// Lists all stored provider summaries, sorted by domain.
+    /// Lists cached provider summaries without rebuilding them, sorted by domain.
     pub async fn list_summaries(&self) -> Result<Vec<ProviderSummary>> {
-        let mut summaries = results::list_summaries(&self.results_dir).await?;
-        for summary in &mut summaries {
-            if summary.checks.is_none()
-                && let Some(db) = self.db.get_if_exists(&summary.provider).await?
-            {
-                let mut refreshed =
-                    documents::build_summary_from_db(&db, &summary.provider).await?;
-                refreshed.validated_at = summary.validated_at;
-                refreshed.note = summary.note.clone();
-                *summary = refreshed;
-            }
-        }
-        Ok(summaries)
+        results::list_summaries(&self.results_dir).await
     }
 
     /// Returns the combined summary, metrics, and history for a provider.
@@ -125,18 +113,9 @@ impl Storage {
         let metrics = self.load_metrics(domain).await.ok();
         let history = self.provider_history(domain).await?.unwrap_or_default();
 
-        let Some(mut summary) = summary else {
+        let Some(summary) = summary else {
             return Ok(None);
         };
-
-        if summary.checks.is_none()
-            && let Some(db) = self.db.get_if_exists(domain).await?
-        {
-            let mut refreshed = documents::build_summary_from_db(&db, domain).await?;
-            refreshed.validated_at = summary.validated_at;
-            refreshed.note = summary.note.clone();
-            summary = refreshed;
-        }
 
         let distributions = self
             .compute_distribution_health(domain, skip_directories)

@@ -138,6 +138,86 @@ async fn unchanged_processing_reuses_results_and_summary() {
     );
 }
 
+/// Legacy summaries stay cached until an explicit refresh, without rewriting validated documents.
+#[tokio::test]
+async fn legacy_summary_refresh_is_explicit_and_persisted() {
+    let (_dir, state, source) = fixture();
+    process(&state, &source).await.unwrap();
+    let mut legacy = state
+        .storage
+        .load_summary(&source.domain)
+        .await
+        .unwrap()
+        .unwrap();
+    let expected_checks = legacy.checks.take().unwrap();
+    legacy.note = Some("Operator note".into());
+    state
+        .storage
+        .save_summary(&source.domain, &legacy)
+        .await
+        .unwrap();
+
+    let db = database(&state).await;
+    db.execute_unprepared("CREATE TRIGGER prohibit_insert BEFORE INSERT ON documents BEGIN SELECT RAISE(ABORT, 'unexpected document insert'); END;
+        CREATE TRIGGER prohibit_update BEFORE UPDATE ON documents BEGIN SELECT RAISE(ABORT, 'unexpected document update'); END;
+        CREATE TRIGGER prohibit_delete BEFORE DELETE ON documents BEGIN SELECT RAISE(ABORT, 'unexpected document delete'); END;").await.unwrap();
+
+    // Neither page reads nor unchanged processing should upgrade the cache implicitly.
+    assert!(
+        state.storage.list_summaries().await.unwrap()[0]
+            .checks
+            .is_none()
+    );
+    let detail = state
+        .storage
+        .provider_detail(&source.domain, &[])
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(detail.summary.checks.is_none());
+    process(&state, &source).await.unwrap();
+    let cached = state
+        .storage
+        .load_summary(&source.domain)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(cached.checks.is_none());
+    assert_eq!(cached.validated_at, legacy.validated_at);
+
+    state.storage.refresh_summary(&source.domain).await.unwrap();
+    let refreshed = state
+        .storage
+        .load_summary(&source.domain)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refreshed.checks, Some(expected_checks));
+    assert_eq!(refreshed.validated_at, legacy.validated_at);
+    assert_eq!(refreshed.note, legacy.note);
+    assert_eq!(refreshed.document_count, legacy.document_count);
+
+    process(&state, &source).await.unwrap();
+    let after = state
+        .storage
+        .load_summary(&source.domain)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(after).unwrap(),
+        serde_json::to_value(refreshed).unwrap()
+    );
+    assert!(
+        state
+            .storage
+            .refresh_summary("unknown.example")
+            .await
+            .is_err()
+    );
+    assert!(!state.data_dir.join("results/unknown.example").exists());
+}
+
 /// Only changed documents are replaced; sidecar-only updates preserve version counts.
 #[tokio::test]
 async fn targeted_processing_preserves_untouched_rows() {

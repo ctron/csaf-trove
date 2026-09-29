@@ -1,7 +1,7 @@
 //! Durable processing checkpoints and targeted document maintenance.
-use super::{Storage, results};
+use super::{Storage, documents, results};
 use crate::models::result::ProviderSummary;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use csaf_trove_entity::{check_failure, document, revision_history};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, QuerySelect, Statement,
@@ -67,6 +67,23 @@ impl Storage {
     /// Reads one provider's cached summary without scanning other providers.
     pub async fn load_summary(&self, domain: &str) -> Result<Option<ProviderSummary>> {
         results::load_summary(&self.results_dir, domain).await
+    }
+
+    /// Explicitly rebuilds a cached summary, preserving its validation timestamp and operator note.
+    pub async fn refresh_summary(&self, domain: &str) -> Result<()> {
+        let previous = self
+            .load_summary(domain)
+            .await?
+            .with_context(|| format!("No cached summary for {domain}"))?;
+        let db = self
+            .db
+            .get_if_exists(domain)
+            .await?
+            .with_context(|| format!("No stored validation results for {domain}"))?;
+        let mut summary = documents::build_summary_from_db(&db, domain).await?;
+        summary.validated_at = previous.validated_at;
+        summary.note = previous.note;
+        self.save_summary(domain, &summary).await
     }
 
     /// Removes results for advisory URLs actually deleted from Git.
