@@ -76,6 +76,11 @@ pub struct CheckCounts {
 }
 
 impl CheckCounts {
+    /// Total number of problematic outcomes (failed + warning + missing).
+    pub fn issues(&self) -> u64 {
+        self.failed + self.warning + self.missing
+    }
+
     /// Adds documents with the given outcome.
     pub fn add(&mut self, status: CheckStatus, count: u64) {
         *match status {
@@ -85,6 +90,16 @@ impl CheckCounts {
             CheckStatus::Missing => &mut self.missing,
             CheckStatus::NotEvaluated => &mut self.not_evaluated,
         } += count;
+    }
+}
+
+impl DocumentChecks<CheckCounts> {
+    /// Sum of issues across all check stages.
+    pub fn total_issues(&self) -> u64 {
+        self.retrieval.issues()
+            + self.parsing.issues()
+            + self.signature.issues()
+            + self.digest.issues()
     }
 }
 

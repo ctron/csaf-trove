@@ -139,33 +139,15 @@ fn ProviderSortHeading(
     }
 }
 
-/// Displays the combined essential checks, highlighting any known problem in red.
+/// Displays the total issue count across all essential checks: 0 = green, >0 = red.
 #[component]
-fn ProviderChecks(
-    /// Aggregate results, absent for providers without recorded checks.
-    checks: Option<DocumentCheckSummary>,
-) -> impl IntoView {
-    let (label, variant) = checks
-        .map(|checks| {
-            let stages = [
-                checks.retrieval,
-                checks.parsing,
-                checks.signature,
-                checks.digest,
-            ];
-            if stages
-                .iter()
-                .any(|c| c.failed > 0 || c.warning > 0 || c.missing > 0)
-            {
-                ("Issues", BadgeVariant::Danger)
-            } else if stages.iter().any(|c| c.passed > 0) {
-                ("Passed", BadgeVariant::Success)
-            } else {
-                ("-", BadgeVariant::Neutral)
-            }
-        })
-        .unwrap_or(("-", BadgeVariant::Neutral));
-    view! { <Badge variant=variant>{label}</Badge> }
+fn ProviderChecks(checks: Option<DocumentCheckSummary>) -> impl IntoView {
+    let Some(checks) = checks else {
+        return view! { <Badge variant=BadgeVariant::Neutral>"-"</Badge> };
+    };
+    let issues = checks.total_issues();
+    let variant = if issues > 0 { BadgeVariant::Danger } else { BadgeVariant::Success };
+    view! { <Badge variant=variant>{issues.to_string()}</Badge> }
 }
 
 /// Renders provider summaries with sortable name, document count, and profile columns.
