@@ -7,6 +7,7 @@ use std::{
 };
 
 use super::{
+    git_changes::TreeDiffCache,
     git_processing::{advisory_path, path_url},
     scratch,
 };
@@ -531,26 +532,26 @@ pub fn collect_versions(
         commits.push(commit);
     }
 
+    let mut tree_diffs = TreeDiffCache::default();
     for commit in commits.into_iter().rev() {
         let tree = commit.tree()?;
         let parent_tree = commit.parents().next().map(|p| p.tree()).transpose()?;
-        let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)?;
+        let diff = tree_diffs.diff(&repo, parent_tree.as_ref(), &tree)?;
         let mut documents = Vec::new();
-        for delta in diff.deltas() {
-            if !matches!(delta.status(), Delta::Added | Delta::Modified) {
+        for delta in diff.iter() {
+            if !matches!(delta.status, Delta::Added | Delta::Modified) {
                 continue;
             }
-            let file = delta.new_file();
-            let Some(path) = file.path().and_then(Path::to_str) else {
+            let Some(path) = delta.new_path.as_deref() else {
                 continue;
             };
             if advisory_path(path).as_deref() != Some(path) {
                 continue;
             }
-            let blob = repo.find_blob(file.id())?;
+            let blob = repo.find_blob(delta.new_id)?;
             documents.push(ChangedDocument {
                 url: path_url(path),
-                blob_id: file.id().to_string(),
+                blob_id: delta.new_id.to_string(),
                 tracking: parse_tracking(blob.content()),
             });
         }

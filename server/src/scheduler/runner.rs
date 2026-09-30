@@ -20,11 +20,13 @@ use anyhow::Result;
 use csaf_trove_common::PipelinePhase;
 use csaf_walker::model::metadata::{ProviderMetadata, Role};
 use std::{
+    future::Future,
     path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering::Relaxed},
     },
+    time::Instant,
 };
 use time::OffsetDateTime;
 
@@ -369,6 +371,31 @@ fn validator_identity(source: &Source) -> String {
     hex::encode(hash.finalize())
 }
 
+/// Logs elapsed time and outcome even when a processing step returns an error.
+async fn timed_processing_step<T>(
+    domain: &str,
+    step: &'static str,
+    work: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    let started = Instant::now();
+    tracing::info!(domain, step, "Processing step started");
+    let result = work.await;
+    let elapsed_ms = started.elapsed().as_millis();
+    match &result {
+        Ok(_) => tracing::info!(
+            domain,
+            step,
+            elapsed_ms,
+            success = true,
+            "Processing step finished"
+        ),
+        Err(error) => {
+            tracing::warn!(domain, step, elapsed_ms, success = false, error = %error, "Processing step finished")
+        }
+    }
+    result
+}
+
 /// Processes only inputs changed since the last successful snapshot, then publishes its checkpoint.
 async fn process_snapshot(
     state: &Arc<AppState>,
@@ -393,30 +420,36 @@ async fn process_snapshot(
     let identity = validator_identity(source);
     state.update_job_phase(domain, PipelinePhase::Prepare).await;
     let selection_repo = repo.clone();
-    let mut selection = tokio::task::spawn_blocking(move || {
-        select_processing(&selection_repo, previous.as_ref(), &identity, force_full)
+    let mut selection = timed_processing_step(domain, "selection", async {
+        tokio::task::spawn_blocking(move || {
+            select_processing(&selection_repo, previous.as_ref(), &identity, force_full)
+        })
+        .await?
     })
-    .await??;
+    .await?;
     let failed_urls = state.storage.retrieval_error_urls(domain).await?;
     include_recovered_downloads(&mut selection, &failed_urls, download_dir)?;
     let validation_dir = download_dir.join("validation");
     let work = validation_dir.clone();
     let progress = BlockingProgress::new();
     let cb = progress.callback();
-    let selection = progress
-        .run(state, domain, async {
-            tokio::task::spawn_blocking(move || {
-                if work.exists() {
-                    std::fs::remove_dir_all(&work)?;
-                }
-                if !selection.advisories.is_empty() {
-                    materialize_processing_with_progress(&repo, &selection, &work, cb)?;
-                }
-                Ok::<_, anyhow::Error>(selection)
+    let selection = timed_processing_step(domain, "materialization", async {
+        progress
+            .run(state, domain, async {
+                tokio::task::spawn_blocking(move || {
+                    if work.exists() {
+                        std::fs::remove_dir_all(&work)?;
+                    }
+                    if !selection.advisories.is_empty() {
+                        materialize_processing_with_progress(&repo, &selection, &work, cb)?;
+                    }
+                    Ok::<_, anyhow::Error>(selection)
+                })
+                .await?
             })
-            .await?
-        })
-        .await?;
+            .await
+    })
+    .await?;
     let mut changed = summary_dirty
         || selection.full
         || !selection.advisories.is_empty()
@@ -434,7 +467,12 @@ async fn process_snapshot(
         state
             .update_job_phase(domain, PipelinePhase::Validate)
             .await;
-        validate_provider(state, source, &validation_dir, selection.advisories.clone()).await?;
+        timed_processing_step(
+            domain,
+            "validation",
+            validate_provider(state, source, &validation_dir, selection.advisories.clone()),
+        )
+        .await?;
     }
     // Documents stored before versions were recorded need a one-time full history scan.
     let backfill = !selection.baseline && state.storage.versions_missing(domain).await?;
@@ -447,7 +485,12 @@ async fn process_snapshot(
         } else {
             previous_commit.as_deref()
         };
-        state.storage.record_versions(domain, since).await?;
+        timed_processing_step(
+            domain,
+            "version_recording",
+            state.storage.record_versions(domain, since),
+        )
+        .await?;
     }
     if !retrieval_errors.is_empty() {
         let pairs = retrieval_errors
@@ -458,11 +501,14 @@ async fn process_snapshot(
     }
     if changed || state.storage.load_summary(domain).await?.is_none() {
         state.update_job_phase(domain, PipelinePhase::Summary).await;
-        let summary = state.storage.build_summary_from_db(domain).await?;
-        state.storage.save_summary(domain, &summary).await?;
+        timed_processing_step(domain, "summary", async {
+            let summary = state.storage.build_summary_from_db(domain).await?;
+            state.storage.save_summary(domain, &summary).await
+        })
+        .await?;
     }
     state.update_job_phase(domain, PipelinePhase::Report).await;
-    generate_report(state, source).await?;
+    timed_processing_step(domain, "report", generate_report(state, source)).await?;
     let total = state.storage.document_count(domain).await?;
     if let Some(job) = state.jobs.write().await.get_mut(domain) {
         job.documents_total = total;
