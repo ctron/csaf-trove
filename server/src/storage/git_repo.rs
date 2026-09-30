@@ -13,8 +13,8 @@ use super::{
 use crate::models::result::{DiffLineInfo, DiffTag};
 use anyhow::{Context, Result, ensure};
 use git2::{
-    BranchType, Buf, Delta, ErrorCode, Index, IndexEntry, IndexTime, Mempack, Odb, Oid, Repository,
-    Signature, Tree,
+    BranchType, Delta, ErrorCode, Index, IndexEntry, IndexTime, Mempack, Odb, Oid, PackBuilder,
+    Repository, Signature, Tree,
 };
 use serde::Deserialize;
 use walkdir::WalkDir;
@@ -143,115 +143,121 @@ pub fn commit_all_with_progress(
     let worktree_path = &worktree.worktree_path;
     // Index::open would silently create an empty index if scratch data was lost.
     fs::metadata(worktree_path.join(".git/index")).context("Missing prepared worktree index")?;
-    let repo = open_worktree(worktree)?;
-    let current = match repo.find_reference(&worktree.branch) {
-        Ok(reference) => Some(reference.peel_to_commit()?.id()),
-        Err(error) if error.code() == ErrorCode::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-    if current != worktree.base_commit {
-        return Err(WorktreeError::BranchChanged(worktree.branch.clone()).into());
-    }
-    let mut index = repo.index()?;
-
-    let odb = repo.odb()?;
-    let mempack = odb.add_new_mempack_backend(1000)?;
-
-    // Downloaded key sets replace the old set, including keys removed by rotation.
-    if worktree_path.join("metadata/keys").is_dir() {
-        let keys: Vec<_> = index
-            .iter()
-            .filter(|entry| entry.path.starts_with(b"metadata/keys/"))
-            .map(|entry| entry.path)
-            .collect();
-        for key in keys {
-            index.remove_path(Path::new(from_utf8(&key)?))?;
-        }
-    }
-
-    let git_dir = worktree_path.join(".git");
-    let total = WalkDir::new(worktree_path)
-        .into_iter()
-        .filter_entry(|e| e.path() != git_dir)
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .count() as u64;
-
-    let mut staged = 0u64;
-    let mut buffered_bytes = 0u64;
-    let mut buffered_objects = Vec::new();
-    let git_dir = worktree_path.join(".git");
-    for entry in WalkDir::new(worktree_path)
-        .into_iter()
-        .filter_entry(|e| e.path() != git_dir)
     {
-        let entry = entry.context("failed to walk worktree")?;
-        if entry.file_type().is_file() {
-            let relative = entry
-                .path()
-                .strip_prefix(worktree_path)
-                .context("file is not under worktree")?;
-            let logical = scratch::logical_path(relative);
-            if scratch::is_advisory(&logical) && !logical.starts_with("metadata") {
-                for suffix in ["asc", "sha256", "sha512"] {
-                    let sidecar = logical.with_added_extension(suffix);
-                    if !worktree_path.join(&sidecar).exists()
-                        && index.get_path(&sidecar, 0).is_some()
-                    {
-                        index.remove_path(&sidecar)?;
+        let repo = open_worktree(worktree)?;
+        let current = match repo.find_reference(&worktree.branch) {
+            Ok(reference) => Some(reference.peel_to_commit()?.id()),
+            Err(error) if error.code() == ErrorCode::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if current != worktree.base_commit {
+            return Err(WorktreeError::BranchChanged(worktree.branch.clone()).into());
+        }
+        let mut index = repo.index()?;
+
+        let odb = repo.odb()?;
+        let mempack = odb.add_new_mempack_backend(1000)?;
+
+        // Downloaded key sets replace the old set, including keys removed by rotation.
+        if worktree_path.join("metadata/keys").is_dir() {
+            let keys: Vec<_> = index
+                .iter()
+                .filter(|entry| entry.path.starts_with(b"metadata/keys/"))
+                .map(|entry| entry.path)
+                .collect();
+            for key in keys {
+                index.remove_path(Path::new(from_utf8(&key)?))?;
+            }
+        }
+
+        let git_dir = worktree_path.join(".git");
+        let total = WalkDir::new(worktree_path)
+            .into_iter()
+            .filter_entry(|e| e.path() != git_dir)
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .count() as u64;
+
+        let mut staged = 0u64;
+        let mut buffered_bytes = 0u64;
+        let mut buffered_objects = Vec::new();
+        let git_dir = worktree_path.join(".git");
+        for entry in WalkDir::new(worktree_path)
+            .into_iter()
+            .filter_entry(|e| e.path() != git_dir)
+        {
+            let entry = entry.context("failed to walk worktree")?;
+            if entry.file_type().is_file() {
+                let relative = entry
+                    .path()
+                    .strip_prefix(worktree_path)
+                    .context("file is not under worktree")?;
+                let logical = scratch::logical_path(relative);
+                if scratch::is_advisory(&logical) && !logical.starts_with("metadata") {
+                    for suffix in ["asc", "sha256", "sha512"] {
+                        let sidecar = logical.with_added_extension(suffix);
+                        if !worktree_path.join(&sidecar).exists()
+                            && index.get_path(&sidecar, 0).is_some()
+                        {
+                            index.remove_path(&sidecar)?;
+                        }
                     }
                 }
-            }
-            if logical != relative {
-                ensure!(
-                    !worktree_path.join(&logical).exists(),
-                    "Both plain and compressed scratch files exist: {}",
-                    logical.display()
+                if logical != relative {
+                    ensure!(
+                        !worktree_path.join(&logical).exists(),
+                        "Both plain and compressed scratch files exist: {}",
+                        logical.display()
+                    );
+                    let data = scratch::read(entry.path())?;
+                    buffered_bytes += data.len() as u64;
+                    let entry = index.get_path(&logical, 0).unwrap_or(IndexEntry {
+                        ctime: IndexTime::new(0, 0),
+                        mtime: IndexTime::new(0, 0),
+                        dev: 0,
+                        ino: 0,
+                        mode: 0o100644,
+                        uid: 0,
+                        gid: 0,
+                        file_size: 0,
+                        id: Oid::ZERO_SHA1,
+                        flags: 0,
+                        flags_extended: 0,
+                        path: logical
+                            .to_str()
+                            .context("Invalid scratch path")?
+                            .as_bytes()
+                            .to_vec(),
+                    });
+                    index.add_frombuffer(&entry, &data)?;
+                } else {
+                    buffered_bytes += entry.metadata()?.len();
+                    index.add_path(relative)?;
+                }
+                buffered_objects.push(
+                    index
+                        .get_path(&logical, 0)
+                        .context("Missing staged index entry")?
+                        .id,
                 );
-                let data = scratch::read(entry.path())?;
-                buffered_bytes += data.len() as u64;
-                let entry = index.get_path(&logical, 0).unwrap_or(IndexEntry {
-                    ctime: IndexTime::new(0, 0),
-                    mtime: IndexTime::new(0, 0),
-                    dev: 0,
-                    ino: 0,
-                    mode: 0o100644,
-                    uid: 0,
-                    gid: 0,
-                    file_size: 0,
-                    id: Oid::ZERO_SHA1,
-                    flags: 0,
-                    flags_extended: 0,
-                    path: logical
-                        .to_str()
-                        .context("Invalid scratch path")?
-                        .as_bytes()
-                        .to_vec(),
-                });
-                index.add_frombuffer(&entry, &data)?;
-            } else {
-                buffered_bytes += entry.metadata()?.len();
-                index.add_path(relative)?;
-            }
-            buffered_objects.push(
-                index
-                    .get_path(&logical, 0)
-                    .context("Missing staged index entry")?
-                    .id,
-            );
-            staged += 1;
-            progress(staged, total);
+                staged += 1;
+                progress(staged, total);
 
-            if buffered_bytes >= pack_threshold {
-                flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
-                buffered_objects.clear();
-                buffered_bytes = 0;
+                if buffered_bytes >= pack_threshold {
+                    flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
+                    buffered_objects.clear();
+                    buffered_bytes = 0;
+                }
             }
         }
+        flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
+        index.write()?;
     }
-    index.write()?;
 
-    let tree_oid = index.write_tree()?;
+    // Only blobs use the bounded mempack. Reopen without that backend so trees and
+    // commits go directly to disk instead of recursively repacking the whole snapshot.
+    let repo = open_worktree(worktree)?;
+    let tree_oid = repo.index()?.write_tree()?;
     let tree = repo.find_tree(tree_oid)?;
 
     let sig = Signature::now("csaf-trove", "csaf-trove@localhost")?;
@@ -271,9 +277,6 @@ pub fn commit_all_with_progress(
     let parents: Vec<&git2::Commit> = parent.as_ref().map(|p| vec![p]).unwrap_or_default();
     let oid = repo.commit(None, &sig, &sig, message, &tree, &parents)?;
 
-    buffered_objects.push(oid);
-    flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
-
     match repo.reference_matching(
         &worktree.branch,
         oid,
@@ -291,29 +294,57 @@ pub fn commit_all_with_progress(
     Ok(true)
 }
 
-/// Persists staged blobs or a completed commit before resetting the mempack.
+/// Streams a bounded batch of staged blobs to disk before resetting the mempack.
 fn flush_mempack(
     mempack: &Mempack<'_>,
     repo: &Repository,
     odb: &Odb<'_>,
     objects: &[Oid],
 ) -> Result<()> {
-    // Mempack::dump only walks commits, so a threshold flush before commit creation
-    // would discard every staged blob. Include those blobs explicitly instead.
+    if objects.is_empty() {
+        return Ok(());
+    }
+    let started = Instant::now();
+    // Mempack::dump only walks commits. Insert each staged blob explicitly, without
+    // following references to any objects already persisted in earlier batches.
     let mut builder = repo.packbuilder()?;
     for &oid in objects {
-        builder.insert_recursive(oid, None)?;
+        builder.insert_object(oid, None)?;
     }
-    let mut buf = Buf::new();
-    builder.write_buf(&mut buf)?;
-    if !buf.is_empty() {
-        let mut packwriter = odb.packwriter()?;
-        packwriter.write_all(&buf)?;
-        packwriter.commit()?;
-        odb.refresh()?;
-    }
+    let mut packwriter = odb.packwriter()?;
+    let bytes = stream_pack(&mut builder, &mut packwriter)?;
+    packwriter.commit()?;
+    odb.refresh()?;
     mempack.reset()?;
+    tracing::info!(
+        repository = %repo.path().display(),
+        objects = builder.object_count(),
+        bytes,
+        elapsed_ms = started.elapsed().as_millis(),
+        "Persisted Git blob batch"
+    );
     Ok(())
+}
+
+/// Streams pack chunks to a writer, preserving the original error if writing fails.
+fn stream_pack(builder: &mut PackBuilder<'_>, writer: &mut impl Write) -> Result<u64> {
+    let mut write_error = None;
+    let mut bytes = 0;
+    let result = builder.foreach(|chunk| match writer.write_all(chunk) {
+        Ok(()) => {
+            bytes += chunk.len() as u64;
+            true
+        }
+        Err(error) => {
+            write_error = Some(error);
+            false
+        }
+    });
+    if let Some(error) = write_error {
+        return Err(error).context("Failed to stream Git pack");
+    }
+    result?;
+    Ok(bytes)
 }
 
 /// Snapshot published by a sync commit, including unchanged runs.
@@ -593,7 +624,145 @@ fn pretty_print_or_raw(blob: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::PathBuf};
+    use std::{collections::BTreeSet, fs, io, path::PathBuf};
+
+    /// Lists pack and index filenames to isolate objects written by an incremental sync.
+    fn pack_files(repo: &Path) -> BTreeSet<PathBuf> {
+        fs::read_dir(repo.join("objects/pack"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into())
+            .collect()
+    }
+
+    /// An incremental batch must contain only downloaded blobs, not the previous snapshot.
+    #[test]
+    fn incremental_commit_does_not_repack_unchanged_blobs() {
+        for threshold in [1, u64::MAX] {
+            let dir = tempfile::tempdir().unwrap();
+            let bare_path = dir.path().join("repo.git");
+            let work_path = dir.path().join("work");
+            let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
+            for i in 0..256 {
+                scratch::write(
+                    &work_path,
+                    Path::new(&format!("example.com/advisories/{i}.json")),
+                    format!("document {i}").as_bytes(),
+                )
+                .unwrap();
+            }
+            assert!(commit_all(&prepared, "initial").unwrap());
+            let initial = Repository::open_bare(&bare_path)
+                .unwrap()
+                .head()
+                .unwrap()
+                .target()
+                .unwrap();
+            let before = pack_files(&bare_path);
+            let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
+            scratch::write(
+                &work_path,
+                Path::new("example.com/advisories/0.json"),
+                b"updated",
+            )
+            .unwrap();
+            assert!(commit_all_with_progress(&prepared, "updated", threshold, |_, _| {}).unwrap());
+
+            // Open only the new packs in an independent ODB; old packs cannot mask a
+            // regression that repacks the entire snapshot during the final flush.
+            let isolated_repo = Repository::init_bare(dir.path().join("isolated.git")).unwrap();
+            let isolated = isolated_repo.path().join("objects");
+            fs::create_dir_all(isolated.join("pack")).unwrap();
+            let after = pack_files(&bare_path);
+            let added: Vec<_> = after.difference(&before).collect();
+            assert_eq!(added.len(), 2, "one blob pack and its index");
+            for file in added {
+                fs::copy(
+                    bare_path.join("objects/pack").join(file),
+                    isolated.join("pack").join(file),
+                )
+                .unwrap();
+            }
+            let odb = isolated_repo.odb().unwrap();
+            let mut objects = Vec::new();
+            odb.foreach(|oid| {
+                objects.push(*oid);
+                true
+            })
+            .unwrap();
+            assert_eq!(objects.len(), 1);
+            assert_eq!(odb.read(objects[0]).unwrap().data(), b"updated");
+
+            let repo = Repository::open_bare(&bare_path).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            assert_eq!(head.parent_id(0).unwrap(), initial);
+            for (commit, updated) in [(initial, false), (head.id(), true)] {
+                let tree = repo.find_commit(commit).unwrap().tree().unwrap();
+                for i in 0..256 {
+                    let path = format!("example.com/advisories/{i}.json");
+                    let blob = repo
+                        .find_blob(tree.get_path(Path::new(&path)).unwrap().id())
+                        .unwrap();
+                    let expected = if updated && i == 0 {
+                        "updated".to_owned()
+                    } else {
+                        format!("document {i}")
+                    };
+                    assert_eq!(blob.content(), expected.as_bytes());
+                }
+            }
+        }
+    }
+
+    /// Empty staging batches produce no packfiles, including an empty initial snapshot.
+    #[test]
+    fn empty_commit_does_not_write_blob_pack() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = dir.path().join("repo.git");
+        let work = dir.path().join("work");
+        let prepared = prepare_worktree(&bare, &work).unwrap();
+        assert!(commit_all(&prepared, "empty initial").unwrap());
+        assert!(pack_files(&bare).is_empty());
+        let prepared = prepare_worktree(&bare, &work).unwrap();
+        assert!(!commit_all(&prepared, "unchanged").unwrap());
+        assert!(pack_files(&bare).is_empty());
+    }
+
+    /// A destination that fails immediately with a recognizable original I/O error.
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        /// Simulates a failed pack write.
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "pack write denied",
+            ))
+        }
+
+        /// No buffered data needs flushing.
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Callback cancellation must not replace the underlying destination write error.
+    #[test]
+    fn streaming_pack_preserves_write_error() {
+        let (_dir, bare) = create_test_repo(&[("doc.json", b"initial")]);
+        let repo = Repository::open_bare(&bare).unwrap();
+        let original = repo.head().unwrap().target().unwrap();
+        let odb = repo.odb().unwrap();
+        let _mempack = odb.add_new_mempack_backend(1000).unwrap();
+        let oid = odb.write(git2::ObjectType::Blob, b"pending").unwrap();
+        let mut builder = repo.packbuilder().unwrap();
+        builder.insert_object(oid, None).unwrap();
+        let error = stream_pack(&mut builder, &mut FailingWriter).unwrap_err();
+        let error = error.downcast_ref::<io::Error>().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "pack write denied");
+        assert_eq!(odb.read(oid).unwrap().data(), b"pending");
+        assert_eq!(repo.head().unwrap().target().unwrap(), original);
+    }
 
     /// Creates provider history through the production setup and commit path.
     fn create_test_repo(files: &[(&str, &[u8])]) -> (tempfile::TempDir, PathBuf) {
@@ -745,10 +914,14 @@ mod tests {
     #[test]
     fn worktree_propagates_missing_commit_object() {
         let (dir, bare_path) = create_test_repo(&[("doc.json", b"old")]);
-        let pack_dir = bare_path.join("objects/pack");
-        for entry in fs::read_dir(&pack_dir).unwrap() {
-            fs::remove_file(entry.unwrap().path()).unwrap();
-        }
+        let oid = Repository::open_bare(&bare_path)
+            .unwrap()
+            .head()
+            .unwrap()
+            .target()
+            .unwrap()
+            .to_string();
+        fs::remove_file(bare_path.join("objects").join(&oid[..2]).join(&oid[2..])).unwrap();
         assert!(prepare_worktree(&bare_path, &dir.path().join("work")).is_err());
     }
 
@@ -780,6 +953,42 @@ mod tests {
                 b"competing"
             );
         }
+    }
+
+    /// Publication rejects a competing branch update after the initial staging check.
+    #[test]
+    fn direct_commit_rejects_branch_changes_during_staging() {
+        let (dir, bare_path) = create_test_repo(&[("doc.json", b"old")]);
+        let repo = Repository::open_bare(&bare_path).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let signature = Signature::now("test", "test@example.com").unwrap();
+        let competing = repo
+            .commit(
+                None,
+                &signature,
+                &signature,
+                "competing",
+                &parent.tree().unwrap(),
+                &[&parent],
+            )
+            .unwrap();
+        let work = dir.path().join("work");
+        let prepared = prepare_worktree(&bare_path, &work).unwrap();
+        fs::write(work.join("doc.json"), b"stale").unwrap();
+        let error = commit_all_with_progress(&prepared, "stale", 1, |_, _| {
+            repo.reference(&prepared.branch, competing, true, "competing update")
+                .unwrap();
+        })
+        .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<WorktreeError>(),
+            Some(WorktreeError::BranchChanged(_))
+        ));
+        assert_eq!(repo.head().unwrap().target().unwrap(), competing);
+        assert_eq!(
+            read_head_blob(&bare_path, "doc.json").unwrap().unwrap(),
+            b"old"
+        );
     }
 
     /// A lost index cannot silently discard the provider's existing documents.
