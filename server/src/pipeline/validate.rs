@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use csaf_trove_common::document_checks::{CheckOutcome, CheckStatus, DocumentChecks};
+use csaf_trove_common::document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks};
 use csaf_walker::{
     check::CheckError,
     common::{
@@ -211,7 +211,43 @@ pub async fn validate_provider(
                             }),
                         ]);
 
+                        let mut digest_details = Vec::new();
+                        for (algorithm, values) in
+                            [
+                                (
+                                    "SHA-256",
+                                    verified.advisory.sha256.as_ref().map(|digest| {
+                                        (&digest.expected, hex::encode(digest.actual))
+                                    }),
+                                ),
+                                (
+                                    "SHA-512",
+                                    verified.advisory.sha512.as_ref().map(|digest| {
+                                        (&digest.expected, hex::encode(digest.actual))
+                                    }),
+                                ),
+                            ]
+                        {
+                            if let Some((expected, actual)) = values {
+                                digest_details.extend([
+                                    CheckDetail {
+                                        label: format!("{algorithm} · Published"),
+                                        value: expected.clone(),
+                                    },
+                                    CheckDetail {
+                                        label: format!("{algorithm} · Computed"),
+                                        value: actual,
+                                    },
+                                ]);
+                            } else {
+                                digest_details.push(CheckDetail {
+                                    label: algorithm.into(),
+                                    value: "Not supplied".into(),
+                                });
+                            }
+                        }
                         let digest = CheckOutcome {
+                            details: digest_details,
                             status: if integrity.error.is_some() {
                                 CheckStatus::Failed
                             } else if integrity.warning.is_some() {
@@ -242,6 +278,13 @@ pub async fn validate_provider(
                                     None => message,
                                 });
                             }
+                        }
+
+                        if let Some(signature) = &verified.advisory.signature {
+                            signature_outcome.details.push(CheckDetail {
+                                label: "OpenPGP signature".into(),
+                                value: signature.clone(),
+                            });
                         }
 
                         let failures: HashMap<String, Vec<CheckError>> = verified

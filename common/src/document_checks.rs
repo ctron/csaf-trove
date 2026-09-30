@@ -26,6 +26,18 @@ pub struct CheckOutcome {
     pub status: CheckStatus,
     /// Diagnostic explaining a failure, warning, or unavailable result.
     pub message: Option<String>,
+    /// Recorded inputs and metadata, absent in older validation results.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub details: Vec<CheckDetail>,
+}
+
+/// A labeled value captured when a check ran.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckDetail {
+    /// Human-readable description of the value.
+    pub label: String,
+    /// Complete value, including line breaks for armored signatures.
+    pub value: String,
 }
 
 impl CheckOutcome {
@@ -34,6 +46,7 @@ impl CheckOutcome {
         Self {
             status,
             message: None,
+            details: Vec::new(),
         }
     }
 
@@ -42,6 +55,7 @@ impl CheckOutcome {
         Self {
             status: CheckStatus::Failed,
             message: Some(message.into()),
+            details: Vec::new(),
         }
     }
 }

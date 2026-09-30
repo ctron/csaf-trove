@@ -3,7 +3,7 @@
 #![cfg(test)]
 
 use super::{ProviderInfo, load_provider_info, save_provider_info};
-use csaf_trove_common::document_checks::{CheckOutcome, CheckStatus, DocumentChecks};
+use csaf_trove_common::document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks};
 use csaf_trove_migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 
@@ -206,6 +206,7 @@ async fn status_filters_partition_documents() {
                 digest: CheckOutcome {
                     status: CheckStatus::Warning,
                     message: Some("mismatch".into()),
+                    ..Default::default()
                 },
                 ..successful_checks()
             },
@@ -383,6 +384,7 @@ async fn check_filters_match_summary_counts() {
                 digest: CheckOutcome {
                     status: CheckStatus::Warning,
                     message: Some("one digest mismatched".into()),
+                    ..Default::default()
                 },
                 ..successful_checks()
             },
@@ -485,4 +487,30 @@ async fn retrieval_failure_invalidates_checks_until_recovery() {
             .pass_rate,
         1.0
     );
+}
+
+/// Older outcomes remain readable and newly recorded details survive database loading.
+#[tokio::test]
+async fn check_details_round_trip() {
+    let legacy: CheckOutcome =
+        serde_json::from_str(r#"{"status":"passed","message":null}"#).unwrap();
+    assert!(legacy.details.is_empty());
+    let db = database("sqlite::memory:", None).await;
+    db.execute_raw(Statement::from_string(DbBackend::Sqlite,
+        "INSERT INTO documents (tracking_id, title, url, signature_present) VALUES ('details', '', 'https://example.com/details.json', 1)"
+    )).await.unwrap();
+    let mut checks = successful_checks();
+    checks.signature.details.push(CheckDetail {
+        label: "OpenPGP signature".into(),
+        value: "-----BEGIN PGP SIGNATURE-----\nexample\n-----END PGP SIGNATURE-----".into(),
+    });
+    checks.digest.details.push(CheckDetail {
+        label: "SHA-256 · Published".into(),
+        value: "0123456789abcdef".into(),
+    });
+    set_checks(&db, "details", &checks).await;
+    let page = super::load_documents_paginated(&db, 0, 10, None)
+        .await
+        .unwrap();
+    assert_eq!(page.items[0].checks, checks);
 }

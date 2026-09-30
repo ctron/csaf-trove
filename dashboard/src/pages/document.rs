@@ -579,29 +579,54 @@ fn DocumentDetailContent(
                 }.into_any()
             } else if t == "health" {
                 view! {
-                    <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+                    <div class="grid gap-6 lg:grid-cols-2">
                         {[
                             ("Retrieval", d.checks.retrieval),
                             ("Parsing", d.checks.parsing),
                             ("Signature", d.checks.signature),
                             ("Digests", d.checks.digest),
-                        ].into_iter().map(|(label, outcome)| view! {
-                            <div>
-                                {if let Some(message) = outcome.message.clone() {
-                                    view! {
-                                        <details>
-                                            <summary class="cursor-pointer">
-                                                <span class="mr-1.5">{label}</span><CheckBadge outcome=outcome />
-                                            </summary>
-                                            <p class="mt-2 max-w-prose break-words">{message}</p>
-                                        </details>
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <span class="mr-1.5">{label}</span><CheckBadge outcome=outcome />
-                                    }.into_any()
-                                }}
-                            </div>
+                        ].into_iter().map(|(label, outcome)| {
+                            let message = outcome.message.clone();
+                            let details = outcome.details.clone();
+                            let status = outcome.status;
+                            view! {
+                                <section class="min-w-0 rounded-lg border border-gray-200 p-5 dark:border-gray-700">
+                                    <div class="flex items-center justify-between gap-4 mb-4">
+                                        <h2 class="text-lg font-semibold">{label}</h2>
+                                        {if status == CheckStatus::NotEvaluated {
+                                            view! { <Badge variant=BadgeVariant::Neutral>"Not evaluated"</Badge> }.into_any()
+                                        } else {
+                                            view! { <CheckBadge outcome=outcome /> }.into_any()
+                                        }}
+                                    </div>
+                                    {message.map(|message| view! {
+                                        <p class="mb-4 whitespace-pre-wrap break-words text-sm">{message}</p>
+                                    })}
+                                    {if details.is_empty() {
+                                        let explanation = match (label, status) {
+                                            (_, CheckStatus::NotEvaluated) => "No check result recorded.",
+                                            ("Signature", CheckStatus::Missing) => "No OpenPGP signature supplied.",
+                                            ("Digests", CheckStatus::Missing) => "No SHA-256 or SHA-512 digest supplied.",
+                                            ("Signature" | "Digests", _) => "Details were not recorded for this check. They will be available after revalidation.",
+                                            ("Retrieval", CheckStatus::Passed) => "Document retrieved successfully.",
+                                            ("Parsing", CheckStatus::Passed) => "Document parsed successfully.",
+                                            _ => "See the diagnostic above for details.",
+                                        };
+                                        view! { <p class="text-sm text-gray-500 dark:text-gray-400">{explanation}</p> }.into_any()
+                                    } else {
+                                        view! {
+                                            <dl class="space-y-4">
+                                                {details.into_iter().map(|detail| view! {
+                                                    <div>
+                                                        <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{detail.label}</dt>
+                                                        <dd><pre class="whitespace-pre-wrap break-all rounded bg-gray-50 p-3 text-xs dark:bg-gray-800">{detail.value}</pre></dd>
+                                                    </div>
+                                                }).collect::<Vec<_>>()}
+                                            </dl>
+                                        }.into_any()
+                                    }}
+                                </section>
+                            }
                         }).collect::<Vec<_>>()}
                     </div>
                 }.into_any()
