@@ -7,3 +7,5 @@ dashboard/dist/
 /.mcp.json
 /.codegraph
 /local-config.toml
+/.rtk
+/.codex

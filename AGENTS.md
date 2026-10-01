@@ -21,3 +21,5 @@
 * Run `cargo generate-lockfile`
 * Commit and create a tag with a `v` prefix
 * Push that tag
+
+@RTK.md
