@@ -2,6 +2,7 @@
 
 mod api;
 mod config_sync;
+mod memory;
 mod models;
 mod pipeline;
 mod scheduler;
@@ -248,7 +249,15 @@ impl AppState {
                     let elapsed_ms = job
                         .phase_started_at
                         .map(|start| (OffsetDateTime::now_utc() - start).whole_milliseconds());
-                    tracing::info!(domain, phase = %old, elapsed_ms, "Provider phase complete");
+                    let memory = memory::usage();
+                    tracing::info!(
+                        domain,
+                        phase = %old,
+                        elapsed_ms,
+                        rss_mib = memory.map(|m| m.rss_mib),
+                        peak_mib = memory.map(|m| m.peak_mib),
+                        "Provider phase complete"
+                    );
                     job.completed_phases.push(old);
                 }
                 job.phase = Some(phase);

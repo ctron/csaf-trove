@@ -11,7 +11,10 @@ use super::{
     git_processing::{advisory_path, path_url},
     scratch,
 };
-use crate::models::result::{DiffLineInfo, DiffTag};
+use crate::{
+    memory,
+    models::result::{DiffLineInfo, DiffTag},
+};
 use anyhow::{Context, Result, ensure};
 use git2::{
     BranchType, Delta, ErrorCode, Index, IndexEntry, IndexTime, Mempack, Odb, Oid, PackBuilder,
@@ -317,11 +320,14 @@ fn flush_mempack(
     packwriter.commit()?;
     odb.refresh()?;
     mempack.reset()?;
+    let memory = memory::usage();
     tracing::info!(
         repository = %repo.path().display(),
         objects = builder.object_count(),
         bytes,
         elapsed_ms = started.elapsed().as_millis(),
+        rss_mib = memory.map(|m| m.rss_mib),
+        peak_mib = memory.map(|m| m.peak_mib),
         "Persisted Git blob batch"
     );
     Ok(())

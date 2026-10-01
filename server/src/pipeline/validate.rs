@@ -10,7 +10,7 @@ use std::{
 
 use super::source::TroveFileSource;
 use crate::{
-    AppState,
+    AppState, memory,
     models::{
         result::{
             DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
@@ -109,6 +109,9 @@ struct DocumentResult {
     revision_history: Vec<RevisionEntry>,
 }
 
+/// Documents at least this large are logged with memory usage after validation.
+const LARGE_DOCUMENT_BYTES: usize = 10 * 1024 * 1024;
+
 fn build_validation_options(source: &Source) -> ValidationOptions {
     if source.accept_v3_signatures {
         ValidationOptions::new().validation_date(SystemTime::from(datetime!(2007-01-01 0:00 UTC)))
@@ -180,6 +183,7 @@ pub async fn validate_provider(
             let domain = domain_for_closure.clone();
             let worktree = worktree_for_closure.clone();
             async move {
+                let size = result.as_ref().map_or(0, |v| v.advisory.data.len());
                 let doc = match result {
                     Ok(verified) => {
                         let tracking_id = verified.csaf.document().tracking().id().to_string();
@@ -392,8 +396,20 @@ pub async fn validate_provider(
                     }
                 };
 
+                let large_url = (size >= LARGE_DOCUMENT_BYTES).then(|| doc.url.clone());
                 let validation = build_document_validation(doc);
                 state.storage.save_documents(&domain, &[validation]).await?;
+                if let Some(url) = large_url {
+                    let memory = memory::usage();
+                    tracing::info!(
+                        domain,
+                        url,
+                        size_mib = size / (1024 * 1024),
+                        rss_mib = memory.map(|m| m.rss_mib),
+                        peak_mib = memory.map(|m| m.peak_mib),
+                        "Validated large document"
+                    );
+                }
                 total_count.fetch_add(1, Ordering::Relaxed);
                 state.increment_job_validated(&domain).await;
 
