@@ -3,7 +3,7 @@
 * Check with `clippy` for all targets
 * Ensure everything is formatted with `cargo fmt`
 * Nest imports
-* Import types, functions, ...
+* Don't use fully qualified types, functions, ... import them. Unless that creates a clash, then try to limit the prefix (e.g. `my_entity::Entity`)
 * Document all functions, fields, variants, ... with a concise rustdoc snippet
 * Use `thiserror` for creating custom errors
 * Use `anyhow` for startup errors
