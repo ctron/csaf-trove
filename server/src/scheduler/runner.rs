@@ -33,6 +33,10 @@ use std::{
 use time::OffsetDateTime;
 use tokio::{runtime::Handle, spawn, task::spawn_blocking, time::sleep};
 
+mod validation_identity;
+
+use validation_identity::dependency_fingerprint;
+
 /// One coherent progress sample from blocking work.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct ProgressSample {
@@ -383,15 +387,17 @@ async fn run_revalidation(state: &Arc<AppState>, source: &Source) -> Result<()> 
 }
 
 /// Identifies local validation code, dependency versions and effective signature policy.
-fn validator_identity(source: &Source) -> String {
+fn validator_identity(source: &Source) -> Result<String> {
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
     hash.update(include_bytes!("../pipeline/validate.rs"));
     hash.update(include_bytes!("../pipeline/source.rs"));
-    hash.update(include_bytes!("../storage/documents.rs"));
-    hash.update(include_bytes!("../../../Cargo.lock"));
+    /// Bump when persisted results must be rebuilt after a format or storage change.
+    const RESULT_FORMAT_REVISION: u32 = 1;
+    hash.update(RESULT_FORMAT_REVISION.to_le_bytes());
+    hash.update(dependency_fingerprint(include_str!("../../../Cargo.lock"))?);
     hash.update([u8::from(source.accept_v3_signatures)]);
-    hex::encode(hash.finalize())
+    Ok(hex::encode(hash.finalize()))
 }
 
 /// Logs elapsed time and outcome even when a processing step returns an error.
@@ -440,7 +446,7 @@ async fn process_snapshot(
         state.storage.clear_processing_checkpoint(domain).await?;
     }
     let repo = state.storage.repo_path(domain);
-    let identity = validator_identity(source);
+    let identity = validator_identity(source)?;
     state.update_job_phase(domain, PipelinePhase::Prepare).await;
     let selection_repo = repo.clone();
     state
