@@ -1,22 +1,27 @@
 use std::{
-    collections::BTreeSet,
+    fs::{canonicalize, read},
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 
-use anyhow::{Context, anyhow, ensure};
+use anyhow::{Context, Error, Result, anyhow, ensure};
 use bytes::Bytes;
 use csaf_walker::{
-    discover::{DiscoveredAdvisory, DistributionContext},
+    discover::{DiscoveredAdvisory, DiscoveredContext, DiscoveredVisitor, DistributionContext},
     model::metadata::{self, Distribution, ProviderMetadata},
     retrieve::RetrievedAdvisory,
     source::Source,
 };
 use time::OffsetDateTime;
-use tokio::{fs, sync::mpsc, task::spawn_blocking};
+use tokio::{
+    fs,
+    sync::mpsc::{Receiver, channel},
+    task::spawn_blocking,
+};
 use url::Url;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, Error as WalkError, WalkDir};
 use walker_common::{
     retrieve::RetrievalMetadata,
     source::file::read_sig_and_digests,
@@ -32,28 +37,61 @@ use crate::storage::scratch;
 pub struct TroveFileSource {
     /// Absolute path to the worktree root.
     base: PathBuf,
-    /// Exact logical advisory paths for a selected validation pass.
-    selected: Option<Arc<BTreeSet<String>>>,
 }
 
 impl TroveFileSource {
     /// Creates a new source rooted at `base`.
-    pub fn new(base: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn new(base: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {
-            base: std::fs::canonicalize(base)?,
-            selected: None,
+            base: canonicalize(base)?,
         })
     }
 
-    /// Creates a source that discovers each selected advisory once, independent of overlapping feeds.
-    pub fn selected(base: impl AsRef<Path>, paths: BTreeSet<String>) -> anyhow::Result<Self> {
-        let mut source = Self::new(base)?;
-        source.selected = Some(Arc::new(paths));
-        Ok(source)
+    /// Visits the prepared directory through a bounded queue instead of building a full index.
+    pub async fn walk_prepared(&self, visitor: impl DiscoveredVisitor) -> Result<()> {
+        let metadata = self.load_metadata().await?;
+        let context = visitor
+            .visit_context(&DiscoveredContext {
+                metadata: &metadata,
+            })
+            .await
+            .map_err(|error| anyhow!("Validation context failed: {error}"))?;
+        let distribution = Arc::new(DistributionContext::Directory(
+            Url::from_directory_path(&self.base)
+                .map_err(|()| anyhow!("Invalid validation root"))?,
+        ));
+        let mut entries = self.walk_distribution(distribution.clone())?;
+        while let Some(entry) = entries.recv().await {
+            let entry = entry?;
+            if !entry.file_type().is_file() || !scratch::is_advisory(entry.path()) {
+                continue;
+            }
+            let path = scratch::logical_path(entry.path());
+            if path != entry.path() {
+                ensure!(
+                    !path.exists(),
+                    "Both plain and compressed scratch files exist: {}",
+                    path.display()
+                );
+            }
+            let advisory = DiscoveredAdvisory {
+                url: Url::from_file_path(&path)
+                    .map_err(|()| anyhow!("Invalid advisory path: {}", path.display()))?,
+                modified: SystemTime::UNIX_EPOCH,
+                digest: None,
+                signature: None,
+                context: distribution.clone(),
+            };
+            visitor
+                .visit_advisory(&context, advisory)
+                .await
+                .map_err(|error| anyhow!("Validation visitor failed: {error}"))?;
+        }
+        Ok(())
     }
 
     /// Scans `metadata/keys/` and returns key entries.
-    async fn scan_keys(&self) -> anyhow::Result<Vec<metadata::Key>> {
+    async fn scan_keys(&self) -> Result<Vec<metadata::Key>> {
         let dir = self.base.join(DIR_METADATA).join("keys");
         let mut result = Vec::new();
 
@@ -84,8 +122,8 @@ impl TroveFileSource {
     fn walk_distribution(
         &self,
         context: Arc<DistributionContext>,
-    ) -> anyhow::Result<mpsc::Receiver<walkdir::Result<walkdir::DirEntry>>> {
-        let (tx, rx) = mpsc::channel(8);
+    ) -> Result<Receiver<Result<DirEntry, WalkError>>> {
+        let (tx, rx) = channel(8);
 
         let path = context
             .url()
@@ -118,14 +156,14 @@ impl TroveFileSource {
 }
 
 impl walker_common::source::Source for TroveFileSource {
-    type Error = anyhow::Error;
+    type Error = Error;
     type Retrieved = RetrievedAdvisory;
 }
 
 impl Source for TroveFileSource {
     async fn load_metadata(&self) -> Result<ProviderMetadata, Self::Error> {
         let metadata_file = self.base.join(DIR_METADATA).join("provider-metadata.json");
-        let data = std::fs::read(&metadata_file)
+        let data = read(&metadata_file)
             .with_context(|| format!("Failed to read metadata: {}", metadata_file.display()))?;
 
         let mut metadata: ProviderMetadata =
@@ -149,23 +187,6 @@ impl Source for TroveFileSource {
         context: DistributionContext,
     ) -> Result<Vec<DiscoveredAdvisory>, Self::Error> {
         let context = Arc::new(context);
-        if let Some(selected) = &self.selected {
-            return selected
-                .iter()
-                .map(|relative| {
-                    let path = self.base.join(relative);
-                    let url = Url::from_file_path(&path)
-                        .map_err(|()| anyhow!("Invalid selected path"))?;
-                    Ok(DiscoveredAdvisory {
-                        url,
-                        modified: std::time::SystemTime::UNIX_EPOCH,
-                        digest: None,
-                        signature: None,
-                        context: context.clone(),
-                    })
-                })
-                .collect();
-        }
         let mut entries = self.walk_distribution(context.clone())?;
         let mut result = vec![];
 
@@ -243,7 +264,7 @@ impl Source for TroveFileSource {
 }
 
 impl KeySource for TroveFileSource {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     async fn load_public_key(
         &self,

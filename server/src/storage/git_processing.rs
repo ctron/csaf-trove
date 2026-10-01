@@ -1,12 +1,27 @@
 //! Selects and materializes validation inputs from committed provider snapshots.
 use super::{
-    git_changes::TreeDiffCache, git_repo::url_to_git_path, processing::ProcessingCheckpoint,
+    git_changes::TreeDiffCache,
+    git_repo::url_to_git_path,
+    path_set::{PATH_BATCH, PathSet},
+    processing::ProcessingCheckpoint,
     scratch,
 };
-use anyhow::{Context, Result};
-use git2::{Oid, Repository, TreeWalkMode, TreeWalkResult};
+use anyhow::{Context, Result, anyhow};
+use git2::{ErrorCode, ObjectType, Oid, Repository, Tree, TreeWalkMode, TreeWalkResult};
+use serde_json::{Value, from_slice, to_vec};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, path::Path, time::Instant};
+#[cfg(test)]
+use std::collections::BTreeSet;
+use std::{fs, mem::take, path::Path, time::Instant};
+use tokio::{
+    sync::mpsc::{Sender, channel},
+    task::spawn_blocking,
+};
+#[cfg(test)]
+use {
+    std::{future::Future, thread::scope},
+    tokio::runtime::Builder,
+};
 
 /// Documents and shared inputs required for a processing pass.
 #[derive(Debug)]
@@ -17,12 +32,12 @@ pub struct ProcessingSelection {
     pub full: bool,
     /// Whether history counts require a complete baseline.
     pub baseline: bool,
-    /// Advisory paths to validate, including sidecar changes.
-    pub advisories: BTreeSet<String>,
+    /// Incremental advisory paths; full passes stream the snapshot instead.
+    pub advisories: PathSet,
     /// Advisory paths whose content history changed.
-    pub history: BTreeSet<String>,
+    pub history: PathSet,
     /// Advisory URLs removed from the resulting snapshot.
-    pub deleted: Vec<String>,
+    pub deleted: PathSet,
 }
 
 /// Maps an advisory or integrity sidecar to its advisory path.
@@ -42,18 +57,40 @@ pub fn path_url(path: &str) -> String {
     format!("https://{path}")
 }
 
-/// Selects changes since the last successful processing pass, including reverted changes.
+/// Selects changes for a small synchronous test fixture.
+#[cfg(test)]
 pub fn select_processing(
     repo_path: &Path,
     previous: Option<&ProcessingCheckpoint>,
     validator_identity: &str,
     force_full: bool,
 ) -> Result<ProcessingSelection> {
+    test_block_on(|| {
+        select_processing_with_progress(
+            repo_path,
+            repo_path.parent().unwrap(),
+            previous,
+            validator_identity,
+            force_full,
+            |_, _, _| {},
+        )
+    })
+}
+
+/// Selects inputs while reporting visited history commits with an unknown total.
+pub async fn select_processing_with_progress(
+    repo_path: &Path,
+    selection_directory: &Path,
+    previous: Option<&ProcessingCheckpoint>,
+    validator_identity: &str,
+    force_full: bool,
+    progress: impl Fn(&'static str, u64, u64),
+) -> Result<ProcessingSelection> {
     let started = Instant::now();
     let mut commits_visited = 0u64;
-    let mut tree_diffs = TreeDiffCache::default();
+
     let mut head_id = None;
-    let result = (|| -> Result<ProcessingSelection> {
+    let result = async {
         let repo = Repository::open_bare(repo_path)?;
         let head = repo.head()?.peel_to_commit()?;
         head_id = Some(head.id().to_string());
@@ -63,9 +100,9 @@ pub fn select_processing(
         // Include only inputs affecting validation, not provider timestamps or notes.
         if let Ok(metadata) = tree.get_path(Path::new("metadata/provider-metadata.json")) {
             let blob = repo.find_blob(metadata.id())?;
-            let value: serde_json::Value = serde_json::from_slice(blob.content())?;
+            let value: Value = from_slice(blob.content())?;
             for key in ["distributions", "public_openpgp_keys"] {
-                hasher.update(serde_json::to_vec(&value[key])?);
+                hasher.update(to_vec(&value[key])?);
             }
         }
         if let Ok(keys) = tree.get_path(Path::new("metadata/keys")) {
@@ -74,52 +111,61 @@ pub fn select_processing(
         let fingerprint = hex::encode(hasher.finalize());
         let previous_oid = previous.and_then(|p| Oid::from_str(&p.commit_id).ok());
         let mut baseline = previous_oid.is_none();
-        let mut changes = BTreeSet::new();
-        // First-parent traversal deliberately rejects merges and rewritten history.
-        let mut current = head.clone();
-        while !baseline && Some(current.id()) != previous_oid {
-            commits_visited += 1;
-            if current.parent_count() != 1 {
-                baseline = true;
-                break;
+        let directory = selection_directory;
+        let mut changes = PathSet::new(directory).await?;
+        progress("Scanning Git history (commits)", 0, 0);
+        if !baseline {
+            let (tx, mut rx) = channel(2);
+            let path = repo_path.to_owned();
+            let head_oid = head.id();
+            let scan = spawn_blocking(move || scan_changes(&path, head_oid, previous_oid, tx));
+            while let Some((paths, visited)) = rx.recv().await {
+                changes.insert_batch(&paths).await?;
+                commits_visited = visited;
+                progress("Scanning Git history (commits)", commits_visited, 0);
             }
-            let parent = current.parent(0)?;
-            let parent_tree = parent.tree()?;
-            let current_tree = current.tree()?;
-            let diff = tree_diffs.diff(&repo, Some(&parent_tree), &current_tree)?;
-            for delta in diff.iter() {
-                for path in [&delta.old_path, &delta.new_path].into_iter().flatten() {
-                    changes.insert(path.clone());
-                }
-            }
-            current = parent;
+            baseline = scan.await??;
         }
         let full = baseline || force_full || previous.is_none_or(|p| p.fingerprint != fingerprint);
-        let mut advisories = BTreeSet::new();
-        let mut history = BTreeSet::new();
-        let mut deleted = Vec::new();
-        for path in &changes {
-            if let Some(advisory) = advisory_path(path) {
-                if path == &advisory {
-                    history.insert(advisory.clone());
-                }
-                if tree.get_path(Path::new(&advisory)).is_ok() {
-                    advisories.insert(advisory);
-                } else if path == &advisory {
-                    deleted.push(path_url(&advisory));
+        let mut advisories = PathSet::new(directory).await?;
+        let mut history = PathSet::new(directory).await?;
+        let mut deleted = PathSet::new(directory).await?;
+        let mut cursor = String::new();
+        let mut resolved = 0;
+        progress("Resolving changed files", 0, changes.len() as u64);
+        loop {
+            let paths = changes.batch(&cursor).await?;
+            if paths.is_empty() {
+                break;
+            }
+            let mut advisory_paths = Vec::new();
+            let mut history_paths = Vec::new();
+            let mut deleted_urls = Vec::new();
+            for path in &paths {
+                if let Some(advisory) = advisory_path(path) {
+                    if path == &advisory {
+                        history_paths.push(advisory.clone());
+                    }
+                    match tree.get_path(Path::new(&advisory)) {
+                        Ok(_) if !full => advisory_paths.push(advisory),
+                        Err(error) if error.code() == ErrorCode::NotFound => {
+                            if path == &advisory {
+                                deleted_urls.push(path_url(&advisory));
+                            }
+                        }
+                        Err(error) => return Err(error.into()),
+                        _ => {}
+                    }
                 }
             }
-        }
-        if full {
-            tree.walk(TreeWalkMode::PreOrder, |dir, entry| {
-                let path = format!("{dir}{}", entry.name().unwrap_or_default());
-                if entry.kind() == Some(git2::ObjectType::Blob)
-                    && advisory_path(&path).as_deref() == Some(&path)
-                {
-                    advisories.insert(path);
-                }
-                TreeWalkResult::Ok
-            })?;
+            advisories.insert_batch(&advisory_paths).await?;
+            history.insert_batch(&history_paths).await?;
+            deleted.insert_batch(&deleted_urls).await?;
+            resolved += paths.len() as u64;
+            progress("Resolving changed files", resolved, changes.len() as u64);
+            if let Some(last) = paths.last() {
+                cursor.clone_from(last);
+            }
         }
         let reason = if baseline {
             "missing checkpoint or incompatible history"
@@ -134,7 +180,7 @@ pub fn select_processing(
             reason,
             full,
             baseline,
-            selected = advisories.len(),
+            selected = ?(!full).then_some(advisories.len()),
             history = history.len(),
             "Selected provider processing inputs"
         );
@@ -150,14 +196,13 @@ pub fn select_processing(
             history,
             deleted,
         })
-    })();
+    }
+    .await;
     tracing::info!(
         repository = %repo_path.display(),
         checkpoint = previous.map(|checkpoint| checkpoint.commit_id.as_str()),
         head = head_id.as_deref(),
         commits_visited,
-        diffs_attempted = tree_diffs.diffs_attempted,
-        diff_cache_hits = tree_diffs.cache_hits,
         elapsed_ms = started.elapsed().as_millis(),
         success = result.is_ok(),
         "Processing selection finished"
@@ -165,18 +210,82 @@ pub fn select_processing(
     result
 }
 
+/// Streams changed paths through a bounded channel, preserving changes reverted in later commits.
+fn scan_changes(
+    path: &Path,
+    head: Oid,
+    previous: Option<Oid>,
+    tx: Sender<(Vec<String>, u64)>,
+) -> Result<bool> {
+    let repo = Repository::open_bare(path)?;
+    let mut current = repo.find_commit(head)?;
+    let mut cache = TreeDiffCache::default();
+    let mut visited = 0;
+    while Some(current.id()) != previous {
+        visited += 1;
+        if current.parent_count() != 1 {
+            return Ok(true);
+        }
+        let parent = current.parent(0)?;
+        let mut paths = Vec::with_capacity(PATH_BATCH);
+        cache.visit(&repo, Some(&parent.tree()?), &current.tree()?, |delta| {
+            for path in [&delta.old_path, &delta.new_path].into_iter().flatten() {
+                paths.push(path.clone());
+                if paths.len() == PATH_BATCH {
+                    tx.blocking_send((take(&mut paths), visited))
+                        .map_err(|_| anyhow!("Selection stopped"))?;
+                }
+            }
+            Ok(())
+        })?;
+        tx.blocking_send((paths, visited))
+            .map_err(|_| anyhow!("Selection stopped"))?;
+        current = parent;
+    }
+    tracing::info!(
+        commits_visited = visited,
+        diffs_attempted = cache.diffs_attempted,
+        diff_cache_hits = cache.cache_hits,
+        "Processing history scanned"
+    );
+    Ok(false)
+}
+
+/// Runs blocking Git test helpers with an independent async runtime, including inside async tests.
+#[cfg(test)]
+pub(super) fn test_block_on<F: Future>(future: impl FnOnce() -> F + Send) -> F::Output
+where
+    F::Output: Send,
+{
+    scope(|scope| {
+        scope
+            .spawn(move || {
+                Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(future())
+            })
+            .join()
+            .unwrap()
+    })
+}
+
 /// Adds successfully redownloaded advisories with persisted retrieval failures.
-pub fn include_recovered_downloads(
+pub async fn include_recovered_downloads(
     selection: &mut ProcessingSelection,
     urls: &[String],
     download_dir: &Path,
 ) -> Result<()> {
+    if selection.full {
+        return Ok(());
+    }
     for url in urls {
         if let Some(path) = url_to_git_path(url)?
             && (download_dir.join(&path).exists()
                 || scratch::compressed_path(&download_dir.join(&path)).exists())
         {
-            selection.advisories.insert(path);
+            selection.advisories.insert(path).await?;
         }
     }
     Ok(())
@@ -189,54 +298,97 @@ pub fn materialize_processing(
     selection: &ProcessingSelection,
     output: &Path,
 ) -> Result<()> {
-    materialize_processing_with_progress(repo_path, selection, output, |_, _| {})
+    test_block_on(|| materialize_processing_with_progress(repo_path, selection, output, |_, _| {}))
+        .map(|_| ())
 }
 
 /// Like [`materialize_processing`], but calls `progress(current, total)` per extracted file.
-pub fn materialize_processing_with_progress(
+pub async fn materialize_processing_with_progress(
     repo_path: &Path,
     selection: &ProcessingSelection,
     output: &Path,
     progress: impl Fn(u64, u64),
-) -> Result<()> {
-    std::fs::create_dir_all(output)?;
+) -> Result<u64> {
+    fs::create_dir_all(output)?;
     let repo = Repository::open_bare(repo_path)?;
     let tree = repo
         .find_commit(Oid::from_str(&selection.checkpoint.commit_id)?)?
         .tree()?;
-    let mut paths = BTreeSet::new();
-    if let Ok(entry) = tree.get_path(Path::new("metadata")) {
-        let metadata = repo.find_tree(entry.id())?;
-        metadata.walk(TreeWalkMode::PreOrder, |dir, entry| {
-            if entry.kind() == Some(git2::ObjectType::Blob) {
-                paths.insert(format!(
-                    "metadata/{dir}{}",
-                    entry.name().unwrap_or_default()
-                ));
+    let mut files = 0u64;
+    let mut documents = 0u64;
+    let mut write = |path: &str, oid| -> Result<()> {
+        let blob = repo.find_blob(oid)?;
+        scratch::write(output, Path::new(path), blob.content())?;
+        files += 1;
+        if advisory_path(path).as_deref() == Some(path) {
+            documents += 1;
+        }
+        progress(files, 0);
+        Ok(())
+    };
+    if selection.full {
+        visit_blobs(&tree, |path, oid| {
+            if path.starts_with("metadata/") || advisory_path(path).is_some() {
+                write(path, oid)?;
             }
-            TreeWalkResult::Ok
+            Ok(())
         })?;
-    }
-    for advisory in &selection.advisories {
-        paths.insert(advisory.clone());
-        for suffix in [".asc", ".sha256", ".sha512"] {
-            let path = format!("{advisory}{suffix}");
-            if tree.get_path(Path::new(&path)).is_ok() {
-                paths.insert(path);
+    } else {
+        if let Ok(entry) = tree.get_path(Path::new("metadata")) {
+            let metadata = repo.find_tree(entry.id())?;
+            visit_blobs(&metadata, |path, oid| {
+                write(&format!("metadata/{path}"), oid)
+            })?;
+        }
+        let mut cursor = String::new();
+        loop {
+            let paths = selection.advisories.batch(&cursor).await?;
+            if paths.is_empty() {
+                break;
+            }
+            for advisory in &paths {
+                let entry = tree
+                    .get_path(Path::new(advisory))
+                    .with_context(|| format!("Missing selected input {advisory}"))?;
+                write(advisory, entry.id())?;
+                for suffix in [".asc", ".sha256", ".sha512"] {
+                    let path = format!("{advisory}{suffix}");
+                    match tree.get_path(Path::new(&path)) {
+                        Ok(entry) => write(&path, entry.id())?,
+                        Err(error) if error.code() == ErrorCode::NotFound => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            }
+            if let Some(last) = paths.last() {
+                cursor.clone_from(last);
             }
         }
     }
-    let total = paths.len() as u64;
-    let mut current = 0u64;
-    for path in paths {
-        let entry = tree
-            .get_path(Path::new(&path))
-            .with_context(|| format!("Missing selected input {path}"))?;
-        let blob = repo.find_blob(entry.id())?;
-        scratch::write(output, Path::new(&path), blob.content())?;
-        current += 1;
-        progress(current, total);
+    progress(files, files);
+    Ok(documents)
+}
+
+/// Visits blob identities without retaining paths or hiding callback failures.
+fn visit_blobs(tree: &Tree<'_>, mut visitor: impl FnMut(&str, Oid) -> Result<()>) -> Result<()> {
+    let mut failure = None;
+    let walked = tree.walk(TreeWalkMode::PreOrder, |dir, entry| {
+        if entry.kind() == Some(ObjectType::Blob) {
+            let result = (|| {
+                let name = entry.name().context("Non-UTF-8 Git input path")?;
+                visitor(&format!("{dir}{name}"), entry.id())
+            })();
+            if let Err(error) = result {
+                failure = Some(error);
+                return TreeWalkResult::Abort;
+            }
+        }
+        TreeWalkResult::Ok
+    });
+    if let Some(error) = failure {
+        return Err(error);
     }
+    walked?;
     Ok(())
 }
 
@@ -249,7 +401,7 @@ mod tests {
     };
     use git2::{Index, Signature};
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    use std::fs;
+    use std::{fs, sync::Mutex};
 
     /// Publishes exact downloaded bytes without checking out unchanged advisories.
     fn commit(repo: &Path, work: &Path, files: &[(&str, &[u8])]) {
@@ -258,6 +410,62 @@ mod tests {
             scratch::write(work, Path::new(path), data).unwrap();
         }
         commit_snapshot(&prepared, "test").unwrap();
+    }
+
+    /// Full processing streams files and counts documents without populating the path selection.
+    #[test]
+    fn full_materialization_streams_progress_and_preserves_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo.git");
+        commit(
+            &repo,
+            &dir.path().join("work"),
+            &[
+                ("example.com/a.json", b"first"),
+                ("example.com/a.json.asc", b"signature"),
+                ("example.com/b.json", b"second"),
+                ("metadata/provider-metadata.json", b"{}"),
+            ],
+        );
+        let selected = select_processing(&repo, None, "v1", false).unwrap();
+        assert!(selected.full);
+        assert!(selected.advisories.is_empty());
+        let output = dir.path().join("validation");
+        let events = Mutex::new(Vec::new());
+        let count = test_block_on(|| {
+            materialize_processing_with_progress(&repo, &selected, &output, |current, total| {
+                events.lock().unwrap().push((current, total));
+            })
+        })
+        .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(
+            scratch::read(&output.join("example.com/a.json.zst")).unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            fs::read(output.join("example.com/a.json.asc")).unwrap(),
+            b"signature"
+        );
+        let events = events.into_inner().unwrap();
+        assert_eq!(events, [(1, 0), (2, 0), (3, 0), (4, 0), (4, 4)]);
+    }
+
+    /// A failed extraction returns its original filesystem error instead of silently succeeding.
+    #[test]
+    fn materialization_propagates_write_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo.git");
+        commit(
+            &repo,
+            &dir.path().join("work"),
+            &[("example.com/a.json", b"first")],
+        );
+        let selected = select_processing(&repo, None, "v1", false).unwrap();
+        let output = dir.path().join("validation");
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("example.com"), b"blocks directory creation").unwrap();
+        assert!(materialize_processing(&repo, &selected, &output).is_err());
     }
 
     /// Unchanged downloads and timestamp-only metadata changes select no advisories.
@@ -279,7 +487,7 @@ mod tests {
         );
         let initial = select_processing(&repo, None, "v1", false).unwrap();
         assert!(initial.baseline);
-        assert_eq!(initial.advisories.len(), 1);
+        assert!(initial.full);
         commit(&repo, &work, &[("example.com/a.json", b"first")]);
         let unchanged = select_processing(&repo, Some(&initial.checkpoint), "v1", false).unwrap();
         assert!(!unchanged.full);
@@ -318,10 +526,10 @@ mod tests {
         commit(&repo, &work, &[("example.com/a.json", b"first")]);
         let selected = select_processing(&repo, Some(&initial.checkpoint), "v1", false).unwrap();
         assert_eq!(
-            selected.advisories,
+            selected.advisories.values(),
             BTreeSet::from(["example.com/a.json".into()])
         );
-        assert_eq!(selected.history, selected.advisories);
+        assert_eq!(selected.history.values(), selected.advisories.values());
         let mut since_checkpoint = 0;
         collect_versions(&repo, Some(&initial.checkpoint.commit_id), |commit| {
             since_checkpoint += commit.documents.len();
@@ -431,9 +639,12 @@ mod tests {
         .unwrap();
         let selected =
             select_processing(&repo_path, Some(&initial.checkpoint), "v1", false).unwrap();
-        assert_eq!(selected.deleted, ["https://example.com/a.json"]);
         assert_eq!(
-            selected.advisories,
+            selected.deleted.values(),
+            BTreeSet::from(["https://example.com/a.json".to_owned()])
+        );
+        assert_eq!(
+            selected.advisories.values(),
             BTreeSet::from(["example.com/renamed.json".into()])
         );
     }
@@ -574,8 +785,8 @@ mod tests {
                     } else {
                         BTreeSet::new()
                     };
-                    assert_eq!(selection.advisories, expected);
-                    assert_eq!(selection.history, expected);
+                    assert_eq!(selection.advisories.values(), expected);
+                    assert_eq!(selection.history.values(), expected);
                     let started = Instant::now();
                     // Time recording independently, even when selection would skip this phase.
                     storage

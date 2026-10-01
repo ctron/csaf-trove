@@ -3,9 +3,16 @@ use crate::{
     pipeline::store::TroveStoreVisitor,
     storage::git_repo::{commit_all, prepare_worktree, read_head_blob},
 };
+use anyhow::Error;
 use csaf_walker::retrieve::RetrievedVisitor;
+use parking_lot::Mutex;
 use sha2::{Digest, Sha256, Sha512};
-use std::{fs, time::SystemTime};
+use std::{
+    collections::BTreeSet,
+    fs,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::SystemTime,
+};
 use tempfile::tempdir;
 use walker_common::retrieve::RetrievedDigest;
 
@@ -205,13 +212,37 @@ async fn local_discovery_does_not_infer_feed_directories() {
     let source = TroveFileSource::new(dir.path()).unwrap();
     let metadata = source.load_metadata().await.unwrap();
     assert_eq!(metadata.distributions.len(), 1);
-    let context =
-        DistributionContext::Directory(metadata.distributions[0].directory_url.clone().unwrap());
-    let discovered = source.load_index(context).await.unwrap();
-    let actual: BTreeSet<_> = discovered
-        .iter()
-        .map(|a| a.url.to_file_path().unwrap())
-        .collect();
-    let base = std::fs::canonicalize(dir.path()).unwrap();
-    assert_eq!(actual, paths.map(|p| base.join(p)).into_iter().collect());
+    let actual = Mutex::new(BTreeSet::new());
+    source
+        .walk_prepared(|advisory: DiscoveredAdvisory| {
+            actual.lock().insert(advisory.url.to_file_path().unwrap());
+            async { Ok::<_, Error>(()) }
+        })
+        .await
+        .unwrap();
+    let base = fs::canonicalize(dir.path()).unwrap();
+    assert_eq!(
+        actual.into_inner(),
+        paths.map(|p| base.join(p)).into_iter().collect()
+    );
+
+    // More files than the queue can hold exercise cancellation with a blocked producer.
+    for index in 0..32 {
+        scratch::write(
+            dir.path(),
+            Path::new(&format!("example.com/{index}.json")),
+            b"{}",
+        )
+        .unwrap();
+    }
+    let visited = AtomicUsize::new(0);
+    let error = source
+        .walk_prepared(|_: DiscoveredAdvisory| {
+            visited.fetch_add(1, Ordering::Relaxed);
+            async { Err::<(), _>(anyhow!("injected visitor failure")) }
+        })
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("injected visitor failure"));
+    assert_eq!(visited.load(Ordering::Relaxed), 1);
 }

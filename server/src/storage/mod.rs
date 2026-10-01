@@ -5,6 +5,7 @@ mod git_changes;
 pub mod git_processing;
 pub mod git_repo;
 mod membership;
+mod path_set;
 pub mod processing;
 pub mod results;
 pub mod scratch;

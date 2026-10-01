@@ -154,12 +154,18 @@ pub struct JobStatus {
     pub phase_current: u64,
     #[serde(default)]
     pub phase_total: u64,
+    /// Human-readable work currently performed within the phase.
+    #[serde(default)]
+    pub phase_detail: Option<String>,
     pub error: Option<String>,
     /// Pipeline phases that have already completed.
     #[serde(default)]
     pub completed_phases: Vec<PipelinePhase>,
     /// Elapsed seconds (running) or total seconds (completed/failed).
     pub duration_seconds: Option<f64>,
+    /// Elapsed time in the current phase.
+    #[serde(default)]
+    pub phase_elapsed_seconds: Option<f64>,
     /// Pre-formatted ETA string (e.g. "~5m 30s"), only while running.
     #[serde(default)]
     pub eta: Option<String>,

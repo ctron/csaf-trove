@@ -244,12 +244,36 @@ impl AppState {
             job.documents_total = 0;
             job.phase_current = 0;
             job.phase_total = 0;
+            job.phase_detail = None;
             job.distributions_total = 0;
             job.distribution_index = 0;
             job.distribution_documents_current = 0;
             job.distribution_documents_total = 0;
         }
         drop(jobs);
+        self.job_notify.send(()).ok();
+    }
+
+    /// Publishes the current preparation step and clears counters from the previous step.
+    pub async fn set_phase_detail(&self, domain: &str, detail: &str) {
+        self.set_phase_work(domain, Some(detail), 0, 0).await;
+    }
+
+    /// Updates a substage and its counters atomically, preserving the label when omitted.
+    pub async fn set_phase_work(
+        &self,
+        domain: &str,
+        detail: Option<&str>,
+        current: u64,
+        total: u64,
+    ) {
+        if let Some(job) = self.jobs.write().await.get_mut(domain) {
+            if let Some(detail) = detail {
+                job.phase_detail = Some(detail.to_owned());
+            }
+            job.phase_current = current;
+            job.phase_total = total;
+        }
         self.job_notify.send(()).ok();
     }
 
@@ -491,6 +515,7 @@ async fn main() -> Result<()> {
                     distribution_documents_total: 0,
                     phase_current: 0,
                     phase_total: 0,
+                    phase_detail: None,
                     error: None,
                     completed_phases: vec![],
                     last_completed_at: Some(last_sync),

@@ -55,32 +55,68 @@ impl TreeDiffCache {
         old: Option<&Tree<'_>>,
         new: &Tree<'_>,
     ) -> Result<Arc<[TreeDelta]>> {
-        let key = (old.map(Tree::id), new.id());
-        if let Some(position) = self
-            .entries
-            .iter()
-            .position(|cached| (cached.old, cached.new) == key)
-            && let Some(entry) = self.entries.remove(position)
-        {
-            let deltas = Arc::clone(&entry.deltas);
-            self.entries.push_back(entry);
-            self.cache_hits += 1;
+        if let Some(deltas) = self.cached(old.map(Tree::id), new.id()) {
             return Ok(deltas);
         }
         let mut deltas = Vec::new();
-        self.compare(repo, old, Some(new), "", &mut deltas)?;
-        let deltas: Arc<[TreeDelta]> = deltas.into();
-        if deltas.len() <= CACHE_MAX_DELTAS {
+        self.visit(repo, old, new, |delta| {
+            deltas.push(delta.clone());
+            Ok(())
+        })?;
+        Ok(deltas.into())
+    }
+
+    /// Streams deltas while retaining only small comparisons in the bounded cache.
+    pub fn visit(
+        &mut self,
+        repo: &Repository,
+        old: Option<&Tree<'_>>,
+        new: &Tree<'_>,
+        mut visitor: impl FnMut(&TreeDelta) -> Result<()>,
+    ) -> Result<()> {
+        let key = (old.map(Tree::id), new.id());
+        if let Some(deltas) = self.cached(key.0, key.1) {
+            for delta in deltas.iter() {
+                visitor(delta)?;
+            }
+            return Ok(());
+        }
+        let mut retained = Some(Vec::new());
+        self.compare(repo, old, Some(new), "", &mut |delta| {
+            visitor(&delta)?;
+            if let Some(items) = &mut retained {
+                if items.len() < CACHE_MAX_DELTAS {
+                    items.push(delta);
+                } else {
+                    retained = None;
+                }
+            }
+            Ok(())
+        })?;
+        if let Some(deltas) = retained {
             if self.entries.len() == CACHE_ENTRIES {
                 self.entries.pop_front();
             }
             self.entries.push_back(CachedTreeDiff {
                 old: key.0,
                 new: key.1,
-                deltas: Arc::clone(&deltas),
+                deltas: deltas.into(),
             });
         }
-        Ok(deltas)
+        Ok(())
+    }
+
+    /// Reuses a small comparison without cloning its paths.
+    fn cached(&mut self, old: Option<Oid>, new: Oid) -> Option<Arc<[TreeDelta]>> {
+        let position = self
+            .entries
+            .iter()
+            .position(|entry| (entry.old, entry.new) == (old, new))?;
+        let entry = self.entries.remove(position)?;
+        let deltas = Arc::clone(&entry.deltas);
+        self.entries.push_back(entry);
+        self.cache_hits += 1;
+        Some(deltas)
     }
 
     /// Descends through changed directories and delegates file-level semantics to libgit2.
@@ -90,7 +126,7 @@ impl TreeDiffCache {
         old: Option<&Tree<'_>>,
         new: Option<&Tree<'_>>,
         prefix: &str,
-        deltas: &mut Vec<TreeDelta>,
+        deltas: &mut impl FnMut(TreeDelta) -> Result<()>,
     ) -> Result<()> {
         if old.map(Tree::id) == new.map(Tree::id) {
             return Ok(());
@@ -152,7 +188,7 @@ impl TreeDiffCache {
         old: Option<&Tree<'_>>,
         new: Option<&Tree<'_>>,
         prefix: &str,
-        deltas: &mut Vec<TreeDelta>,
+        deltas: &mut impl FnMut(TreeDelta) -> Result<()>,
     ) -> Result<()> {
         self.diffs_attempted += 1;
         let diff = repo.diff_tree_to_tree(old, new, None)?;
@@ -161,12 +197,12 @@ impl TreeDiffCache {
                 path.and_then(Path::to_str)
                     .map(|path| format!("{prefix}{path}"))
             };
-            deltas.push(TreeDelta {
+            deltas(TreeDelta {
                 status: delta.status(),
                 old_path: path(delta.old_file().path()),
                 new_path: path(delta.new_file().path()),
                 new_id: delta.new_file().id(),
-            });
+            })?;
         }
         Ok(())
     }
@@ -268,7 +304,10 @@ mod tests {
                 let mut expected = Vec::new();
                 // Bypass pruning and caching for the reference full-root comparison.
                 TreeDiffCache::default()
-                    .native_diff(&repo, old.as_ref(), Some(&new), "", &mut expected)
+                    .native_diff(&repo, old.as_ref(), Some(&new), "", &mut |delta| {
+                        expected.push(delta);
+                        Ok(())
+                    })
                     .unwrap();
                 expected.sort_by_cached_key(|delta| format!("{delta:?}"));
                 for _ in 0..2 {

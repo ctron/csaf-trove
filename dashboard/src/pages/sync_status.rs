@@ -69,6 +69,12 @@ fn format_progress(job: &JobStatus) -> String {
         )
     } else if job.phase_total > 0 {
         format!("{} / {}", job.phase_current, job.phase_total)
+    } else if job.phase == Some(PipelinePhase::Prepare) {
+        if job.phase_current > 0 {
+            format!("{} processed", job.phase_current)
+        } else {
+            "Working…".to_string()
+        }
     } else if job.documents_total > 0 {
         format!("{current} / {}", job.documents_total)
     } else if current > 0 {
@@ -85,7 +91,21 @@ fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
         .map(|p| p.as_ref().to_string())
         .unwrap_or_else(|| "-".to_string());
 
-    view! { <span class="whitespace-nowrap">{label}</span> }.into_any()
+    let detail = job.phase_detail.as_ref().map(|detail| {
+        if let Some(elapsed) = job.phase_elapsed_seconds {
+            format!(
+                "{detail} · {} elapsed in Prepare",
+                format_duration(Some(elapsed))
+            )
+        } else {
+            detail.clone()
+        }
+    });
+    view! {
+        <span class="whitespace-nowrap">{label}</span>
+        {detail.map(|detail| view! { <div class="text-xs text-gray-500">{detail}</div> })}
+    }
+    .into_any()
 }
 
 /// Builds the WebSocket URL from the current page origin.

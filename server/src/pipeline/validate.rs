@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -36,7 +36,6 @@ use csaf_walker::{
         Csaf, VerificationError, VerifiedAdvisory, VerifyingVisitor,
         check::{Check, CsafValidation},
     },
-    walker::Walker,
 };
 use time::macros::datetime;
 
@@ -137,16 +136,15 @@ pub async fn validate_provider(
     state: &Arc<AppState>,
     source: &Source,
     worktree_dir: &Path,
-    selected: BTreeSet<String>,
+    expected_count: u64,
 ) -> Result<u64> {
     let domain = &source.domain;
     tracing::info!("Validating documents for {domain}");
 
-    let expected_count = selected.len() as u64;
     if let Some(job) = state.jobs.write().await.get_mut(domain) {
         job.documents_total = expected_count;
     }
-    let file_source = TroveFileSource::selected(worktree_dir, selected)?;
+    let file_source = TroveFileSource::new(worktree_dir)?;
     let canonical_worktree = Arc::new(
         std::fs::canonicalize(worktree_dir).unwrap_or_else(|_| worktree_dir.to_path_buf()),
     );
@@ -406,8 +404,8 @@ pub async fn validate_provider(
     );
 
     let retriever = RetrievingVisitor::new(file_source.clone(), verifier);
-    Walker::new(file_source)
-        .walk(retriever)
+    file_source
+        .walk_prepared(retriever)
         .await
         .map_err(|e| anyhow::anyhow!("Validation walker failed for {domain}: {e}"))?;
 

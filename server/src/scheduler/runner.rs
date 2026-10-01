@@ -5,94 +5,114 @@ use crate::{
         state::{JobPhase, JobStatus},
     },
     pipeline::{
-        report::generate_report, store::DIR_METADATA, sync::sync_provider,
+        report::generate_report,
+        store::DIR_METADATA,
+        sync::{RetrievalFailure, sync_provider},
         validate::validate_provider,
     },
     storage::{
         ProviderInfo,
         git_processing::{
-            include_recovered_downloads, materialize_processing_with_progress, select_processing,
+            include_recovered_downloads, materialize_processing_with_progress,
+            select_processing_with_progress,
         },
         git_repo,
     },
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use csaf_trove_common::PipelinePhase;
 use csaf_walker::model::metadata::{ProviderMetadata, Role};
+use parking_lot::Mutex;
 use std::{
+    fs,
     future::Future,
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering::Relaxed},
-    },
-    time::Instant,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use time::OffsetDateTime;
+use tokio::{runtime::Handle, spawn, task::spawn_blocking, time::sleep};
 
-/// Bridges progress from a `spawn_blocking` closure to async job status updates.
-///
-/// The blocking side calls the callback returned by [`Self::callback`] (atomic stores,
-/// zero overhead). A background task polls every 250ms and calls [`AppState::set_phase_progress`]
-/// only when progress has changed, capping WebSocket updates at ~4/sec per provider.
+/// One coherent progress sample from blocking work.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct ProgressSample {
+    /// Optional preparation substage and unit description.
+    detail: Option<&'static str>,
+    /// Work completed in this substage.
+    current: u64,
+    /// Expected work, or zero when unknown.
+    total: u64,
+}
+
+/// Bridges blocking work to async status updates at most four times per second.
 struct BlockingProgress {
-    current: Arc<AtomicU64>,
-    total: Arc<AtomicU64>,
+    /// Latest substage and counters, updated together.
+    sample: Arc<Mutex<ProgressSample>>,
 }
 
 impl BlockingProgress {
+    /// Creates an empty progress bridge.
     fn new() -> Self {
         Self {
-            current: Arc::new(AtomicU64::new(0)),
-            total: Arc::new(AtomicU64::new(0)),
+            sample: Arc::new(Mutex::new(ProgressSample::default())),
         }
     }
 
-    /// Returns a `Send + Sync` closure for use inside `spawn_blocking`.
+    /// Returns a callback for work whose substage has already been published.
     fn callback(&self) -> impl Fn(u64, u64) + Send + Sync + 'static {
-        let current = self.current.clone();
-        let total = self.total.clone();
-        move |c, t| {
-            current.store(c, Relaxed);
-            total.store(t, Relaxed);
+        let sample = self.sample.clone();
+        move |current, total| {
+            *sample.lock() = ProgressSample {
+                detail: None,
+                current,
+                total,
+            };
         }
     }
 
-    /// Awaits a future while polling progress atomics every 250ms.
-    ///
-    /// Sends a final progress update after the future completes to ensure 100% is shown.
-    async fn run<F, T>(&self, state: &Arc<AppState>, domain: &str, future: F) -> T
-    where
-        F: std::future::Future<Output = T>,
-    {
-        let poll_handle = tokio::spawn({
+    /// Returns a callback that publishes substage changes with consistent counters.
+    fn stage_callback(&self) -> impl Fn(&'static str, u64, u64) + Send + Sync + 'static {
+        let sample = self.sample.clone();
+        move |detail, current, total| {
+            *sample.lock() = ProgressSample {
+                detail: Some(detail),
+                current,
+                total,
+            };
+        }
+    }
+
+    /// Polls blocking progress, then publishes the final sample even for unknown totals.
+    async fn run<F: Future<Output = T>, T>(
+        &self,
+        state: &Arc<AppState>,
+        domain: &str,
+        future: F,
+    ) -> T {
+        let poll_handle = spawn({
             let state = state.clone();
             let domain = domain.to_string();
-            let current = self.current.clone();
-            let total = self.total.clone();
+            let sample = self.sample.clone();
             async move {
-                let mut last = 0u64;
+                let mut last = ProgressSample::default();
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                    let c = current.load(Relaxed);
-                    let t = total.load(Relaxed);
-                    if t > 0 && c != last {
-                        state.set_phase_progress(&domain, c, t).await;
-                        last = c;
+                    sleep(Duration::from_millis(250)).await;
+                    let next = *sample.lock();
+                    if next != last {
+                        state
+                            .set_phase_work(&domain, next.detail, next.current, next.total)
+                            .await;
+                        last = next;
                     }
                 }
             }
         });
-
         let result = future.await;
         poll_handle.abort();
-
-        let c = self.current.load(Relaxed);
-        let t = self.total.load(Relaxed);
-        if t > 0 {
-            state.set_phase_progress(domain, c, t).await;
-        }
-
+        let sample = *self.sample.lock();
+        state
+            .set_phase_work(domain, sample.detail, sample.current, sample.total)
+            .await;
         result
     }
 }
@@ -152,6 +172,7 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
         distribution_documents_total: 0,
         phase_current: 0,
         phase_total: 0,
+        phase_detail: None,
         error: None,
         completed_phases: vec![],
         last_completed_at: last_completed,
@@ -180,12 +201,14 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 distribution_documents_total: 0,
                 phase_current: 0,
                 phase_total: 0,
+                phase_detail: None,
                 error: None,
                 completed_phases: vec![],
                 last_completed_at: None,
                 phase_started_at: None,
             });
             job.status = JobPhase::Completed;
+            job.phase_detail = None;
             job.completed_at = Some(OffsetDateTime::now_utc());
             if let Some(last) = job.phase.take() {
                 job.completed_phases.push(last);
@@ -209,6 +232,7 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 distribution_documents_total: 0,
                 phase_current: 0,
                 phase_total: 0,
+                phase_detail: None,
                 error: None,
                 completed_phases: vec![],
                 last_completed_at: None,
@@ -271,8 +295,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
         let prepared = {
             let repo = repo_path.clone();
             let worktree = worktree_dir.clone();
-            tokio::task::spawn_blocking(move || git_repo::prepare_worktree(&repo, &worktree))
-                .await??
+            spawn_blocking(move || git_repo::prepare_worktree(&repo, &worktree)).await??
         };
 
         state
@@ -303,7 +326,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
             let cb = progress.callback();
             progress
                 .run(state, domain, async {
-                    tokio::task::spawn_blocking(move || {
+                    spawn_blocking(move || {
                         git_repo::commit_snapshot_with_progress(&prepared, &msg, pack_threshold, cb)
                     })
                     .await?
@@ -402,9 +425,9 @@ async fn process_snapshot(
     source: &Source,
     download_dir: &Path,
     force_full: bool,
-    retrieval_errors: &[crate::pipeline::sync::RetrievalFailure],
+    retrieval_errors: &[RetrievalFailure],
 ) -> Result<()> {
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let domain = &source.domain;
     let previous = state.storage.processing_checkpoint(domain).await?;
     let summary_dirty = previous
@@ -420,57 +443,134 @@ async fn process_snapshot(
     let identity = validator_identity(source);
     state.update_job_phase(domain, PipelinePhase::Prepare).await;
     let selection_repo = repo.clone();
-    let mut selection = timed_processing_step(domain, "selection", async {
-        tokio::task::spawn_blocking(move || {
-            select_processing(&selection_repo, previous.as_ref(), &identity, force_full)
+    state
+        .set_phase_detail(domain, "Removing previous selection")
+        .await;
+    let selection_directory = download_dir.join(".selection");
+    let directory = selection_directory.clone();
+    spawn_blocking(move || {
+        if directory.exists() {
+            fs::remove_dir_all(&directory)?;
+        }
+        fs::create_dir_all(&directory)
+    })
+    .await??;
+    state
+        .set_phase_detail(domain, "Selecting changed inputs")
+        .await;
+    let progress = BlockingProgress::new();
+    let cb = progress.stage_callback();
+    let runtime = Handle::current();
+    let mut selection = timed_processing_step(
+        domain,
+        "selection",
+        progress.run(state, domain, async {
+            spawn_blocking(move || {
+                runtime.block_on(select_processing_with_progress(
+                    &selection_repo,
+                    &selection_directory,
+                    previous.as_ref(),
+                    &identity,
+                    force_full,
+                    cb,
+                ))
+            })
+            .await?
+        }),
+    )
+    .await?;
+    state
+        .set_phase_detail(domain, "Checking recovered downloads")
+        .await;
+    if !selection.full {
+        let mut cursor = String::new();
+        let mut checked = 0;
+        loop {
+            let failed_urls = state.storage.retrieval_error_urls(domain, &cursor).await?;
+            if failed_urls.is_empty() {
+                break;
+            }
+            include_recovered_downloads(&mut selection, &failed_urls, download_dir).await?;
+            checked += failed_urls.len() as u64;
+            state.set_phase_progress(domain, checked, 0).await;
+            if let Some(last) = failed_urls.last() {
+                cursor.clone_from(last);
+            }
+        }
+    }
+    let validation_dir = download_dir.join("validation");
+    let work = validation_dir.clone();
+    state
+        .set_phase_detail(domain, "Removing previous validation files")
+        .await;
+    timed_processing_step(domain, "cleanup", async {
+        spawn_blocking(move || {
+            if work.exists() {
+                fs::remove_dir_all(&work)?;
+            }
+            Ok::<_, Error>(())
         })
         .await?
     })
     .await?;
-    let failed_urls = state.storage.retrieval_error_urls(domain).await?;
-    include_recovered_downloads(&mut selection, &failed_urls, download_dir)?;
-    let validation_dir = download_dir.join("validation");
+    state
+        .set_phase_detail(domain, "Extracting validation files")
+        .await;
     let work = validation_dir.clone();
     let progress = BlockingProgress::new();
     let cb = progress.callback();
-    let selection = timed_processing_step(domain, "materialization", async {
-        progress
-            .run(state, domain, async {
-                tokio::task::spawn_blocking(move || {
-                    if work.exists() {
-                        std::fs::remove_dir_all(&work)?;
-                    }
-                    if !selection.advisories.is_empty() {
-                        materialize_processing_with_progress(&repo, &selection, &work, cb)?;
-                    }
-                    Ok::<_, anyhow::Error>(selection)
+    let runtime = Handle::current();
+    let (selection, selected_count) = timed_processing_step(
+        domain,
+        "materialization",
+        progress.run(state, domain, async {
+            spawn_blocking(move || {
+                runtime.block_on(async {
+                    let count = if selection.full || !selection.advisories.is_empty() {
+                        materialize_processing_with_progress(&repo, &selection, &work, cb).await?
+                    } else {
+                        0
+                    };
+                    Ok::<_, Error>((selection, count))
                 })
-                .await?
             })
-            .await
-    })
+            .await?
+        }),
+    )
     .await?;
-    let mut changed = summary_dirty
-        || selection.full
-        || !selection.advisories.is_empty()
-        || !selection.deleted.is_empty();
+    let mut changed =
+        summary_dirty || selection.full || selected_count > 0 || !selection.deleted.is_empty();
+    state
+        .set_phase_detail(domain, "Cleaning previous results")
+        .await;
     if selection.baseline {
-        // Recovery from missing/rewritten history must not retain orphaned results.
         state.storage.delete_all_documents(domain).await?;
     } else {
-        state
-            .storage
-            .delete_document_urls(domain, &selection.deleted)
-            .await?;
+        let mut cursor = String::new();
+        let mut deleted = 0;
+        loop {
+            let urls = selection.deleted.batch(&cursor).await?;
+            if urls.is_empty() {
+                break;
+            }
+            state.storage.delete_document_urls(domain, &urls).await?;
+            deleted += urls.len() as u64;
+            state
+                .set_phase_progress(domain, deleted, selection.deleted.len() as u64)
+                .await;
+            if let Some(last) = urls.last() {
+                cursor.clone_from(last);
+            }
+        }
     }
-    if !selection.advisories.is_empty() {
+    if selected_count > 0 {
         state
             .update_job_phase(domain, PipelinePhase::Validate)
             .await;
         timed_processing_step(
             domain,
             "validation",
-            validate_provider(state, source, &validation_dir, selection.advisories.clone()),
+            validate_provider(state, source, &validation_dir, selected_count),
         )
         .await?;
     }
@@ -520,8 +620,8 @@ async fn process_snapshot(
     tracing::info!(
         domain,
         full = selection.full,
-        selected = selection.advisories.len(),
-        skipped = total.saturating_sub(selection.advisories.len() as u64),
+        selected = selected_count,
+        skipped = total.saturating_sub(selected_count),
         elapsed_ms = started.elapsed().as_millis(),
         "Provider processing complete"
     );

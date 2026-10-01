@@ -4,8 +4,8 @@ use crate::models::result::ProviderSummary;
 use anyhow::{Context, Result};
 use csaf_trove_entity::{check_failure, document, revision_history};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, QuerySelect, Statement,
-    TransactionTrait,
+    ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    Statement, TransactionTrait,
 };
 
 /// Inputs of the last successfully completed processing pass.
@@ -126,14 +126,17 @@ impl Storage {
     }
 
     /// Finds failed downloads that can recover even when downloaded bytes are unchanged.
-    pub async fn retrieval_error_urls(&self, domain: &str) -> Result<Vec<String>> {
+    pub async fn retrieval_error_urls(&self, domain: &str, after: &str) -> Result<Vec<String>> {
         let db = self.db.get(domain).await?;
         Ok(document::Entity::find()
             .filter(document::Column::RetrievalError.is_not_null())
+            .filter(document::Column::Url.gt(after))
+            .select_only()
+            .column(document::Column::Url)
+            .order_by_asc(document::Column::Url)
+            .limit(256)
+            .into_tuple::<String>()
             .all(&db)
-            .await?
-            .into_iter()
-            .map(|row| row.url)
-            .collect())
+            .await?)
     }
 }
