@@ -2,6 +2,7 @@ pub mod content;
 pub mod db;
 pub mod documents;
 mod git_changes;
+pub mod git_maintenance;
 pub mod git_processing;
 pub mod git_repo;
 mod membership;

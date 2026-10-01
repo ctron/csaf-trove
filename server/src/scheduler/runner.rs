@@ -11,7 +11,7 @@ use crate::{
         validate::validate_provider,
     },
     storage::{
-        ProviderInfo,
+        ProviderInfo, git_maintenance,
         git_processing::{
             include_recovered_downloads, materialize_processing_with_progress,
             select_processing_with_progress,
@@ -178,7 +178,10 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
         status: JobPhase::Running,
         started_at: now,
         completed_at: None,
-        phase: Some(PipelinePhase::Checkout),
+        phase: Some(match kind {
+            JobKind::Sync => PipelinePhase::Maintenance,
+            JobKind::Revalidate => PipelinePhase::Checkout,
+        }),
         documents_synced: 0,
         documents_validated: 0,
         documents_total: 0,
@@ -304,6 +307,17 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let worktree_dir = state.work_dir().join(sanitize_domain(domain));
 
     let result = async {
+        // Maintenance must never block a sync; failures only leave the repository unconsolidated.
+        let repo = repo_path.clone();
+        match spawn_blocking(move || git_maintenance::maintain_repository(&repo)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!("Git maintenance for {domain} failed: {e:#}"),
+            Err(e) => tracing::warn!("Git maintenance for {domain} panicked: {e}"),
+        }
+
+        state
+            .update_job_phase(domain, PipelinePhase::Checkout)
+            .await;
         let prepared = {
             let repo = repo_path.clone();
             let worktree = worktree_dir.clone();

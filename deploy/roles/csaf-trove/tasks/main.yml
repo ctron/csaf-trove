@@ -1,4 +1,9 @@
 ---
+- name: Install Git for repository maintenance
+  ansible.builtin.apt:
+    name: git
+    state: present
+
 - name: Create service group
   ansible.builtin.group:
     name: "{{ csaf_trove_group }}"

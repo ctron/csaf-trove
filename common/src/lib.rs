@@ -47,6 +47,8 @@ pub fn format_duration_hms(duration: Duration, truncate_seconds: bool) -> String
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum PipelinePhase {
+    /// Consolidating the provider's Git object storage.
+    Maintenance,
     Checkout,
     Discover,
     Sync,
