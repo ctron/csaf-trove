@@ -7,6 +7,7 @@ use super::{
     scratch,
 };
 use anyhow::{Context, Result, anyhow};
+use csaf_trove_common::PipelinePhase;
 use git2::{ErrorCode, ObjectType, Oid, Repository, Tree, TreeWalkMode, TreeWalkResult};
 use serde_json::{Value, from_slice, to_vec};
 use sha2::{Digest, Sha256};
@@ -84,7 +85,7 @@ pub async fn select_processing_with_progress(
     previous: Option<&ProcessingCheckpoint>,
     validator_identity: &str,
     force_full: bool,
-    progress: impl Fn(&'static str, u64, u64),
+    progress: impl Fn(PipelinePhase, u64, u64),
 ) -> Result<ProcessingSelection> {
     let started = Instant::now();
     let mut commits_visited = 0u64;
@@ -113,7 +114,7 @@ pub async fn select_processing_with_progress(
         let mut baseline = previous_oid.is_none();
         let directory = selection_directory;
         let mut changes = PathSet::new(directory).await?;
-        progress("Scanning Git history (commits)", 0, 0);
+        progress(PipelinePhase::ScanHistory, 0, 0);
         if !baseline {
             let (tx, mut rx) = channel(2);
             let path = repo_path.to_owned();
@@ -122,7 +123,7 @@ pub async fn select_processing_with_progress(
             while let Some((paths, visited)) = rx.recv().await {
                 changes.insert_batch(&paths).await?;
                 commits_visited = visited;
-                progress("Scanning Git history (commits)", commits_visited, 0);
+                progress(PipelinePhase::ScanHistory, commits_visited, 0);
             }
             baseline = scan.await??;
         }
@@ -132,7 +133,7 @@ pub async fn select_processing_with_progress(
         let mut deleted = PathSet::new(directory).await?;
         let mut cursor = String::new();
         let mut resolved = 0;
-        progress("Resolving changed files", 0, changes.len() as u64);
+        progress(PipelinePhase::ResolveChanges, 0, changes.len() as u64);
         loop {
             let paths = changes.batch(&cursor).await?;
             if paths.is_empty() {
@@ -162,7 +163,11 @@ pub async fn select_processing_with_progress(
             history.insert_batch(&history_paths).await?;
             deleted.insert_batch(&deleted_urls).await?;
             resolved += paths.len() as u64;
-            progress("Resolving changed files", resolved, changes.len() as u64);
+            progress(
+                PipelinePhase::ResolveChanges,
+                resolved,
+                changes.len() as u64,
+            );
             if let Some(last) = paths.last() {
                 cursor.clone_from(last);
             }

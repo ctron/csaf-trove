@@ -46,12 +46,23 @@ fn format_relative_time(timestamp: &str, now_ms: f64) -> String {
     }
 }
 
+/// Formats progress with a question mark when its total is unknown.
+fn format_counts(current: u64, total: u64) -> String {
+    let total = if total > 0 {
+        total.to_string()
+    } else {
+        "?".to_string()
+    };
+    format!("{current} / {total}")
+}
+
 /// Formats the progress column based on the current phase and document counts.
 fn format_progress(job: &JobStatus) -> String {
     let current = match job.phase {
         Some(PipelinePhase::Sync) => job.documents_synced,
         Some(PipelinePhase::Validate) => job.documents_validated,
-        _ => job.documents_total,
+        Some(_) => job.phase_current,
+        None => job.documents_total,
     };
 
     let has_distribution_progress = matches!(
@@ -61,29 +72,26 @@ fn format_progress(job: &JobStatus) -> String {
 
     if has_distribution_progress && job.distribution_index > 0 {
         format!(
-            "{} / {} ({} / {})",
-            job.distribution_index,
-            job.distributions_total,
-            job.distribution_documents_current,
-            job.distribution_documents_total,
+            "{} ({})",
+            format_counts(job.distribution_index, job.distributions_total),
+            format_counts(
+                job.distribution_documents_current,
+                job.distribution_documents_total
+            ),
         )
-    } else if job.phase_total > 0 {
-        format!("{} / {}", job.phase_current, job.phase_total)
-    } else if job.phase == Some(PipelinePhase::Prepare) {
-        if job.phase_current > 0 {
-            format!("{} processed", job.phase_current)
-        } else {
-            "Working…".to_string()
-        }
-    } else if job.documents_total > 0 {
-        format!("{current} / {}", job.documents_total)
-    } else if current > 0 {
-        format!("{current}")
+    } else if job.phase_total > 0
+        || job.phase_current > 0
+        || !has_distribution_progress && job.phase.is_some()
+    {
+        format_counts(job.phase_current, job.phase_total)
+    } else if job.phase.is_some() || job.documents_total > 0 || current > 0 {
+        format_counts(current, job.documents_total)
     } else {
         "-".to_string()
     }
 }
 
+/// Renders the phase name in the same style as the other table columns.
 fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
     let label = job
         .phase
@@ -91,21 +99,50 @@ fn render_pipeline_phase(job: &JobStatus) -> impl IntoView + use<> {
         .map(|p| p.as_ref().to_string())
         .unwrap_or_else(|| "-".to_string());
 
-    let detail = job.phase_detail.as_ref().map(|detail| {
-        if let Some(elapsed) = job.phase_elapsed_seconds {
-            format!(
-                "{detail} · {} elapsed in Prepare",
-                format_duration(Some(elapsed))
-            )
-        } else {
-            detail.clone()
-        }
-    });
     view! {
         <span class="whitespace-nowrap">{label}</span>
-        {detail.map(|detail| view! { <div class="text-xs text-gray-500">{detail}</div> })}
     }
     .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Preparation and document progress consistently show known and unknown totals.
+    #[test]
+    fn progress_shows_unknown_totals() {
+        let mut job: JobStatus = serde_json::from_value(serde_json::json!({
+            "status": "running", "started_at": "2026-10-01T00:00:00Z",
+            "phase": "scan_history", "documents_synced": 0,
+            "documents_validated": 0, "documents_total": 999,
+            "phase_detail": "Scanning Git history (commits)",
+            "phase_elapsed_seconds": 12
+        }))
+        .unwrap();
+        assert_eq!(format_progress(&job), "0 / ?");
+        job.phase_current = 42;
+        assert_eq!(format_progress(&job), "42 / ?");
+        job.phase_total = 100;
+        assert_eq!(format_progress(&job), "42 / 100");
+        job.phase = Some(PipelinePhase::Sync);
+        job.phase_current = 0;
+        job.phase_total = 0;
+        job.documents_total = 0;
+        job.documents_synced = 7;
+        assert_eq!(format_progress(&job), "7 / ?");
+        job.documents_total = 20;
+        assert_eq!(format_progress(&job), "7 / 20");
+        job.phase = Some(PipelinePhase::Validate);
+        job.documents_validated = 3;
+        assert_eq!(format_progress(&job), "3 / 20");
+        job.distribution_index = 1;
+        job.distribution_documents_current = 3;
+        assert_eq!(format_progress(&job), "1 / ? (3 / ?)");
+        job.distributions_total = 2;
+        job.distribution_documents_total = 10;
+        assert_eq!(format_progress(&job), "1 / 2 (3 / 10)");
+    }
 }
 
 /// Builds the WebSocket URL from the current page origin.

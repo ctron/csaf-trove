@@ -9,6 +9,49 @@ use std::{collections::HashMap, fs};
 use tempfile::TempDir;
 use tokio::sync::{Notify, RwLock, watch};
 
+/// Fast blocking stages retain phase history and coalesce only counters within a phase.
+#[tokio::test]
+async fn blocking_progress_preserves_phase_transitions() {
+    let (_dir, state, source) = fixture();
+    let job: JobStatus = serde_json::from_value(serde_json::json!({
+        "status": "running", "started_at": "2026-10-01T00:00:00Z",
+        "phase": "select_inputs", "documents_synced": 0,
+        "documents_validated": 0, "documents_total": 0,
+        "distributions_total": 0, "distribution_index": 0,
+        "distribution_documents_current": 0, "distribution_documents_total": 0
+    }))
+    .unwrap();
+    state.update_job(&source.domain, job).await;
+    let progress = BlockingProgress::new();
+    let callback = progress.stage_callback();
+    callback(PipelinePhase::ScanHistory, 0, 0);
+    callback(PipelinePhase::ScanHistory, 42, 0);
+    callback(PipelinePhase::ResolveChanges, 0, 10);
+    callback(PipelinePhase::ResolveChanges, 10, 10);
+    assert_eq!(progress.samples.lock().len(), 2);
+    progress.run(&state, &source.domain, async {}).await;
+    let job = state.get_job(&source.domain).await.unwrap();
+    assert_eq!(job.phase, Some(PipelinePhase::ResolveChanges));
+    assert_eq!(
+        job.completed_phases,
+        [PipelinePhase::SelectInputs, PipelinePhase::ScanHistory]
+    );
+    assert_eq!((job.phase_current, job.phase_total), (10, 10));
+    let started = job.phase_started_at;
+    state
+        .set_phase_work(&source.domain, Some(PipelinePhase::ResolveChanges), 11, 12)
+        .await;
+    let job = state.get_job(&source.domain).await.unwrap();
+    assert_eq!(job.phase_started_at, started);
+    assert_eq!(job.completed_phases.len(), 2);
+    assert_eq!((job.phase_current, job.phase_total), (11, 12));
+    state
+        .update_job_phase(&source.domain, PipelinePhase::CheckRecoveredDownloads)
+        .await;
+    let job = state.get_job(&source.domain).await.unwrap();
+    assert_eq!((job.phase_current, job.phase_total), (0, 0));
+}
+
 /// Creates isolated application state and a provider with overlapping distributions.
 fn fixture() -> (TempDir, Arc<AppState>, Source) {
     let dir = tempfile::tempdir().unwrap();

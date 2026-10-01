@@ -154,9 +154,6 @@ pub struct JobStatus {
     pub phase_current: u64,
     #[serde(default)]
     pub phase_total: u64,
-    /// Human-readable work currently performed within the phase.
-    #[serde(default)]
-    pub phase_detail: Option<String>,
     pub error: Option<String>,
     /// Pipeline phases that have already completed.
     #[serde(default)]

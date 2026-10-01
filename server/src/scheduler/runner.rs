@@ -24,6 +24,7 @@ use csaf_trove_common::PipelinePhase;
 use csaf_walker::model::metadata::{ProviderMetadata, Role};
 use parking_lot::Mutex;
 use std::{
+    collections::VecDeque,
     fs,
     future::Future,
     path::{Path, PathBuf},
@@ -31,7 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 use time::OffsetDateTime;
-use tokio::{runtime::Handle, spawn, task::spawn_blocking, time::sleep};
+use tokio::{pin, runtime::Handle, select, task::spawn_blocking, time::sleep};
 
 mod validation_identity;
 
@@ -40,9 +41,9 @@ use validation_identity::dependency_fingerprint;
 /// One coherent progress sample from blocking work.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct ProgressSample {
-    /// Optional preparation substage and unit description.
-    detail: Option<&'static str>,
-    /// Work completed in this substage.
+    /// Optional phase transition reported by blocking work.
+    phase: Option<PipelinePhase>,
+    /// Work completed in this phase.
     current: u64,
     /// Expected work, or zero when unknown.
     total: u64,
@@ -50,39 +51,65 @@ struct ProgressSample {
 
 /// Bridges blocking work to async status updates at most four times per second.
 struct BlockingProgress {
-    /// Latest substage and counters, updated together.
-    sample: Arc<Mutex<ProgressSample>>,
+    /// Pending phase transitions with the latest counters for each phase.
+    samples: Arc<Mutex<VecDeque<ProgressSample>>>,
 }
 
 impl BlockingProgress {
     /// Creates an empty progress bridge.
     fn new() -> Self {
         Self {
-            sample: Arc::new(Mutex::new(ProgressSample::default())),
+            samples: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
-    /// Returns a callback for work whose substage has already been published.
+    /// Returns a callback for work whose phase has already been published.
     fn callback(&self) -> impl Fn(u64, u64) + Send + Sync + 'static {
-        let sample = self.sample.clone();
+        let samples = self.samples.clone();
         move |current, total| {
-            *sample.lock() = ProgressSample {
-                detail: None,
-                current,
-                total,
-            };
+            Self::record(
+                &samples,
+                ProgressSample {
+                    phase: None,
+                    current,
+                    total,
+                },
+            );
         }
     }
 
-    /// Returns a callback that publishes substage changes with consistent counters.
-    fn stage_callback(&self) -> impl Fn(&'static str, u64, u64) + Send + Sync + 'static {
-        let sample = self.sample.clone();
-        move |detail, current, total| {
-            *sample.lock() = ProgressSample {
-                detail: Some(detail),
-                current,
-                total,
-            };
+    /// Returns a callback that publishes phase changes with consistent counters.
+    fn stage_callback(&self) -> impl Fn(PipelinePhase, u64, u64) + Send + Sync + 'static {
+        let samples = self.samples.clone();
+        move |phase, current, total| {
+            Self::record(
+                &samples,
+                ProgressSample {
+                    phase: Some(phase),
+                    current,
+                    total,
+                },
+            );
+        }
+    }
+
+    /// Coalesces counter updates while preserving every phase transition.
+    fn record(samples: &Mutex<VecDeque<ProgressSample>>, next: ProgressSample) {
+        let mut samples = samples.lock();
+        if let Some(last) = samples.back_mut().filter(|last| last.phase == next.phase) {
+            *last = next;
+        } else {
+            samples.push_back(next);
+        }
+    }
+
+    /// Publishes queued transitions and progress without holding the blocking mutex.
+    async fn publish(&self, state: &Arc<AppState>, domain: &str) {
+        let pending: Vec<_> = self.samples.lock().drain(..).collect();
+        for sample in pending {
+            state
+                .set_phase_work(domain, sample.phase, sample.current, sample.total)
+                .await;
         }
     }
 
@@ -93,31 +120,16 @@ impl BlockingProgress {
         domain: &str,
         future: F,
     ) -> T {
-        let poll_handle = spawn({
-            let state = state.clone();
-            let domain = domain.to_string();
-            let sample = self.sample.clone();
-            async move {
-                let mut last = ProgressSample::default();
-                loop {
-                    sleep(Duration::from_millis(250)).await;
-                    let next = *sample.lock();
-                    if next != last {
-                        state
-                            .set_phase_work(&domain, next.detail, next.current, next.total)
-                            .await;
-                        last = next;
-                    }
+        pin!(future);
+        loop {
+            select! {
+                result = &mut future => {
+                    self.publish(state, domain).await;
+                    return result;
                 }
+                _ = sleep(Duration::from_millis(250)) => self.publish(state, domain).await,
             }
-        });
-        let result = future.await;
-        poll_handle.abort();
-        let sample = *self.sample.lock();
-        state
-            .set_phase_work(domain, sample.detail, sample.current, sample.total)
-            .await;
-        result
+        }
     }
 }
 
@@ -176,7 +188,6 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
         distribution_documents_total: 0,
         phase_current: 0,
         phase_total: 0,
-        phase_detail: None,
         error: None,
         completed_phases: vec![],
         last_completed_at: last_completed,
@@ -205,14 +216,12 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 distribution_documents_total: 0,
                 phase_current: 0,
                 phase_total: 0,
-                phase_detail: None,
                 error: None,
                 completed_phases: vec![],
                 last_completed_at: None,
                 phase_started_at: None,
             });
             job.status = JobPhase::Completed;
-            job.phase_detail = None;
             job.completed_at = Some(OffsetDateTime::now_utc());
             if let Some(last) = job.phase.take() {
                 job.completed_phases.push(last);
@@ -236,7 +245,6 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 distribution_documents_total: 0,
                 phase_current: 0,
                 phase_total: 0,
-                phase_detail: None,
                 error: None,
                 completed_phases: vec![],
                 last_completed_at: None,
@@ -447,10 +455,9 @@ async fn process_snapshot(
     }
     let repo = state.storage.repo_path(domain);
     let identity = validator_identity(source)?;
-    state.update_job_phase(domain, PipelinePhase::Prepare).await;
     let selection_repo = repo.clone();
     state
-        .set_phase_detail(domain, "Removing previous selection")
+        .update_job_phase(domain, PipelinePhase::CleanSelection)
         .await;
     let selection_directory = download_dir.join(".selection");
     let directory = selection_directory.clone();
@@ -462,7 +469,7 @@ async fn process_snapshot(
     })
     .await??;
     state
-        .set_phase_detail(domain, "Selecting changed inputs")
+        .update_job_phase(domain, PipelinePhase::SelectInputs)
         .await;
     let progress = BlockingProgress::new();
     let cb = progress.stage_callback();
@@ -486,7 +493,7 @@ async fn process_snapshot(
     )
     .await?;
     state
-        .set_phase_detail(domain, "Checking recovered downloads")
+        .update_job_phase(domain, PipelinePhase::CheckRecoveredDownloads)
         .await;
     if !selection.full {
         let mut cursor = String::new();
@@ -507,7 +514,7 @@ async fn process_snapshot(
     let validation_dir = download_dir.join("validation");
     let work = validation_dir.clone();
     state
-        .set_phase_detail(domain, "Removing previous validation files")
+        .update_job_phase(domain, PipelinePhase::CleanValidationFiles)
         .await;
     timed_processing_step(domain, "cleanup", async {
         spawn_blocking(move || {
@@ -520,7 +527,7 @@ async fn process_snapshot(
     })
     .await?;
     state
-        .set_phase_detail(domain, "Extracting validation files")
+        .update_job_phase(domain, PipelinePhase::ExtractValidationFiles)
         .await;
     let work = validation_dir.clone();
     let progress = BlockingProgress::new();
@@ -547,7 +554,7 @@ async fn process_snapshot(
     let mut changed =
         summary_dirty || selection.full || selected_count > 0 || !selection.deleted.is_empty();
     state
-        .set_phase_detail(domain, "Cleaning previous results")
+        .update_job_phase(domain, PipelinePhase::CleanResults)
         .await;
     if selection.baseline {
         state.storage.delete_all_documents(domain).await?;

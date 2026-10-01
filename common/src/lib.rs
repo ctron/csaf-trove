@@ -51,8 +51,22 @@ pub enum PipelinePhase {
     Discover,
     Sync,
     Commit,
-    /// Selecting and extracting advisory inputs for validation.
-    Prepare,
+    /// Removing the previous input selection.
+    CleanSelection,
+    /// Initializing selection of changed validation inputs.
+    SelectInputs,
+    /// Scanning Git commits since the processing checkpoint.
+    ScanHistory,
+    /// Mapping changed files to advisories and deleted URLs.
+    ResolveChanges,
+    /// Selecting successfully redownloaded advisories with retrieval failures.
+    CheckRecoveredDownloads,
+    /// Removing previous extracted validation files.
+    CleanValidationFiles,
+    /// Extracting selected committed inputs for validation.
+    ExtractValidationFiles,
+    /// Removing obsolete stored validation results.
+    CleanResults,
     Validate,
     /// Recording document version history and counts.
     VersionCounts,

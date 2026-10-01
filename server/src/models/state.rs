@@ -69,9 +69,6 @@ pub struct JobStatus {
     /// Total items expected in the current phase; zero means the total is unknown.
     #[serde(default)]
     pub phase_total: u64,
-    /// Human-readable work currently performed within the phase.
-    #[serde(default)]
-    pub phase_detail: Option<String>,
     /// Error message if the job failed.
     pub error: Option<String>,
     /// Pipeline phases that have already completed.

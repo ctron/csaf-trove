@@ -106,7 +106,6 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
                         distribution_documents_total: 0,
                         phase_current: 0,
                         phase_total: 0,
-                        phase_detail: None,
                         error: None,
                         completed_phases: vec![],
                         last_completed_at: None,
@@ -130,10 +129,6 @@ async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEnt
 /// When the total number of distributions is known, estimates time for
 /// undiscovered distributions using the average size of those already seen.
 fn compute_eta(job: &JobStatus, now: OffsetDateTime) -> Option<String> {
-    // Prepare counters belong to different steps and do not predict the whole phase.
-    if job.phase == Some(PipelinePhase::Prepare) {
-        return None;
-    }
     let phase_start = job.phase_started_at?;
     let elapsed = (now - phase_start).as_seconds_f64();
     if elapsed <= 0.0 {
