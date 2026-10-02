@@ -26,6 +26,9 @@ LockPersonality=true
 
 # Environment
 Environment=RUST_LOG=info,csaf_trove_server=debug
+# Limit glibc heap retention: fewer per-thread arenas, and large blocks are returned to the OS on free.
+Environment=MALLOC_ARENA_MAX=2
+Environment=MALLOC_MMAP_THRESHOLD_=131072
 
 [Install]
 WantedBy=multi-user.target
