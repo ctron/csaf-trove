@@ -4,7 +4,7 @@ use crate::{AppState, memory, models::state::JobPhase, pipeline::aggregator::gen
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::Semaphore, task::spawn_blocking, time::sleep};
 
-/// Interval between memory samples while provider jobs are running.
+/// Interval between memory samples, including idle periods to observe retention.
 const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Runs the periodic scheduler loop, syncing all enabled providers on each interval.
@@ -64,9 +64,6 @@ async fn sample_memory(state: Arc<AppState>) {
                 None => domain.clone(),
             })
             .collect();
-        if jobs.is_empty() {
-            continue;
-        }
         jobs.sort_unstable();
         if let Some(memory) = memory::usage() {
             tracing::info!(
@@ -76,6 +73,7 @@ async fn sample_memory(state: Arc<AppState>) {
                 "Memory sample"
             );
         }
+        state.storage.log_database_memory().await;
     }
 }
 

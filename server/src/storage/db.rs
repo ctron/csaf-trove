@@ -1,9 +1,12 @@
 use crate::models::source::sanitize_domain;
 use anyhow::Result;
 use csaf_trove_migration::{Migrator, MigratorTrait};
+use libsqlite3_sys::sqlite3_memory_used;
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection};
 use std::{collections::HashMap, path::PathBuf};
 use tokio::sync::RwLock;
+
+mod memory;
 
 /// Manages per-provider SQLite database connections with lazy initialization.
 pub struct DbPool {
@@ -12,6 +15,30 @@ pub struct DbPool {
 }
 
 impl DbPool {
+    /// Logs pool occupancy and SQLite allocations without acquiring connections.
+    pub async fn log_memory(&self) {
+        let connections = self.connections.read().await;
+        let mut open = 0;
+        let mut idle = 0;
+        for (domain, connection) in connections.iter() {
+            let pool = connection.get_sqlite_connection_pool();
+            let size = pool.size();
+            let available = pool.num_idle();
+            open += size;
+            idle += available;
+            tracing::info!(domain, open = size, idle = available, "SQLite pool sample");
+        }
+        // SAFETY: SQLite's allocator statistics are thread-safe and take no pointers.
+        let allocated_bytes = unsafe { sqlite3_memory_used() };
+        tracing::info!(
+            pools = connections.len(),
+            open,
+            idle,
+            allocated_bytes,
+            "SQLite memory sample"
+        );
+    }
+
     /// Creates a new pool that stores databases under the given results directory.
     pub fn new(results_dir: PathBuf) -> Self {
         Self {
@@ -82,6 +109,7 @@ impl DbPool {
         let url = format!("sqlite://{}?mode=rwc", db_path.display());
         let mut opts = ConnectOptions::new(url);
         opts.max_connections(5).sqlx_logging(false);
+        memory::configure(&mut opts, key);
 
         let conn = Database::connect(opts).await?;
 

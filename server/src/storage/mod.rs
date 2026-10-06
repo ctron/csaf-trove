@@ -46,6 +46,11 @@ pub struct Storage {
 }
 
 impl Storage {
+    /// Logs SQLite allocations and existing provider pool occupancy.
+    pub async fn log_database_memory(&self) {
+        self.db.log_memory().await;
+    }
+
     /// Creates a new storage layer, ensuring all directories exist.
     pub fn new(data_dir: &Path) -> Result<Self> {
         let results_dir = data_dir.join("results");
