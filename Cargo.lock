@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-common"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "serde",
  "strum 0.28.0",
@@ -1453,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-dashboard"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-entity"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "sea-orm",
  "time",
@@ -1482,7 +1482,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-migration"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "sea-orm",
  "sea-orm-migration",
@@ -1491,7 +1491,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-server"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
