@@ -408,15 +408,15 @@ async fn run_revalidation(state: &Arc<AppState>, source: &Source) -> Result<()> 
     result
 }
 
-/// Identifies local validation code, dependency versions and effective signature policy.
+/// Identifies validation logic, dependency versions and effective signature policy.
 fn validator_identity(source: &Source) -> Result<String> {
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
-    hash.update(include_bytes!("../pipeline/validate.rs"));
-    hash.update(include_bytes!("../pipeline/source.rs"));
-    /// Bump when persisted results must be rebuilt after a format or storage change.
-    const RESULT_FORMAT_REVISION: u32 = 1;
-    hash.update(RESULT_FORMAT_REVISION.to_le_bytes());
+    /// Bump when validation or integrity checks, or the persisted result format, change.
+    ///
+    /// Changing it forces every provider to be fully revalidated on its next run.
+    const VALIDATION_REVISION: u32 = 2;
+    hash.update(VALIDATION_REVISION.to_le_bytes());
     hash.update(dependency_fingerprint(include_str!("../../../Cargo.lock"))?);
     hash.update([u8::from(source.accept_v3_signatures)]);
     Ok(hex::encode(hash.finalize()))

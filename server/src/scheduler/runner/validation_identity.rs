@@ -1,12 +1,16 @@
 //! Fingerprints the locked dependencies that implement document validation.
 
-use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Error as JsonError, to_vec};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use toml::{de::Error as TomlError, from_str};
+
+/// Crates whose exact versions determine validation results.
+///
+/// Their transitive dependencies are intentionally excluded: routine lockfile refreshes would
+/// otherwise force a full revalidation of every provider on each release.
+const VALIDATION_CRATES: [&str; 4] = ["csaf-rs", "csaf-walker", "walker-common", "sequoia-openpgp"];
 
 /// Invalid embedded lockfile or dependency reference.
 #[derive(Debug, Error)]
@@ -14,7 +18,7 @@ pub(super) enum FingerprintError {
     /// The lockfile could not be decoded.
     #[error("Invalid validation lockfile: {0}")]
     Lockfile(#[from] TomlError),
-    /// A reference must resolve to exactly one package.
+    /// A validation crate must be locked exactly once.
     #[error("Validation dependency {0:?} is missing or ambiguous")]
     Dependency(String),
     /// The canonical dependency records could not be encoded.
@@ -29,8 +33,8 @@ struct Lockfile {
     package: Vec<Package>,
 }
 
-/// Locked identity and outgoing dependencies of one package.
-#[derive(Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+/// Locked identity of one package.
+#[derive(Deserialize, Serialize)]
 struct Package {
     /// Cargo package name.
     name: String,
@@ -40,49 +44,24 @@ struct Package {
     source: Option<String>,
     /// Registry content checksum, when present.
     checksum: Option<String>,
-    /// Cargo dependency references, sorted before hashing.
-    #[serde(default)]
-    dependencies: Vec<String>,
 }
 
-/// Resolves Cargo's `name [version [(source)]]` dependency references uniquely.
-fn resolve(packages: &[Package], reference: &str) -> Result<usize, FingerprintError> {
-    let mut parts = reference.split_whitespace();
-    let name = parts.next().unwrap_or_default();
-    let version = parts.next();
-    let source = parts.next().map(|value| value.trim_matches(['(', ')']));
-    let mut matches = packages.iter().enumerate().filter(|(_, package)| {
-        package.name == name
-            && version.is_none_or(|value| package.version == value)
-            && source.is_none_or(|value| package.source.as_deref() == Some(value))
-    });
-    match (matches.next(), matches.next(), parts.next()) {
-        (Some((index, _)), None, None) => Ok(index),
-        _ => Err(FingerprintError::Dependency(reference.to_owned())),
+/// Finds the single locked package with the given name.
+fn resolve<'a>(packages: &'a [Package], name: &str) -> Result<&'a Package, FingerprintError> {
+    let mut matches = packages.iter().filter(|package| package.name == name);
+    match (matches.next(), matches.next()) {
+        (Some(package), None) => Ok(package),
+        _ => Err(FingerprintError::Dependency(name.to_owned())),
     }
 }
 
-/// Hashes validation packages and their transitive closure independently of lockfile order.
+/// Hashes the exact locked versions of the validation crates, independently of lockfile order.
 pub(super) fn dependency_fingerprint(lockfile: &str) -> Result<String, FingerprintError> {
-    let mut lockfile: Lockfile = from_str(lockfile)?;
-    for package in &mut lockfile.package {
-        package.dependencies.sort();
-    }
-    let packages = &lockfile.package;
-    let mut pending = ["csaf-rs", "csaf-walker", "walker-common"]
+    let lockfile: Lockfile = from_str(lockfile)?;
+    let selected = VALIDATION_CRATES
         .into_iter()
-        .map(|name| resolve(packages, name))
+        .map(|name| resolve(&lockfile.package, name))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut selected = BTreeSet::new();
-    while let Some(index) = pending.pop() {
-        let package = &packages[index];
-        if !selected.insert(package) {
-            continue;
-        }
-        for dependency in &package.dependencies {
-            pending.push(resolve(packages, dependency)?);
-        }
-    }
     Ok(hex::encode(Sha256::digest(to_vec(&selected)?)))
 }
 
@@ -90,7 +69,7 @@ pub(super) fn dependency_fingerprint(lockfile: &str) -> Result<String, Fingerpri
 mod tests {
     use super::*;
 
-    /// A small lockfile with an unrelated workspace package and two versions of a dependency.
+    /// A small lockfile with validation crates, a transitive dependency and a workspace package.
     const LOCKFILE: &str = r#"
 version = 4
 [[package]]
@@ -100,34 +79,37 @@ dependencies = ["parser 1.0.0 (registry+https://example.com)", "walker-common"]
 [[package]]
 name = "csaf-walker"
 version = "0.19.0"
-dependencies = ["csaf-rs", "walker-common"]
+dependencies = ["csaf-rs", "walker-common", "sequoia-openpgp"]
 [[package]]
 name = "walker-common"
 version = "0.19.0"
+[[package]]
+name = "sequoia-openpgp"
+version = "2.0.0"
+source = "registry+https://example.com"
+checksum = "signing"
 [[package]]
 name = "parser"
 version = "1.0.0"
 source = "registry+https://example.com"
 checksum = "original"
 [[package]]
-name = "parser"
-version = "2.0.0"
-[[package]]
 name = "csaf-trove-server"
 version = "0.1.0"
-dependencies = ["csaf-walker", "parser 2.0.0"]
+dependencies = ["csaf-walker", "parser 1.0.0"]
 "#;
 
-    /// Only reachable package identities and relationships affect validation results.
+    /// Only the validation crates' own identities affect the fingerprint.
     #[test]
     fn fingerprints_only_validation_dependencies() {
         let fingerprint = dependency_fingerprint(LOCKFILE).unwrap();
         for changed in [
             LOCKFILE.replace("0.1.0", "0.2.0"),
-            LOCKFILE.replace("2.0.0", "3.0.0"),
+            LOCKFILE.replace("1.0.0", "1.1.0"),
+            LOCKFILE.replace("original", "updated"),
             LOCKFILE.replace(
-                "[\"csaf-rs\", \"walker-common\"]",
-                "[\"walker-common\", \"csaf-rs\"]",
+                "[\"csaf-rs\", \"walker-common\", \"sequoia-openpgp\"]",
+                "[\"walker-common\", \"csaf-rs\", \"sequoia-openpgp\"]",
             ),
             LOCKFILE
                 .split("[[package]]")
@@ -145,24 +127,22 @@ dependencies = ["csaf-walker", "parser 2.0.0"]
         }
         for changed in [
             LOCKFILE.replace("0.5.0", "0.6.0"),
-            LOCKFILE.replace("1.0.0", "1.1.0"),
-            LOCKFILE.replace("original", "updated"),
+            LOCKFILE.replace("0.19.0", "0.20.0"),
+            LOCKFILE.replace("2.0.0", "2.1.0"),
+            LOCKFILE.replace("signing", "updated"),
             LOCKFILE.replace("registry+https://example.com", "registry+https://other.com"),
-            LOCKFILE.replace(
-                "dependencies = [\"csaf-rs\", \"walker-common\"]",
-                "dependencies = [\"csaf-rs\"]",
-            ),
         ] {
             assert_ne!(fingerprint, dependency_fingerprint(&changed).unwrap());
         }
     }
 
-    /// Missing and ambiguous references must fail instead of silently omitting dependencies.
+    /// Missing and ambiguous validation crates must fail instead of being silently omitted.
     #[test]
     fn rejects_unresolved_dependencies() {
-        for reference in ["parser", "parser 9.0.0", "missing"] {
-            let changed =
-                LOCKFILE.replace("parser 1.0.0 (registry+https://example.com)", reference);
+        for changed in [
+            LOCKFILE.replace("name = \"sequoia-openpgp\"", "name = \"other\""),
+            LOCKFILE.replace("name = \"parser\"", "name = \"walker-common\""),
+        ] {
             assert!(matches!(
                 dependency_fingerprint(&changed),
                 Err(FingerprintError::Dependency(_))
@@ -170,7 +150,7 @@ dependencies = ["csaf-walker", "parser 2.0.0"]
         }
     }
 
-    /// The checked-in lockfile resolves successfully with the production roots.
+    /// The checked-in lockfile resolves successfully with the production crates.
     #[test]
     fn accepts_workspace_lockfile() {
         assert!(dependency_fingerprint(include_str!("../../../../Cargo.lock")).is_ok());
