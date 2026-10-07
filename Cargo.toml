@@ -66,3 +66,7 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"
 zstd = "0.14"
+
+[patch.crates-io]
+# Remove panics from library code: https://github.com/csaf-rs/csaf/pull/1185
+csaf-rs = { git = "https://github.com/ctron/csaf-rust", rev = "e0852f2eb416ec6020f9e745a6c5e0728376f76c" }
