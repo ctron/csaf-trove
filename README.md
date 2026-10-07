@@ -23,6 +23,39 @@ insertion decompress individual advisories in memory; Git retains the original J
 so document history and diffs remain compatible with existing repositories. No configuration or
 repository migration is required.
 
+## Running locally
+
+Create a `local-config.toml` in the repository root (it is ignored by Git). This example keeps all data in
+`./data`, skips the GitHub config sync, and defines a provider inline:
+
+```toml
+[server]
+listen = "127.0.0.1:8080"
+
+[data]
+dir = "data"
+
+[scheduler]
+sync_interval = "1d"
+max_concurrent = 2
+
+[[source]]
+domain = "intevation.de"
+```
+
+Further `[[source]]` entries accept the same fields as the files in `sources/`. Instead of inline sources,
+you can also copy files from `sources/` into `data/sources/`.
+
+Build the dashboard first, since the server embeds `dashboard/dist`, then start the server:
+
+```sh
+(cd dashboard && trunk build)
+cargo run -p csaf-trove-server -- --config local-config.toml
+```
+
+The dashboard is then available at <http://127.0.0.1:8080>. For dashboard development, run `trunk serve` in
+`dashboard/` instead. It serves on <http://127.0.0.1:9090> and proxies API requests to the server on port 8080.
+
 ## Refreshing cached summaries
 
 Provider pages serve cached summaries. Syncs rebuild them when results change or the cache is missing;
