@@ -10,6 +10,8 @@ Group={{ csaf_trove_group }}
 ExecStart={{ csaf_trove_bin_dir }}/csaf-trove-server --config {{ csaf_trove_config_dir }}/config.toml
 Restart=on-failure
 RestartSec=5s
+# Headroom for per-provider SQLite pools, Git repositories, and HTTP sockets.
+LimitNOFILE=65536
 
 # Hardening
 NoNewPrivileges=true
