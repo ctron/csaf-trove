@@ -36,6 +36,24 @@ See `roles/csaf-trove/defaults/main.yml` for all available variables.
 
 ## After deployment
 
+### File descriptor limits
+
+The service sets `LimitNOFILE=65536` for SQLite databases, Git repositories, and
+HTTP sockets. Deploy the updated service template, reload systemd, and restart
+the service to apply the new limit. No binary update is needed.
+
+If a job reports `Too many open files`, inspect the running process on the host:
+
+```sh
+pid=$(systemctl show csaf-trove --property=MainPID --value)
+cat /proc/"$pid"/limits
+ls /proc/"$pid"/fd | wc -l
+sudo ls -l /proc/"$pid"/fd
+```
+
+The last command identifies whether databases, Git packfiles, or sockets account
+for most descriptors. A shell's `ulimit` does not show the running service's limit.
+
 ### Retrieve the webhook secret
 
 ```sh
