@@ -2,10 +2,65 @@
 
 #![cfg(test)]
 
-use super::{ProviderInfo, load_provider_info, save_provider_info};
-use csaf_trove_common::document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks};
+use super::{
+    ProviderInfo, load_provider_info, load_sync_runs, load_sync_runs_paginated, save_provider_info,
+    save_sync_run,
+};
+use csaf_trove_common::{
+    CommitInfo,
+    document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks},
+};
+use csaf_trove_entity::sync_run;
 use csaf_trove_migration::{Migrator, MigratorTrait};
-use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend, Set, Statement,
+};
+use time::{Duration, OffsetDateTime};
+
+/// Both history queries preserve recorded durations, legacy rows and pagination.
+#[tokio::test]
+async fn sync_history_durations() {
+    let db = database("sqlite::memory:", None).await;
+    let timestamp = OffsetDateTime::now_utc();
+    sync_run::ActiveModel {
+        timestamp: Set(timestamp),
+        documents_changed: Set(3),
+        duration_ms: Set(None),
+        ..Default::default()
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    save_sync_run(&db, timestamp, 5, Duration::milliseconds(135_250))
+        .await
+        .unwrap();
+
+    let recent = load_sync_runs(&db, 10).await.unwrap();
+    assert_eq!(recent.len(), 2);
+    assert_eq!(recent[0].duration_ms, Some(135_250));
+    assert_eq!(recent[0].files_changed, 5);
+    assert_eq!(recent[1].duration_ms, None);
+    assert_eq!(load_sync_runs(&db, 1).await.unwrap().len(), 1);
+
+    let page = load_sync_runs_paginated(&db, 0, 1).await.unwrap();
+    assert_eq!((page.total, page.offset, page.limit), (2, 0, 1));
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, recent[0].id);
+    assert_eq!(page.items[0].duration_ms, Some(135_250));
+    let legacy_page = load_sync_runs_paginated(&db, 1, 1).await.unwrap();
+    assert_eq!(legacy_page.items[0].id, recent[1].id);
+    assert_eq!(legacy_page.items[0].duration_ms, None);
+
+    let mut json = serde_json::to_value(&recent[0]).unwrap();
+    assert_eq!(json["duration_ms"], 135_250);
+    json.as_object_mut().unwrap().remove("duration_ms");
+    assert!(
+        serde_json::from_value::<CommitInfo>(json)
+            .unwrap()
+            .duration_ms
+            .is_none()
+    );
+}
 
 /// Opens a database and applies the requested prefix of migrations.
 async fn database(url: &str, steps: Option<u32>) -> DatabaseConnection {

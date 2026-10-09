@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use csaf_trove_common::{CommitInfo, Paginated, format_duration_hms};
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
@@ -17,7 +20,7 @@ async fn fetch_sync_history(
     domain: String,
     offset: u64,
     limit: u64,
-) -> Result<csaf_trove_common::Paginated<csaf_trove_common::CommitInfo>, String> {
+) -> Result<Paginated<CommitInfo>, String> {
     let url = format!(
         "/api/providers/{}/history?offset={offset}&limit={limit}",
         encode_path_segment(&domain)
@@ -30,6 +33,13 @@ async fn fetch_sync_history(
         return Err(format!("Failed to load sync history ({})", resp.status()));
     }
     resp.json().await.map_err(|e| e.to_string())
+}
+
+/// Formats a recorded total run duration, or a dash when unavailable.
+fn format_duration(duration_ms: Option<i64>) -> String {
+    duration_ms
+        .map(|ms| format_duration_hms(Duration::from_millis(ms.max(0) as u64), false))
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// Displays paginated sync run history for a single provider.
@@ -79,6 +89,7 @@ pub fn SyncDetailPage() -> impl IntoView {
                                     <tr>
                                         <Th>"#"</Th>
                                         <Th>"Date"</Th>
+                                        <Th>"Duration"</Th>
                                         <Th>"Documents Changed"</Th>
                                     </tr>
                                 </Thead>
@@ -102,6 +113,7 @@ pub fn SyncDetailPage() -> impl IntoView {
                                             <tr>
                                                 <Td>{entry.id}</Td>
                                                 <Td class="whitespace-nowrap">{date}</Td>
+                                                <Td class="whitespace-nowrap">{format_duration(entry.duration_ms)}</Td>
                                                 <Td><Badge variant=variant>{entry.files_changed}</Badge></Td>
                                             </tr>
                                         }
@@ -126,5 +138,22 @@ pub fn SyncDetailPage() -> impl IntoView {
                 })}
             </Transition>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_duration;
+
+    /// History uses the shared duration format and handles legacy or invalid values.
+    #[test]
+    fn recorded_duration_display() {
+        assert_eq!(format_duration(None), "-");
+        assert_eq!(format_duration(Some(-1)), "0s");
+        assert_eq!(format_duration(Some(0)), "0s");
+        assert_eq!(format_duration(Some(999)), "0s");
+        assert_eq!(format_duration(Some(45_000)), "45s");
+        assert_eq!(format_duration(Some(135_000)), "2m 15s");
+        assert_eq!(format_duration(Some(3_800_000)), "1h 3m 20s");
     }
 }

@@ -846,6 +846,7 @@ pub async fn load_sync_runs(db: &DatabaseConnection, max_entries: u64) -> Result
             message: String::new(),
             timestamp: row.timestamp,
             files_changed: row.documents_changed as usize,
+            duration_ms: row.duration_ms,
         })
         .collect();
 
@@ -874,6 +875,7 @@ pub async fn load_sync_runs_paginated(
             message: String::new(),
             timestamp: row.timestamp,
             files_changed: row.documents_changed as usize,
+            duration_ms: row.duration_ms,
         })
         .collect();
 

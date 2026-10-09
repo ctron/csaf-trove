@@ -112,4 +112,7 @@ pub struct CommitInfo {
     pub timestamp: OffsetDateTime,
     /// Number of documents changed in this commit.
     pub files_changed: usize,
+    /// Total run duration in milliseconds, if recorded.
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
 }
