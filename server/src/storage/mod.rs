@@ -11,8 +11,8 @@ pub mod processing;
 pub mod results;
 pub mod scratch;
 pub mod state;
+mod usage;
 pub mod versions;
-
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
@@ -24,12 +24,10 @@ use crate::models::{
 };
 use anyhow::Result;
 use csaf_trove_common::{Paginated, SyncPoint};
+use db::DbPool;
+pub use documents::ProviderInfo;
 use std::path::{Path, PathBuf};
 use time::{Duration, OffsetDateTime};
-
-pub use documents::ProviderInfo;
-
-use db::DbPool;
 
 /// Manages on-disk persistence for repos, state, results, and metrics.
 pub struct Storage {

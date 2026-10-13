@@ -14,6 +14,11 @@ use serde::Deserialize;
 
 /// Returns all provider summaries as JSON, including placeholders for sources awaiting first sync.
 pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {
+    Ok(HttpResponse::Ok().json(list_summaries(&state).await?))
+}
+
+/// Lists stored and pending providers using the same rules as the providers page.
+pub(super) async fn list_summaries(state: &AppState) -> Result<Vec<ProviderSummary>, ApiError> {
     let mut providers = state.storage.list_summaries().await?;
 
     let sources = state.sources.read().await;
@@ -48,7 +53,7 @@ pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> 
     }
 
     providers.sort_by(|a, b| a.provider.cmp(&b.provider));
-    Ok(HttpResponse::Ok().json(providers))
+    Ok(providers)
 }
 
 /// Returns the detail view (summary + metrics) for a single provider.
