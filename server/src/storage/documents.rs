@@ -788,9 +788,9 @@ pub async fn distribution_health(
                 json_extract(document_checks, '$.signature.status') IN ('failed', 'warning', 'missing') OR
                 json_extract(document_checks, '$.digest.status') IN ('failed', 'warning', 'missing')
                 THEN 1 ELSE 0 END) AS check_issues
-        FROM documents
-        WHERE EXISTS (SELECT 1 FROM distribution_membership AS membership
-            WHERE membership.distribution_url = ?1 AND membership.document_url = documents.url)",
+        FROM distribution_membership AS membership
+        JOIN documents ON documents.url = membership.document_url
+        WHERE membership.distribution_url = ?1",
         [distribution_url.into()],
     ))
     .one(db)

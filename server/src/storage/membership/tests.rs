@@ -139,6 +139,36 @@ async fn health_uses_exact_membership_and_survives_unchanged_syncs() {
     assert_eq!(storage.document_count("example.com").await.unwrap(), 2);
 }
 
+/// Health excludes unrelated documents and members without stored records, including empty distributions.
+#[tokio::test]
+async fn health_ignores_unstored_members_and_unrelated_documents() {
+    let (_dir, storage, db) = fixture().await;
+    let missing = "https://cdn.example/csaf/missing.json";
+    storage
+        .save_distribution_membership(
+            "example.com",
+            &membership(&[
+                (WHITE, &[DOCUMENT, missing]),
+                (GREEN, &[missing]),
+                (DIRECTORY, &[]),
+            ]),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        distribution_health(&db, WHITE).await.unwrap(),
+        (1, 0, Some(0.75), Some(0.8), Some(0.9))
+    );
+    for distribution in [GREEN, DIRECTORY] {
+        assert_eq!(
+            distribution_health(&db, distribution).await.unwrap(),
+            (0, 0, None, None, None)
+        );
+    }
+    assert_eq!(storage.document_count("example.com").await.unwrap(), 2);
+}
+
 /// Essential issues count each document once and exclude CSAF test failures.
 #[tokio::test]
 async fn health_counts_essential_issues_without_csaf_tests() {
