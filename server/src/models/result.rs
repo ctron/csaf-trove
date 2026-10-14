@@ -185,6 +185,9 @@ pub struct DocumentValidation {
     /// Revision history entries from the CSAF tracking section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub revision_history: Vec<RevisionEntry>,
+    /// Vulnerabilities referenced by the document, for the cross-provider CVE index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vulnerabilities: Vec<VulnerabilityEntry>,
     /// Number of distinct git versions (commits where the document blob changed).
     #[serde(default = "default_version_count")]
     pub version_count: u32,
@@ -234,6 +237,59 @@ pub struct DocumentCheckFailure {
     pub message: String,
     /// Severity level derived from the test section (`error`, `warning`, or `info`).
     pub severity: String,
+}
+
+/// A document referencing a searched CVE.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CveHit {
+    /// Provider domain the document belongs to.
+    pub domain: String,
+    /// Matched CVE identifier.
+    pub cve: String,
+    /// CSAF tracking ID of the document.
+    pub tracking_id: String,
+    /// Document title.
+    pub title: String,
+    /// URL where the document was discovered.
+    pub url: String,
+    /// Name of the document publisher.
+    pub publisher_name: Option<String>,
+    /// Date of the current (latest) release.
+    pub current_release_date: Option<String>,
+    /// Document status (`draft`, `final`, `interim`).
+    pub status: Option<String>,
+    /// Aggregate severity text of the document.
+    pub aggregate_severity: Option<String>,
+    /// Vulnerability title within the document.
+    pub vulnerability_title: Option<String>,
+    /// Highest CVSS base score of the vulnerability.
+    pub score: Option<f64>,
+    /// Severity of the highest CVSS score.
+    pub severity: Option<String>,
+}
+
+/// Documents across all providers referencing a CVE.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CveSearchResult {
+    /// Matching documents, newest release first.
+    pub hits: Vec<CveHit>,
+    /// Whether more documents matched than were returned.
+    pub truncated: bool,
+}
+
+/// Indexed identifiers and scoring of a single vulnerability in a document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VulnerabilityEntry {
+    /// Upper-cased CVE identifier.
+    pub cve: Option<String>,
+    /// Other identifiers (e.g. GHSA IDs).
+    pub ids: Vec<String>,
+    /// Vulnerability title.
+    pub title: Option<String>,
+    /// Highest CVSS base score.
+    pub score: Option<f64>,
+    /// Severity of the highest CVSS score.
+    pub severity: Option<String>,
 }
 
 /// A single entry in the CSAF revision history.

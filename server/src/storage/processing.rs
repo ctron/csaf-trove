@@ -2,7 +2,7 @@
 use super::{Storage, documents};
 use crate::models::result::ProviderSummary;
 use anyhow::{Context, Result};
-use csaf_trove_entity::{check_failure, document, revision_history};
+use csaf_trove_entity::{check_failure, document, document_vulnerability, revision_history};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     Statement, TransactionTrait,
@@ -110,6 +110,10 @@ impl Storage {
                 .await?;
             revision_history::Entity::delete_many()
                 .filter(revision_history::Column::DocumentId.is_in(ids.clone()))
+                .exec(&txn)
+                .await?;
+            document_vulnerability::Entity::delete_many()
+                .filter(document_vulnerability::Column::DocumentId.is_in(ids.clone()))
                 .exec(&txn)
                 .await?;
             document::Entity::delete_many()

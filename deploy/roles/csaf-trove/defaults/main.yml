@@ -38,6 +38,20 @@ csaf_trove_poll_interval: "5m"
 csaf_trove_sync_interval: "1d"
 csaf_trove_max_concurrent: 5
 
+# Cache configuration.
+# Upper bound of the CVE search cache, weighed as one unit per cached query plus one per hit.
+csaf_trove_cve_cache_capacity: 50000
+# Time after which a cached CVE search expires (humantime); caches are also cleared after every sync.
+csaf_trove_cve_cache_ttl: "15m"
+# Maximum number of documents returned for a single CVE search.
+csaf_trove_cve_cache_max_hits: 500
+
+# Read-only MCP (Model Context Protocol) endpoint at /mcp.
+csaf_trove_mcp_enabled: false
+# Host headers the MCP endpoint accepts (DNS-rebinding protection); must not be empty.
+csaf_trove_mcp_allowed_hosts:
+  - "{{ csaf_trove_domain }}"
+
 # Firewall (UFW).
 csaf_trove_firewall_enabled: true
 

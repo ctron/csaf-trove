@@ -1,10 +1,12 @@
 //! Extraction of displayable content from raw CSAF documents.
 mod test;
 
+use crate::models::result::VulnerabilityEntry;
 use anyhow::Result;
 use csaf_trove_common::document_content::{
     Cwe, DocumentContent, Note, ProductStatusCount, Publisher, Reference, Vulnerability,
 };
+use serde::Deserialize;
 use serde_json::Value;
 
 /// Extracts displayable content from raw CSAF 2.0 or 2.1 JSON.
@@ -21,6 +23,47 @@ pub fn extract_content(json: &[u8]) -> Result<DocumentContent> {
         references: references(&doc["references"]),
         vulnerabilities: array(&val["vulnerabilities"]).map(vulnerability).collect(),
     })
+}
+
+/// Only the `vulnerabilities` section of a CSAF document; everything else is skipped while parsing.
+#[derive(Deserialize)]
+struct VulnerabilitiesOnly {
+    /// Raw vulnerability entries.
+    #[serde(default)]
+    vulnerabilities: Vec<Value>,
+}
+
+/// Extracts the indexable identifiers and scores of every vulnerability in raw CSAF JSON.
+///
+/// Vulnerabilities without any CVE or other identifier are skipped.
+pub fn extract_vulnerability_index(json: &[u8]) -> Result<Vec<VulnerabilityEntry>> {
+    let doc: VulnerabilitiesOnly = serde_json::from_slice(json)?;
+    Ok(doc
+        .vulnerabilities
+        .iter()
+        .filter_map(|vuln| {
+            let cve = string(&vuln["cve"]).map(|cve| normalize_cve(&cve));
+            let ids: Vec<String> = array(&vuln["ids"])
+                .filter_map(|id| string(&id["text"]))
+                .collect();
+            if cve.is_none() && ids.is_empty() {
+                return None;
+            }
+            let (score, severity) = max_cvss(vuln);
+            Some(VulnerabilityEntry {
+                cve,
+                ids,
+                title: string(&vuln["title"]),
+                score,
+                severity,
+            })
+        })
+        .collect())
+}
+
+/// Normalizes a CVE identifier for exact matching: trimmed and upper-cased.
+pub fn normalize_cve(cve: &str) -> String {
+    cve.trim().to_uppercase()
 }
 
 /// Returns the value as an owned string, if it is a string.
@@ -88,12 +131,17 @@ fn cvss_entries(vuln: &Value) -> impl Iterator<Item = &Value> {
         .filter(|cvss| cvss.is_object())
 }
 
-/// Extracts a single vulnerability.
-fn vulnerability(vuln: &Value) -> Vulnerability {
-    let (score, severity) = cvss_entries(vuln)
+/// Returns the highest CVSS base score of a vulnerability and its severity.
+fn max_cvss(vuln: &Value) -> (Option<f64>, Option<String>) {
+    cvss_entries(vuln)
         .filter_map(|cvss| Some((cvss["baseScore"].as_f64()?, string(&cvss["baseSeverity"]))))
         .max_by(|(a, _), (b, _)| a.total_cmp(b))
-        .map_or((None, None), |(score, severity)| (Some(score), severity));
+        .map_or((None, None), |(score, severity)| (Some(score), severity))
+}
+
+/// Extracts a single vulnerability.
+fn vulnerability(vuln: &Value) -> Vulnerability {
+    let (score, severity) = max_cvss(vuln);
 
     let cwes = match vuln.get("cwes") {
         Some(cwes) => array(cwes).filter_map(cwe).collect(),

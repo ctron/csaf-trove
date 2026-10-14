@@ -4,6 +4,7 @@ pub mod error;
 pub mod overview;
 pub mod providers;
 pub mod sync;
+pub mod vulnerabilities;
 pub mod webhook;
 
 use actix_web::web;
@@ -11,6 +12,10 @@ use actix_web::web;
 /// Registers all API routes under `/api`.
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.route("/overview", web::get().to(overview::get));
+    cfg.route(
+        "/vulnerabilities/{cve}",
+        web::get().to(vulnerabilities::find),
+    );
     cfg.service(
         web::scope("/providers")
             .route("", web::get().to(providers::list))

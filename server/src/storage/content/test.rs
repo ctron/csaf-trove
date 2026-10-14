@@ -2,7 +2,8 @@
 
 #![cfg(test)]
 
-use super::extract_content;
+use super::{extract_content, extract_vulnerability_index};
+use crate::models::result::VulnerabilityEntry;
 use csaf_trove_common::document_content::{Cwe, ProductStatusCount};
 use serde_json::json;
 
@@ -130,4 +131,72 @@ fn minimal() {
     assert!(content.notes.is_empty());
     assert!(content.references.is_empty());
     assert!(content.vulnerabilities.is_empty());
+}
+
+#[test]
+fn vulnerability_index_2_0_scores() {
+    let json = serde_json::to_vec(&json!({
+        "document": { "csaf_version": "2.0" },
+        "vulnerabilities": [
+            {
+                "cve": " cve-2024-0001 ",
+                "ids": [{ "system_name": "GitHub", "text": "GHSA-xxxx" }],
+                "title": "Overflow",
+                "scores": [
+                    { "products": ["p1"], "cvss_v3": { "baseScore": 5.0, "baseSeverity": "MEDIUM" } },
+                    { "products": ["p2"], "cvss_v3": { "baseScore": 9.8, "baseSeverity": "CRITICAL" } }
+                ]
+            },
+            { "title": "No identifiers" },
+            { "ids": [{ "system_name": "Example", "text": "EX-1" }] }
+        ]
+    }))
+    .unwrap();
+
+    assert_eq!(
+        extract_vulnerability_index(&json).unwrap(),
+        [
+            VulnerabilityEntry {
+                cve: Some("CVE-2024-0001".into()),
+                ids: vec!["GHSA-xxxx".into()],
+                title: Some("Overflow".into()),
+                score: Some(9.8),
+                severity: Some("CRITICAL".into()),
+            },
+            VulnerabilityEntry {
+                cve: None,
+                ids: vec!["EX-1".into()],
+                title: None,
+                score: None,
+                severity: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn vulnerability_index_2_1_metrics() {
+    let json = serde_json::to_vec(&json!({
+        "document": { "csaf_version": "2.1" },
+        "vulnerabilities": [{
+            "cve": "CVE-2025-0002",
+            "metrics": [{
+                "products": ["p1"],
+                "content": { "cvss_v4": { "baseScore": 7.1, "baseSeverity": "HIGH" } }
+            }]
+        }]
+    }))
+    .unwrap();
+
+    let index = extract_vulnerability_index(&json).unwrap();
+    assert_eq!(index.len(), 1);
+    assert_eq!(index[0].cve.as_deref(), Some("CVE-2025-0002"));
+    assert_eq!(index[0].score, Some(7.1));
+    assert_eq!(index[0].severity.as_deref(), Some("HIGH"));
+}
+
+#[test]
+fn vulnerability_index_without_vulnerabilities() {
+    let json = serde_json::to_vec(&json!({ "document": {} })).unwrap();
+    assert!(extract_vulnerability_index(&json).unwrap().is_empty());
 }

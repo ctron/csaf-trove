@@ -50,6 +50,8 @@ pub struct Model {
     pub check_failures: HasMany<super::check_failure::Entity>,
     #[sea_orm(has_many)]
     pub revision_history: HasMany<super::revision_history::Entity>,
+    #[sea_orm(has_many)]
+    pub vulnerabilities: HasMany<super::document_vulnerability::Entity>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

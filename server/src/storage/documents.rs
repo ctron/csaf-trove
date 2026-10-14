@@ -9,14 +9,17 @@ use sea_orm::{
 use std::collections::HashMap;
 
 use crate::models::result::{
-    DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults, DocumentValidation,
-    FailingTest, ProfileResults, ProfileSummary, ProviderSummary, RevisionEntry, SignatureSummary,
+    CveHit, DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
+    DocumentValidation, FailingTest, ProfileResults, ProfileSummary, ProviderSummary,
+    RevisionEntry, SignatureSummary,
 };
 use csaf_trove_common::{
     CommitInfo, Paginated, SyncPoint,
     document_checks::{CheckOutcome, CheckStatus, DocumentCheckSummary, DocumentChecks},
 };
-use csaf_trove_entity::{check_failure, document, provider_info, revision_history, sync_run};
+use csaf_trove_entity::{
+    check_failure, document, document_vulnerability, provider_info, revision_history, sync_run,
+};
 use time::{Duration, OffsetDateTime};
 
 /// Persisted provider metadata fields for aggregator generation.
@@ -66,9 +69,12 @@ fn tracking_id_from_url(url: &str) -> String {
         .to_string()
 }
 
-/// Deletes all document rows (and their check failures and revision history) for a provider.
+/// Deletes all document rows (and their check failures, revision history and vulnerabilities) for a provider.
 pub async fn delete_all_documents(db: &DatabaseConnection) -> Result<()> {
     check_failure::Entity::delete_many().exec(db).await?;
+    document_vulnerability::Entity::delete_many()
+        .exec(db)
+        .await?;
     revision_history::Entity::delete_many().exec(db).await?;
     document::Entity::delete_many().exec(db).await?;
     Ok(())
@@ -90,6 +96,89 @@ pub async fn document_url(db: &DatabaseConnection, tracking_id: &str) -> Result<
         .one(db)
         .await?;
     Ok(result.map(|(url,)| url))
+}
+
+/// A document row joined with one of its matching vulnerabilities.
+#[derive(Debug, FromQueryResult)]
+struct CveRow {
+    /// Matched CVE identifier.
+    cve: String,
+    /// CSAF tracking ID of the document.
+    tracking_id: String,
+    /// Document title.
+    title: String,
+    /// URL where the document was discovered.
+    url: String,
+    /// Name of the document publisher.
+    publisher_name: Option<String>,
+    /// Date of the current (latest) release.
+    current_release_date: Option<String>,
+    /// Document status.
+    status: Option<String>,
+    /// Aggregate severity text of the document.
+    aggregate_severity: Option<String>,
+    /// Vulnerability title within the document.
+    vulnerability_title: Option<String>,
+    /// Highest CVSS base score of the vulnerability.
+    score: Option<f64>,
+    /// Severity of the highest CVSS score.
+    severity: Option<String>,
+}
+
+/// Finds documents referencing a normalized CVE, either exactly or by prefix, newest release first.
+pub async fn find_by_cve(
+    db: &DatabaseConnection,
+    domain: &str,
+    cve: &str,
+    prefix: bool,
+    limit: u64,
+) -> Result<Vec<CveHit>> {
+    let (condition, values) = if prefix {
+        // Range scan over the index; U+10FFFF sorts after any character a CVE ID can contain.
+        (
+            "v.cve >= ? AND v.cve < ?",
+            vec![cve.into(), format!("{cve}\u{10FFFF}").into()],
+        )
+    } else {
+        ("v.cve = ?", vec![cve.into()])
+    };
+    let sql = format!(
+        "SELECT v.cve AS cve, d.tracking_id, d.title, d.url, d.publisher_name,
+                d.current_release_date, d.status, d.aggregate_severity,
+                v.title AS vulnerability_title, v.score, v.severity
+         FROM document_vulnerabilities v JOIN documents d ON d.id = v.document_id
+         WHERE {condition}
+         ORDER BY d.current_release_date DESC, d.tracking_id, v.cve
+         LIMIT ?"
+    );
+    let mut values = values;
+    values.push(limit.into());
+
+    let rows = CveRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        sql,
+        values,
+    ))
+    .all(db)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| CveHit {
+            domain: domain.to_string(),
+            cve: r.cve,
+            tracking_id: r.tracking_id,
+            title: r.title,
+            url: r.url,
+            publisher_name: r.publisher_name,
+            current_release_date: r.current_release_date,
+            status: r.status,
+            aggregate_severity: r.aggregate_severity,
+            vulnerability_title: r.vulnerability_title,
+            score: r.score,
+            severity: r.severity,
+        })
+        .collect())
 }
 
 /// Upserts document validation results for a provider, preserving documents
@@ -131,7 +220,12 @@ pub async fn save_documents(
                 .await?;
 
             revision_history::Entity::delete_many()
-                .filter(revision_history::Column::DocumentId.is_in(existing_ids))
+                .filter(revision_history::Column::DocumentId.is_in(existing_ids.clone()))
+                .exec(&txn)
+                .await?;
+
+            document_vulnerability::Entity::delete_many()
+                .filter(document_vulnerability::Column::DocumentId.is_in(existing_ids))
                 .exec(&txn)
                 .await?;
 
@@ -228,6 +322,28 @@ pub async fn save_documents(
 
         if !revisions.is_empty() {
             revision_history::Entity::insert_many(revisions)
+                .exec(&txn)
+                .await?;
+        }
+
+        let vulnerabilities = doc
+            .vulnerabilities
+            .iter()
+            .map(|v| {
+                Ok(document_vulnerability::ActiveModel {
+                    document_id: Set(doc_id),
+                    cve: Set(v.cve.clone()),
+                    ids: Set(serde_json::to_string(&v.ids)?),
+                    title: Set(v.title.clone()),
+                    score: Set(v.score),
+                    severity: Set(v.severity.clone()),
+                    ..Default::default()
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if !vulnerabilities.is_empty() {
+            document_vulnerability::Entity::insert_many(vulnerabilities)
                 .exec(&txn)
                 .await?;
         }
@@ -494,6 +610,7 @@ async fn load_failures_for_docs(
                 aggregate_severity: doc.aggregate_severity.clone(),
                 csaf_version: doc.csaf_version.clone(),
                 revision_history: revision_map.get(&doc.id).cloned().unwrap_or_default(),
+                vulnerabilities: vec![],
                 version_count: doc.version_count as u32,
                 retrieval_error: doc.retrieval_error.clone(),
             })

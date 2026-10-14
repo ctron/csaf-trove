@@ -17,8 +17,8 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use git2::{
-    BranchType, Delta, ErrorCode, Index, IndexEntry, IndexTime, Mempack, Odb, Oid, PackBuilder,
-    Repository, Signature, Tree,
+    Blob, BranchType, Delta, ErrorCode, Index, IndexEntry, IndexTime, Mempack, Odb, Oid,
+    PackBuilder, Repository, Signature, Tree,
 };
 use serde::Deserialize;
 use walkdir::WalkDir;
@@ -383,7 +383,19 @@ pub fn commit_snapshot_with_progress(
 /// Reads a blob from the HEAD commit of a bare repo at the given tree path.
 ///
 /// Returns `None` if the repo has no HEAD or the path does not exist in the tree.
+#[cfg(test)]
 pub fn read_head_blob(repo_path: &Path, tree_path: &str) -> Result<Option<Vec<u8>>> {
+    with_head_blob(repo_path, tree_path, <[u8]>::to_vec)
+}
+
+/// Runs `f` on the content of a blob from the HEAD commit, without copying it out of libgit2.
+///
+/// Returns `None` if the repo has no HEAD or the path does not exist in the tree.
+pub fn with_head_blob<T>(
+    repo_path: &Path,
+    tree_path: &str,
+    f: impl FnOnce(&[u8]) -> T,
+) -> Result<Option<T>> {
     let repo = Repository::open_bare(repo_path)?;
     let Ok(head) = repo.head() else {
         return Ok(None);
@@ -394,7 +406,7 @@ pub fn read_head_blob(repo_path: &Path, tree_path: &str) -> Result<Option<Vec<u8
         return Ok(None);
     };
     let blob = repo.find_blob(oid)?;
-    Ok(Some(blob.content().to_vec()))
+    Ok(Some(f(blob.content())))
 }
 
 /// Looks up a blob OID at a known path within a commit's tree.
@@ -574,11 +586,45 @@ pub fn collect_versions(
 }
 
 /// Reads a blob by OID, returning `None` if it does not exist.
+#[cfg(test)]
 pub fn read_blob(repo_path: &Path, blob_id: &str) -> Result<Option<Vec<u8>>> {
+    with_blob(repo_path, blob_id, <[u8]>::to_vec)
+}
+
+/// Runs `f` on the content of a blob, without copying it out of libgit2.
+///
+/// Packed objects can't be streamed by libgit2, so the blob is inflated into its buffer once
+/// and borrowed from there. Returns `None` if the blob does not exist.
+pub fn with_blob<T>(
+    repo_path: &Path,
+    blob_id: &str,
+    f: impl FnOnce(&[u8]) -> T,
+) -> Result<Option<T>> {
     let repo = Repository::open_bare(repo_path)?;
+    Ok(find_blob(&repo, blob_id)?.map(|blob| f(blob.content())))
+}
+
+/// Runs `f` on the contents of two blobs, without copying them out of libgit2.
+///
+/// Returns `None` if either blob does not exist.
+pub fn with_blobs<T>(
+    repo_path: &Path,
+    old_id: &str,
+    new_id: &str,
+    f: impl FnOnce(&[u8], &[u8]) -> T,
+) -> Result<Option<T>> {
+    let repo = Repository::open_bare(repo_path)?;
+    let (Some(old), Some(new)) = (find_blob(&repo, old_id)?, find_blob(&repo, new_id)?) else {
+        return Ok(None);
+    };
+    Ok(Some(f(old.content(), new.content())))
+}
+
+/// Looks up a blob by OID, returning `None` if it does not exist.
+fn find_blob<'r>(repo: &'r Repository, blob_id: &str) -> Result<Option<Blob<'r>>> {
     let oid = Oid::from_str(blob_id).context("invalid blob ID")?;
     match repo.find_blob(oid) {
-        Ok(blob) => Ok(Some(blob.content().to_vec())),
+        Ok(blob) => Ok(Some(blob)),
         Err(e) if e.code() == ErrorCode::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }

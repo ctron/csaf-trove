@@ -18,6 +18,11 @@ use time::OffsetDateTime;
 ///
 /// Storage usage and trend baselines come from a cache refreshed after every finished job.
 pub async fn get(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {
+    Ok(HttpResponse::Ok().json(build(&state).await?))
+}
+
+/// Builds the instance overview shared by the REST API and the MCP endpoint.
+pub(crate) async fn build(state: &AppState) -> Result<Overview, ApiError> {
     let summaries = state.storage.list_summaries().await?;
     let awaiting_first_sync = {
         let known: HashSet<&str> = summaries.iter().map(|s| s.provider.as_str()).collect();
@@ -57,7 +62,7 @@ pub async fn get(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {
             }),
         },
     };
-    Ok(HttpResponse::Ok().json(overview))
+    Ok(overview)
 }
 
 /// Accumulates passed and total test counts for a weighted pass rate.

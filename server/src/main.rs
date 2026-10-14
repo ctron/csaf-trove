@@ -3,6 +3,7 @@
 mod api;
 mod config_sync;
 mod hooks;
+mod mcp;
 mod memory;
 mod models;
 mod pipeline;
@@ -17,7 +18,7 @@ use std::{
     time::Duration,
 };
 
-use actix_web::{App, HttpServer, web};
+use actix_web::{App, HttpResponse, HttpServer, web};
 use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
 use bytesize::ByteSize;
@@ -35,11 +36,12 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 use crate::{
     hooks::Hooks,
+    mcp::McpConfig,
     models::{
         source::Source,
         state::{JobPhase, JobStatus},
     },
-    storage::Storage,
+    storage::{Storage, cache::CacheConfig},
 };
 
 #[derive(Parser)]
@@ -69,6 +71,12 @@ pub struct Config {
     pub source: Vec<Source>,
     /// Aggregator settings (omit to disable aggregator output).
     pub aggregator: Option<AggregatorConfig>,
+    /// In-memory cache settings.
+    #[serde(default)]
+    pub cache: CacheConfig,
+    /// MCP endpoint settings.
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 /// Aggregator configuration for generating `aggregator.json`.
@@ -187,6 +195,29 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Creates isolated state with default settings for tests, storing data in `dir`.
+    #[cfg(test)]
+    pub fn for_test(dir: &Path) -> Arc<Self> {
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "server": {"listen": "127.0.0.1:0"}, "data": {"dir": dir}, "scheduler": {}
+        }))
+        .expect("valid test config");
+        Arc::new(Self {
+            config,
+            storage: Storage::new(dir).expect("test storage"),
+            sources: RwLock::new(HashMap::new()),
+            jobs: RwLock::new(HashMap::new()),
+            api_token: None,
+            webhook_secret: None,
+            data_dir: dir.to_path_buf(),
+            pipeline_locks: RwLock::new(HashMap::new()),
+            sources_changed: Notify::new(),
+            job_notify: watch::channel(()).0,
+            recent_sync_points: RwLock::new(HashMap::new()),
+            hooks: Default::default(),
+        })
+    }
+
     /// Returns the scratch directory for temporary worktrees.
     pub fn work_dir(&self) -> PathBuf {
         self.data_dir.join("work")
@@ -410,7 +441,8 @@ async fn main() -> Result<()> {
     let listen = config.server.listen.clone();
     let data_dir = config.data.dir.clone();
 
-    let storage = Storage::new(&data_dir).context("Failed to initialize storage")?;
+    let storage =
+        Storage::with_cache(&data_dir, &config.cache).context("Failed to initialize storage")?;
 
     if !cli.refresh_summaries.is_empty() {
         for domain in &cli.refresh_summaries {
@@ -554,12 +586,35 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting server on {listen}");
 
+    // Created once, outside the worker factory, so every worker shares the same service.
+    let mcp = state
+        .config
+        .mcp
+        .enabled
+        .then(|| mcp::service(state.clone(), &state.config.mcp))
+        .transpose()
+        .context("Failed to configure MCP endpoint")?;
+    if mcp.is_some() {
+        tracing::info!("Serving read-only MCP endpoint at /mcp");
+    }
+
     let server_state = state.clone();
     HttpServer::new(move || {
         let generated = generate();
         App::new()
             .wrap(TracingLogger::default())
             .app_data(web::Data::from(server_state.clone()))
+            .configure(|cfg| match &mcp {
+                Some(mcp) => {
+                    cfg.service(web::scope("/mcp").service(mcp.clone().scope()));
+                }
+                // Keep the dashboard's catch-all from answering MCP clients with HTML.
+                None => {
+                    cfg.service(
+                        web::scope("/mcp").default_service(web::to(HttpResponse::NotFound)),
+                    );
+                }
+            })
             .service(web::scope("/api").configure(api::config))
             .service(
                 web::scope("/.well-known/csaf-aggregator")

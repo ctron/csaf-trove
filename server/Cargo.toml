@@ -17,14 +17,19 @@ csaf-trove-common = { workspace = true }
 csaf-trove-entity = { workspace = true }
 csaf-trove-migration = { workspace = true }
 csaf-walker = { workspace = true, features = ["csaf", "crypto-openssl"] }
+futures-util = { workspace = true }
 git2 = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 humantime = { workspace = true }
 humantime-serde = { workspace = true }
 libsqlite3-sys = { workspace = true }
+moka = { workspace = true }
 parking_lot = { workspace = true }
+percent-encoding = { workspace = true }
 reqwest = { workspace = true }
+rmcp = { workspace = true }
+rmcp-actix-web = { workspace = true }
 sea-orm = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -27,6 +27,7 @@ csaf-trove-common = { path = "common" }
 csaf-trove-entity = { path = "entity" }
 csaf-trove-migration = { path = "migration" }
 csaf-walker = { version = "0.19", default-features = false }
+futures-util = "0.3"
 git2 = { version = "0.21", features = ["https"] }
 gloo-net = "0.7"
 gloo-timers = { version = "0.4", features = ["futures"] }
@@ -38,9 +39,12 @@ js-sys = "0.3"
 leptos = { version = "0.8", features = ["csr"] }
 leptos_router = "0.8"
 libsqlite3-sys = "0.37"
+moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.12"
 percent-encoding = "2"
 reqwest = "0.13"
+rmcp = "3"
+rmcp-actix-web = "0.13"
 sea-orm = { version = "2.0", features = ["sqlx-sqlite", "runtime-tokio-native-tls", "with-time"] }
 sea-orm-migration = { version = "2.0", features = ["sqlx-sqlite", "runtime-tokio-native-tls"] }
 serde = { version = "1", features = ["derive"] }

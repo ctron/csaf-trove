@@ -13,3 +13,12 @@ poll_interval = "{{ csaf_trove_poll_interval }}"
 [scheduler]
 sync_interval = "{{ csaf_trove_sync_interval }}"
 max_concurrent = {{ csaf_trove_max_concurrent }}
+
+[cache]
+cve_search_capacity = {{ csaf_trove_cve_cache_capacity }}
+cve_search_ttl = "{{ csaf_trove_cve_cache_ttl }}"
+cve_search_max_hits = {{ csaf_trove_cve_cache_max_hits }}
+
+[mcp]
+enabled = {{ csaf_trove_mcp_enabled | bool | lower }}
+allowed_hosts = {{ csaf_trove_mcp_allowed_hosts | to_json }}

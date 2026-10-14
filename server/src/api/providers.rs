@@ -18,7 +18,7 @@ pub async fn list(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> 
 }
 
 /// Lists stored and pending providers using the same rules as the providers page.
-pub(super) async fn list_summaries(state: &AppState) -> Result<Vec<ProviderSummary>, ApiError> {
+pub(crate) async fn list_summaries(state: &AppState) -> Result<Vec<ProviderSummary>, ApiError> {
     let mut providers = state.storage.list_summaries().await?;
 
     let sources = state.sources.read().await;
@@ -61,7 +61,17 @@ pub async fn detail(
     state: web::Data<AppState>,
     domain: web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
-    let domain = domain.into_inner();
+    let detail = load_detail(&state, domain.into_inner())
+        .await?
+        .or_not_found()?;
+    Ok(HttpResponse::Ok().json(detail))
+}
+
+/// Loads a provider's detail view, or a placeholder for a known source awaiting its first sync.
+pub(crate) async fn load_detail(
+    state: &AppState,
+    domain: String,
+) -> Result<Option<ProviderDetail>, ApiError> {
     let sources = state.sources.read().await;
     let source = sources.get(&domain);
     let skip_directories = source
@@ -74,10 +84,10 @@ pub async fn detail(
         .storage
         .provider_detail(&domain, &skip_directories)
         .await?;
-    match detail {
+    Ok(match detail {
         Some(mut d) => {
             d.note = note;
-            Ok(HttpResponse::Ok().json(d))
+            Some(d)
         }
         None if is_known_source => {
             let stub = ProviderDetail {
@@ -102,10 +112,10 @@ pub async fn detail(
                 distributions: vec![],
                 note,
             };
-            Ok(HttpResponse::Ok().json(stub))
+            Some(stub)
         }
-        None => Err(ApiError::NotFound),
-    }
+        None => None,
+    })
 }
 
 /// Pagination parameters for the sync and document version history endpoints.

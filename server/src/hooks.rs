@@ -55,6 +55,12 @@ pub fn spawn(state: &Arc<AppState>) {
     spawn_hook(state, "overview_cache", |state, _events| async move {
         state.storage.refresh_overview().await.map(|_| ())
     });
+    spawn_hook(state, "provider_caches", |state, events| async move {
+        let mut domains: Vec<String> = events.into_iter().map(|e| e.domain).collect();
+        domains.sort();
+        domains.dedup();
+        state.storage.invalidate_provider_caches(&domains).await
+    });
 }
 
 /// Runs `handler` for every batch of events until the channel closes.
@@ -122,5 +128,70 @@ mod tests {
 
         drop(hooks);
         assert!(next_batch(&mut receiver, "test").await.is_none());
+    }
+
+    /// Every finished job, of any kind and outcome, refreshes the provider caches.
+    #[tokio::test]
+    async fn finished_jobs_refresh_provider_caches() {
+        use crate::models::result::{ProfileResults, ProviderSummary};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        let summary = ProviderSummary {
+            checks: None,
+            provider: "a.example".into(),
+            publisher_name: None,
+            validated_at: time::OffsetDateTime::now_utc(),
+            document_count: 0,
+            profiles: ProfileResults {
+                basic: None,
+                extended: None,
+                full: None,
+            },
+            signatures: None,
+            top_failing_tests: vec![],
+            retrieval_errors: 0,
+            note: None,
+        };
+        state
+            .storage
+            .save_summary("a.example", &summary)
+            .await
+            .unwrap();
+        spawn(&state);
+
+        let path = dir.path().join("results/a.example/summary.json");
+        let jobs = [
+            (JobKind::Sync, true),
+            (JobKind::Sync, false),
+            (JobKind::Revalidate, true),
+            (JobKind::Revalidate, false),
+        ];
+        for (count, (kind, success)) in (1..).zip(jobs) {
+            // Change the summary behind the index's back; only the hook can pick it up.
+            let mut json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            json["document_count"] = count.into();
+            std::fs::write(&path, json.to_string()).unwrap();
+
+            state.hooks.job_finished(JobFinished {
+                domain: "a.example".into(),
+                kind,
+                success,
+            });
+
+            let refreshed = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let summaries = state.storage.list_summaries().await.unwrap();
+                    if summaries[0].document_count == count {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            assert!(refreshed.is_ok(), "{kind:?} (success: {success}) refreshed");
+        }
     }
 }

@@ -13,7 +13,7 @@ use tokio::time::{MissedTickBehavior, interval};
 
 /// API response wrapper that adds computed fields to a job status.
 #[derive(Serialize)]
-struct SyncStatusEntry {
+pub(crate) struct SyncStatusEntry {
     /// The underlying job status fields.
     #[serde(flatten)]
     job: JobStatus,
@@ -35,7 +35,7 @@ struct SyncStatusEntry {
 /// Builds status entries with computed durations for all providers.
 ///
 /// Includes placeholder entries for enabled sources that have never been synced.
-async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEntry> {
+pub(crate) async fn build_status_entries(state: &AppState) -> HashMap<String, SyncStatusEntry> {
     let jobs = state.jobs.read().await;
     let sources = state.sources.read().await;
     let sparklines = state.recent_sync_points.read().await;

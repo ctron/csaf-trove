@@ -14,10 +14,11 @@ use crate::{
     models::{
         result::{
             DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
-            DocumentValidation, RevisionEntry,
+            DocumentValidation, RevisionEntry, VulnerabilityEntry,
         },
         source::Source,
     },
+    storage::content::extract_vulnerability_index,
 };
 use anyhow::Result;
 use csaf_trove_common::document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks};
@@ -107,6 +108,8 @@ struct DocumentResult {
     csaf_version: Option<String>,
     /// Revision history entries.
     revision_history: Vec<RevisionEntry>,
+    /// Indexed vulnerabilities.
+    vulnerabilities: Vec<VulnerabilityEntry>,
 }
 
 /// Documents at least this large are logged with memory usage after validation.
@@ -189,6 +192,11 @@ pub async fn validate_provider(
                         let tracking_id = verified.csaf.document().tracking().id().to_string();
                         let title = verified.csaf.document().title().to_string();
                         let meta = extract_metadata(&verified.csaf);
+                        let vulnerabilities = extract_vulnerability_index(&verified.advisory.data)
+                            .unwrap_or_else(|e| {
+                                tracing::warn!(domain, "Failed to index vulnerabilities: {e}");
+                                vec![]
+                            });
                         let url =
                             reconstruct_original_url(&verified.advisory.discovered.url, &worktree);
 
@@ -339,6 +347,7 @@ pub async fn validate_provider(
                             aggregate_severity: meta.aggregate_severity,
                             csaf_version: meta.csaf_version,
                             revision_history: meta.revision_history,
+                            vulnerabilities,
                         }
                     }
                     Err(e) => {
@@ -392,6 +401,7 @@ pub async fn validate_provider(
                             aggregate_severity: None,
                             csaf_version: None,
                             revision_history: vec![],
+                            vulnerabilities: vec![],
                         }
                     }
                 };
@@ -466,6 +476,7 @@ fn build_document_validation(doc: DocumentResult) -> DocumentValidation {
         aggregate_severity: doc.aggregate_severity,
         csaf_version: doc.csaf_version,
         revision_history: doc.revision_history,
+        vulnerabilities: doc.vulnerabilities,
         version_count: 1,
         retrieval_error,
     }

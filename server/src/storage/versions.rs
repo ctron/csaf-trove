@@ -16,6 +16,18 @@ use sea_orm::{
 use std::{collections::BTreeSet, path::Path};
 use tokio::{sync::mpsc, task::spawn_blocking};
 
+/// Raw JSON of a stored document.
+#[derive(Debug)]
+pub enum RawDocument {
+    /// The document text.
+    Json(String),
+    /// The document exceeds the requested limit and was not copied.
+    TooLarge {
+        /// Size of the document in bytes.
+        size: usize,
+    },
+}
+
 /// Maximum rows per multi-row insert, bounding SQLite parameter counts.
 const INSERT_CHUNK: usize = 500;
 
@@ -228,14 +240,18 @@ impl Storage {
         Ok(url.map(|url| (db, url)))
     }
 
-    /// Reads a blob from a provider's repository without blocking the runtime.
-    async fn read_blob(&self, domain: &str, blob_id: &str) -> Result<Option<Vec<u8>>> {
+    /// Runs `f` on a blob in a blocking task, borrowing the content from libgit2 without a copy.
+    async fn with_blob<T, F>(&self, domain: &str, blob_id: &str, f: F) -> Result<Option<T>>
+    where
+        F: FnOnce(&[u8]) -> T + Send + 'static,
+        T: Send + 'static,
+    {
         let repo_path = self.repo_path(domain);
         if !repo_path.exists() {
             return Ok(None);
         }
         let blob_id = blob_id.to_string();
-        spawn_blocking(move || git_repo::read_blob(&repo_path, &blob_id)).await?
+        spawn_blocking(move || git_repo::with_blob(&repo_path, &blob_id, f)).await?
     }
 
     /// Returns a page of the version history for a document, newest first.
@@ -268,15 +284,19 @@ impl Storage {
         let Some(new) = next_newer_version(&db, &old).await? else {
             return Ok(None);
         };
-        let (Some(old_blob), Some(new_blob)) = (
-            self.read_blob(domain, &old.blob_id).await?,
-            self.read_blob(domain, &new.blob_id).await?,
-        ) else {
+        let repo_path = self.repo_path(domain);
+        if !repo_path.exists() {
             return Ok(None);
-        };
-        Ok(Some(
-            spawn_blocking(move || git_repo::diff_documents(&old_blob, &new_blob)).await?,
-        ))
+        }
+        spawn_blocking(move || {
+            git_repo::with_blobs(
+                &repo_path,
+                &old.blob_id,
+                &new.blob_id,
+                git_repo::diff_documents,
+            )
+        })
+        .await?
     }
 
     /// Reads a historical version of a document from git and extracts its metadata.
@@ -292,14 +312,42 @@ impl Storage {
         let Some(version) = find_version(&db, &url, commit_id).await? else {
             return Ok(None);
         };
-        let Some(blob) = self.read_blob(domain, &version.blob_id).await? else {
+        let commit_id = commit_id.to_string();
+        self.with_blob(domain, &version.blob_id, move |blob| {
+            super::extract_metadata_from_json(blob, &commit_id, version.timestamp)
+        })
+        .await?
+        .transpose()
+    }
+
+    /// Reads the raw JSON of a document, either the current version or the one at `commit_id`.
+    ///
+    /// Documents larger than `max_bytes` are reported by size instead of being copied.
+    pub async fn read_document_raw(
+        &self,
+        domain: &str,
+        tracking_id: &str,
+        commit_id: Option<&str>,
+        max_bytes: usize,
+    ) -> Result<Option<RawDocument>> {
+        let Some((db, url)) = self.document_ref(domain, tracking_id).await? else {
             return Ok(None);
         };
-        Ok(Some(super::extract_metadata_from_json(
-            &blob,
-            commit_id,
-            version.timestamp,
-        )?))
+        let version = match commit_id {
+            Some(commit_id) => find_version(&db, &url, commit_id).await?,
+            None => latest_version(&db, &url).await?,
+        };
+        let Some(version) = version else {
+            return Ok(None);
+        };
+        self.with_blob(domain, &version.blob_id, move |blob| {
+            if blob.len() > max_bytes {
+                return Ok(RawDocument::TooLarge { size: blob.len() });
+            }
+            Ok(RawDocument::Json(std::str::from_utf8(blob)?.to_owned()))
+        })
+        .await?
+        .transpose()
     }
 
     /// Reads the current version of a document from git and extracts its displayable content.
@@ -314,9 +362,8 @@ impl Storage {
         let Some(version) = latest_version(&db, &url).await? else {
             return Ok(None);
         };
-        let Some(blob) = self.read_blob(domain, &version.blob_id).await? else {
-            return Ok(None);
-        };
-        Ok(Some(content::extract_content(&blob)?))
+        self.with_blob(domain, &version.blob_id, content::extract_content)
+            .await?
+            .transpose()
     }
 }

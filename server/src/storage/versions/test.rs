@@ -2,7 +2,7 @@
 
 #![cfg(test)]
 
-use super::{list_versions, record_versions, versions_missing};
+use super::{RawDocument, list_versions, record_versions, versions_missing};
 use crate::{
     models::result::DiffTag,
     storage::{
@@ -268,4 +268,34 @@ async fn storage_reads_versions_by_blob() {
             .unwrap()
             .is_none()
     );
+
+    let current = storage
+        .read_document_raw(domain, "a", None, usize::MAX)
+        .await
+        .unwrap();
+    assert!(matches!(current, Some(RawDocument::Json(text)) if text.as_bytes() == doc(60)));
+    let first = storage
+        .read_document_raw(domain, "a", Some(&oldest.commit_id), usize::MAX)
+        .await
+        .unwrap();
+    assert!(matches!(first, Some(RawDocument::Json(text)) if text.as_bytes() == doc(1)));
+    let oversized = storage
+        .read_document_raw(domain, "a", None, 10)
+        .await
+        .unwrap();
+    assert!(matches!(oversized, Some(RawDocument::TooLarge { size }) if size == doc(60).len()));
+    assert!(
+        storage
+            .read_document_raw(domain, "missing", None, usize::MAX)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let content = storage
+        .read_document_content(domain, "a")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(content.vulnerabilities.is_empty());
 }

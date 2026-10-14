@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod content;
 pub mod db;
 pub mod documents;
@@ -18,18 +19,23 @@ pub mod versions;
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
-        DistributionHealth, DocumentValidation, HistoricalDocument, ProviderDetail,
-        ProviderSummary, RevisionEntry,
+        CveSearchResult, DistributionHealth, DocumentValidation, HistoricalDocument,
+        ProviderDetail, ProviderSummary, RevisionEntry,
     },
     state::SyncState,
 };
 use crate::pipeline::sync::RetrievalFailure;
 use anyhow::Result;
+use cache::{CacheConfig, CveSearchCache, SummaryIndex};
 use csaf_trove_common::{Paginated, SyncPoint};
 use db::DbPool;
 pub use documents::ProviderInfo;
+use futures_util::{StreamExt, TryStreamExt, stream};
 use provider::{ProviderDir, ProviderKey, read_json, write_json};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use time::{Duration, OffsetDateTime};
 
 /// Manages on-disk persistence for repos, state, results, and metrics.
@@ -46,7 +52,14 @@ pub struct Storage {
     db: DbPool,
     /// Cached storage usage and trend baselines for the overview page.
     overview: overview::OverviewCache,
+    /// In-memory index of all provider summaries.
+    summaries: SummaryIndex,
+    /// Cached cross-provider CVE search results.
+    cve_search: CveSearchCache,
 }
+
+/// Provider databases queried concurrently by a cross-provider search.
+const SEARCH_FANOUT: usize = 8;
 
 impl Storage {
     /// Logs SQLite allocations and existing provider pool occupancy.
@@ -54,8 +67,13 @@ impl Storage {
         self.db.log_memory().await;
     }
 
-    /// Creates a new storage layer, ensuring all directories exist.
+    /// Creates a new storage layer with default cache settings, ensuring all directories exist.
     pub fn new(data_dir: &Path) -> Result<Self> {
+        Self::with_cache(data_dir, &CacheConfig::default())
+    }
+
+    /// Creates a new storage layer, ensuring all directories exist.
+    pub fn with_cache(data_dir: &Path, cache: &CacheConfig) -> Result<Self> {
         let results_root = data_dir.join("results");
         let storage = Self {
             repos_root: data_dir.join("repos"),
@@ -64,6 +82,8 @@ impl Storage {
             metrics_root: data_dir.join("metrics"),
             db: DbPool::new(results_root),
             overview: Default::default(),
+            summaries: Default::default(),
+            cve_search: CveSearchCache::new(cache),
         };
         std::fs::create_dir_all(&storage.repos_root)?;
         std::fs::create_dir_all(&storage.state_root)?;
@@ -121,12 +141,69 @@ impl Storage {
             tokio::fs::remove_file(&metrics_path).await?;
         }
 
+        self.summaries.remove(domain).await;
+        self.cve_search.invalidate_all();
         Ok(())
     }
 
     /// Lists cached provider summaries without rebuilding them, sorted by domain.
     pub async fn list_summaries(&self) -> Result<Vec<ProviderSummary>> {
-        results::list_summaries(&self.results_root).await
+        self.summaries.all(&self.results_root).await
+    }
+
+    /// Refreshes cross-provider caches after jobs for these providers finished.
+    ///
+    /// CVE search results can contain hits from any provider, so they are all dropped.
+    pub async fn invalidate_provider_caches(&self, domains: &[String]) -> Result<()> {
+        self.cve_search.invalidate_all();
+        for domain in domains {
+            self.summaries
+                .reload(domain, &self.results_dir(domain))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Finds documents across all providers referencing a CVE, exactly or by prefix.
+    ///
+    /// Results are cached until a provider job finishes or the configured TTL expires.
+    pub async fn find_by_cve(&self, cve: &str, prefix: bool) -> Result<Arc<CveSearchResult>> {
+        let cve = content::normalize_cve(cve);
+        let mode = if prefix { "prefix" } else { "exact" };
+        let key = format!("{mode}:{cve}");
+        self.cve_search
+            .get_or_compute(key, self.search_cve(cve, prefix))
+            .await
+    }
+
+    /// Queries every provider database for a normalized CVE, bypassing the cache.
+    async fn search_cve(&self, cve: String, prefix: bool) -> Result<CveSearchResult> {
+        let max_hits = self.cve_search.max_hits;
+        let limit = max_hits as u64 + 1;
+        let domains = self.summaries.domains(&self.results_root).await?;
+        let cve = &cve;
+
+        let mut hits: Vec<_> = stream::iter(domains)
+            .map(|domain| async move {
+                let Some(db) = self.db.get_if_exists(&domain).await? else {
+                    return Ok(vec![]);
+                };
+                documents::find_by_cve(&db, &domain, cve, prefix, limit).await
+            })
+            .buffer_unordered(SEARCH_FANOUT)
+            .try_concat()
+            .await?;
+
+        hits.sort_by(|a, b| {
+            b.current_release_date
+                .cmp(&a.current_release_date)
+                .then_with(|| a.domain.cmp(&b.domain))
+                .then_with(|| a.tracking_id.cmp(&b.tracking_id))
+                .then_with(|| a.cve.cmp(&b.cve))
+        });
+        let truncated = hits.len() > max_hits;
+        hits.truncate(max_hits);
+        Ok(CveSearchResult { hits, truncated })
     }
 
     /// Returns the combined summary, metrics, and history for a provider.
@@ -204,16 +281,16 @@ impl Storage {
             return Ok(vec![]);
         }
 
-        let blob = tokio::task::spawn_blocking(move || {
-            git_repo::read_head_blob(&repo_path, "metadata/provider-metadata.json")
+        let metadata = tokio::task::spawn_blocking(move || {
+            git_repo::with_head_blob(&repo_path, "metadata/provider-metadata.json", |blob| {
+                serde_json::from_slice::<serde_json::Value>(blob)
+            })
         })
         .await??;
 
-        let Some(blob) = blob else {
+        let Some(metadata) = metadata.transpose()? else {
             return Ok(vec![]);
         };
-
-        let metadata: serde_json::Value = serde_json::from_slice(&blob)?;
         let dist_array = match metadata.get("distributions").and_then(|v| v.as_array()) {
             Some(arr) => arr,
             None => return Ok(vec![]),
@@ -359,7 +436,9 @@ impl Storage {
     pub async fn save_summary(&self, domain: &str, summary: &ProviderSummary) -> Result<()> {
         self.results_dir(domain)
             .write_json("summary.json", summary)
-            .await
+            .await?;
+        self.summaries.update(domain, summary).await;
+        Ok(())
     }
 
     /// Loads the metrics time series for a provider.

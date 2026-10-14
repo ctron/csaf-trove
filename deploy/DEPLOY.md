@@ -34,6 +34,20 @@ See `roles/csaf-trove/defaults/main.yml` for all available variables.
 - Caddy reverse proxy with automatic TLS (enabled by default)
 - Auto-generated API token and webhook secret in `/etc/csaf-trove/`
 
+### MCP endpoint
+
+A read-only [MCP](https://modelcontextprotocol.io) endpoint can be served at `/mcp`, e.g. for
+`claude mcp add --transport http csaf-trove https://csaf.example.com/mcp`. It is disabled by default:
+
+```sh
+ansible-playbook -i 'your-host.example.com,' -u root playbook.yml \
+  -e csaf_trove_mcp_enabled=true
+```
+
+Requests are only accepted for the hosts in `csaf_trove_mcp_allowed_hosts`, which defaults to
+`csaf_trove_domain`. The CVE search cache is tuned with `csaf_trove_cve_cache_capacity`,
+`csaf_trove_cve_cache_ttl` and `csaf_trove_cve_cache_max_hits`.
+
 ## After deployment
 
 ### File descriptor limits
