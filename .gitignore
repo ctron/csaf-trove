@@ -9,3 +9,4 @@ dashboard/dist/
 /local-config.toml
 /.rtk
 /.codex
+/.envrc
