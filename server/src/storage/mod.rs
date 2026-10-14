@@ -8,6 +8,7 @@ pub mod git_repo;
 mod membership;
 mod path_set;
 pub mod processing;
+pub mod provider;
 pub mod results;
 pub mod scratch;
 pub mod state;
@@ -19,26 +20,27 @@ use crate::models::{
         DistributionHealth, DocumentValidation, HistoricalDocument, ProviderDetail,
         ProviderSummary, RevisionEntry,
     },
-    source::sanitize_domain,
     state::SyncState,
 };
+use crate::pipeline::sync::RetrievalFailure;
 use anyhow::Result;
 use csaf_trove_common::{Paginated, SyncPoint};
 use db::DbPool;
 pub use documents::ProviderInfo;
+use provider::{ProviderDir, ProviderKey, read_json, write_json};
 use std::path::{Path, PathBuf};
 use time::{Duration, OffsetDateTime};
 
 /// Manages on-disk persistence for repos, state, results, and metrics.
 pub struct Storage {
     /// Directory containing bare git repos per provider.
-    repos_dir: PathBuf,
+    repos_root: PathBuf,
     /// Directory containing per-provider sync state.
-    state_dir: PathBuf,
+    state_root: PathBuf,
     /// Directory containing per-provider validation summaries.
-    results_dir: PathBuf,
+    results_root: PathBuf,
     /// Directory containing per-provider metrics time series.
-    metrics_dir: PathBuf,
+    metrics_root: PathBuf,
     /// Per-provider SQLite connection pool.
     db: DbPool,
 }
@@ -51,43 +53,57 @@ impl Storage {
 
     /// Creates a new storage layer, ensuring all directories exist.
     pub fn new(data_dir: &Path) -> Result<Self> {
-        let results_dir = data_dir.join("results");
+        let results_root = data_dir.join("results");
         let storage = Self {
-            repos_dir: data_dir.join("repos"),
-            state_dir: data_dir.join("state"),
-            results_dir: results_dir.clone(),
-            metrics_dir: data_dir.join("metrics"),
-            db: DbPool::new(results_dir),
+            repos_root: data_dir.join("repos"),
+            state_root: data_dir.join("state"),
+            results_root: results_root.clone(),
+            metrics_root: data_dir.join("metrics"),
+            db: DbPool::new(results_root),
         };
-        std::fs::create_dir_all(&storage.repos_dir)?;
-        std::fs::create_dir_all(&storage.state_dir)?;
-        std::fs::create_dir_all(&storage.results_dir)?;
-        std::fs::create_dir_all(&storage.metrics_dir)?;
+        std::fs::create_dir_all(&storage.repos_root)?;
+        std::fs::create_dir_all(&storage.state_root)?;
+        std::fs::create_dir_all(&storage.results_root)?;
+        std::fs::create_dir_all(&storage.metrics_root)?;
         Ok(storage)
+    }
+
+    /// Returns a provider's sync state directory.
+    fn state_dir(&self, domain: &str) -> ProviderDir {
+        ProviderDir::new(&self.state_root, domain)
+    }
+
+    /// Returns a provider's results directory, which also holds its database.
+    fn results_dir(&self, domain: &str) -> ProviderDir {
+        ProviderDir::new(&self.results_root, domain)
+    }
+
+    /// Returns the path of a provider's metrics time series file.
+    fn metrics_file(&self, domain: &str) -> PathBuf {
+        self.metrics_root
+            .join(format!("{}.json", ProviderKey::from(domain)))
     }
 
     /// Returns the path to the bare git repo for a provider.
     pub fn repo_path(&self, domain: &str) -> PathBuf {
-        let key = sanitize_domain(domain);
-        self.repos_dir.join(format!("{key}.git"))
+        self.repos_root
+            .join(format!("{}.git", ProviderKey::from(domain)))
     }
 
     /// Returns `true` if any on-disk data exists for the given provider.
     pub fn has_provider_data(&self, domain: &str) -> bool {
-        let key = sanitize_domain(domain);
         self.repo_path(domain).exists()
-            || self.state_dir.join(&key).exists()
-            || self.results_dir.join(&key).exists()
-            || self.metrics_dir.join(format!("{key}.json")).exists()
+            || self.state_dir(domain).path().exists()
+            || self.results_dir(domain).path().exists()
+            || self.metrics_file(domain).exists()
     }
 
     /// Deletes all on-disk data for a provider: repo, state, results, and metrics.
     pub async fn delete_provider(&self, domain: &str) -> Result<()> {
-        let key = sanitize_domain(domain);
         let dirs = [
             self.repo_path(domain),
-            self.state_dir.join(&key),
-            self.results_dir.join(&key),
+            self.state_dir(domain).path().to_path_buf(),
+            self.results_dir(domain).path().to_path_buf(),
         ];
 
         for path in &dirs {
@@ -96,7 +112,7 @@ impl Storage {
             }
         }
 
-        let metrics_path = self.metrics_dir.join(format!("{key}.json"));
+        let metrics_path = self.metrics_file(domain);
         if metrics_path.exists() {
             tokio::fs::remove_file(&metrics_path).await?;
         }
@@ -106,7 +122,7 @@ impl Storage {
 
     /// Lists cached provider summaries without rebuilding them, sorted by domain.
     pub async fn list_summaries(&self) -> Result<Vec<ProviderSummary>> {
-        results::list_summaries(&self.results_dir).await
+        results::list_summaries(&self.results_root).await
     }
 
     /// Returns the combined summary, metrics, and history for a provider.
@@ -115,7 +131,7 @@ impl Storage {
         domain: &str,
         skip_directories: &[String],
     ) -> Result<Option<ProviderDetail>> {
-        let summary = results::load_summary(&self.results_dir, domain).await?;
+        let summary = self.load_summary(domain).await?;
         let metrics = self.load_metrics(domain).await.ok();
         let history = self.provider_history(domain).await?.unwrap_or_default();
 
@@ -124,7 +140,7 @@ impl Storage {
         };
 
         let distributions = self
-            .compute_distribution_health(domain, skip_directories)
+            .distribution_health(domain, skip_directories)
             .await
             .unwrap_or_default();
 
@@ -135,6 +151,42 @@ impl Storage {
             distributions,
             note: None,
         }))
+    }
+
+    /// Returns cached per-distribution health, computing and caching it on first access.
+    ///
+    /// Aggregating health reads every member document, which is far too slow for large
+    /// providers to do per request; it only changes when a sync or revalidation runs.
+    async fn distribution_health(
+        &self,
+        domain: &str,
+        skip_directories: &[String],
+    ) -> Result<Vec<DistributionHealth>> {
+        let mut distributions = match self
+            .results_dir(domain)
+            .read_json("distributions.json")
+            .await?
+        {
+            Some(distributions) => distributions,
+            None => self.refresh_distribution_health(domain).await?,
+        };
+        for distribution in &mut distributions {
+            distribution.skipped =
+                distribution.kind == "directory" && skip_directories.contains(&distribution.url);
+        }
+        Ok(distributions)
+    }
+
+    /// Recomputes per-distribution health and caches it next to the provider summary.
+    pub async fn refresh_distribution_health(
+        &self,
+        domain: &str,
+    ) -> Result<Vec<DistributionHealth>> {
+        let distributions = self.compute_distribution_health(domain, &[]).await?;
+        self.results_dir(domain)
+            .write_json("distributions.json", &distributions)
+            .await?;
+        Ok(distributions)
     }
 
     /// Reads provider-metadata.json from the bare repo and computes per-distribution health.
@@ -260,60 +312,62 @@ impl Storage {
 
     /// Loads the sync state for a provider, creating a default if absent.
     pub async fn load_sync_state(&self, domain: &str) -> Result<SyncState> {
-        state::load_sync_state(&self.state_dir, domain).await
+        Ok(self
+            .state_dir(domain)
+            .read_json("sync.json")
+            .await?
+            .unwrap_or_else(|| SyncState::new(domain.to_string())))
     }
 
     /// Lists all persisted sync states.
     pub async fn list_sync_states(&self) -> Result<Vec<SyncState>> {
-        state::list_sync_states(&self.state_dir).await
+        state::list_sync_states(&self.state_root).await
     }
 
     /// Persists the sync state for a provider.
     pub async fn save_sync_state(&self, state: &SyncState) -> Result<()> {
-        state::save_sync_state(&self.state_dir, state).await
+        self.state_dir(&state.domain)
+            .write_json("sync.json", state)
+            .await
     }
 
     /// Persists distribution-level errors for a provider.
     pub async fn save_distribution_errors(
         &self,
         domain: &str,
-        errors: &[crate::pipeline::sync::RetrievalFailure],
+        errors: &[RetrievalFailure],
     ) -> Result<()> {
-        state::save_distribution_errors(&self.state_dir, domain, errors).await
+        self.state_dir(domain)
+            .write_json("distribution-errors.json", errors)
+            .await
     }
 
     /// Loads distribution-level errors for a provider.
-    pub async fn load_distribution_errors(
-        &self,
-        domain: &str,
-    ) -> Result<Vec<crate::pipeline::sync::RetrievalFailure>> {
-        state::load_distribution_errors(&self.state_dir, domain).await
+    pub async fn load_distribution_errors(&self, domain: &str) -> Result<Vec<RetrievalFailure>> {
+        Ok(self
+            .state_dir(domain)
+            .read_json("distribution-errors.json")
+            .await?
+            .unwrap_or_default())
     }
 
     /// Persists a validation summary for a provider.
     pub async fn save_summary(&self, domain: &str, summary: &ProviderSummary) -> Result<()> {
-        results::save_summary(&self.results_dir, domain, summary).await
+        self.results_dir(domain)
+            .write_json("summary.json", summary)
+            .await
     }
 
     /// Loads the metrics time series for a provider.
     pub async fn load_metrics(&self, domain: &str) -> Result<MetricsTimeSeries> {
-        let key = sanitize_domain(domain);
-        let path = self.metrics_dir.join(format!("{key}.json"));
-        if path.exists() {
-            let data = tokio::fs::read_to_string(&path).await?;
-            Ok(serde_json::from_str(&data)?)
-        } else {
-            Ok(MetricsTimeSeries::new(domain.to_string()))
-        }
+        Ok(read_json(&self.metrics_file(domain))
+            .await?
+            .unwrap_or_else(|| MetricsTimeSeries::new(domain.to_string())))
     }
 
     /// Persists the metrics time series for a provider.
     pub async fn save_metrics(&self, domain: &str, metrics: &MetricsTimeSeries) -> Result<()> {
-        let key = sanitize_domain(domain);
-        let path = self.metrics_dir.join(format!("{key}.json"));
-        let data = serde_json::to_string_pretty(metrics)?;
-        tokio::fs::write(&path, data).await?;
-        Ok(())
+        write_json(&self.metrics_file(domain), metrics).await
     }
 
     /// Deletes all document rows for a provider (used before full re-validation).
@@ -421,7 +475,7 @@ impl Storage {
     /// Loads provider metadata info for all providers that have results directories.
     pub async fn load_all_provider_info(&self) -> Result<Vec<(String, ProviderInfo)>> {
         let mut result = Vec::new();
-        let mut entries = tokio::fs::read_dir(&self.results_dir).await?;
+        let mut entries = tokio::fs::read_dir(&self.results_root).await?;
         while let Some(entry) = entries.next_entry().await? {
             if !entry.path().is_dir() {
                 continue;

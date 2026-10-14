@@ -1,4 +1,4 @@
-use crate::models::source::sanitize_domain;
+use super::provider::{ProviderDir, ProviderKey};
 use anyhow::Result;
 use csaf_trove_migration::{Migrator, MigratorTrait};
 use libsqlite3_sys::sqlite3_memory_used;
@@ -11,7 +11,7 @@ mod memory;
 /// Manages per-provider SQLite database connections with lazy initialization.
 pub struct DbPool {
     results_dir: PathBuf,
-    connections: RwLock<HashMap<String, DatabaseConnection>>,
+    connections: RwLock<HashMap<ProviderKey, DatabaseConnection>>,
 }
 
 impl DbPool {
@@ -26,7 +26,7 @@ impl DbPool {
             let available = pool.num_idle();
             open += size;
             idle += available;
-            tracing::info!(domain, open = size, idle = available, "SQLite pool sample");
+            tracing::info!(%domain, open = size, idle = available, "SQLite pool sample");
         }
         // SAFETY: SQLite's allocator statistics are thread-safe and take no pointers.
         let allocated_bytes = unsafe { sqlite3_memory_used() };
@@ -50,7 +50,7 @@ impl DbPool {
     /// Returns a connection for the given provider, creating the database and
     /// running migrations if needed.
     pub async fn get(&self, domain: &str) -> Result<DatabaseConnection> {
-        let key = sanitize_domain(domain);
+        let key = ProviderKey::from(domain);
 
         {
             let conns = self.connections.read().await;
@@ -71,7 +71,7 @@ impl DbPool {
 
     /// Returns a connection only if the database file already exists on disk.
     pub async fn get_if_exists(&self, domain: &str) -> Result<Option<DatabaseConnection>> {
-        let key = sanitize_domain(domain);
+        let key = ProviderKey::from(domain);
 
         {
             let conns = self.connections.read().await;
@@ -80,7 +80,7 @@ impl DbPool {
             }
         }
 
-        let db_path = self.db_path(&key);
+        let db_path = self.dir(&key).file("documents.db");
         if !db_path.exists() {
             return Ok(None);
         }
@@ -95,21 +95,19 @@ impl DbPool {
         Ok(Some(conn))
     }
 
-    /// Returns the path to the SQLite database file for a provider key.
-    fn db_path(&self, key: &str) -> PathBuf {
-        self.results_dir.join(key).join("documents.db")
+    /// Returns the directory holding a provider's SQLite database.
+    fn dir(&self, key: &ProviderKey) -> ProviderDir {
+        ProviderDir::new(&self.results_dir, key)
     }
 
     /// Opens a SQLite connection, sets PRAGMAs, and runs pending migrations.
-    async fn open_and_migrate(&self, key: &str) -> Result<DatabaseConnection> {
-        let dir = self.results_dir.join(key);
-        tokio::fs::create_dir_all(&dir).await?;
-        let db_path = dir.join("documents.db");
+    async fn open_and_migrate(&self, key: &ProviderKey) -> Result<DatabaseConnection> {
+        let db_path = self.dir(key).ensure().await?.join("documents.db");
 
         let url = format!("sqlite://{}?mode=rwc", db_path.display());
         let mut opts = ConnectOptions::new(url);
         opts.max_connections(5).sqlx_logging(false);
-        memory::configure(&mut opts, key);
+        memory::configure(&mut opts, key.as_ref());
 
         let conn = Database::connect(opts).await?;
 

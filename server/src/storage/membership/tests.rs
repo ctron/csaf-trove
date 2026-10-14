@@ -1,9 +1,12 @@
 //! Distribution health with actual Git metadata and a migrated provider database.
 
 use super::*;
-use crate::storage::{
-    documents::distribution_health,
-    git_repo::{commit_snapshot, prepare_worktree},
+use crate::{
+    models::result::DistributionHealth,
+    storage::{
+        documents::distribution_health,
+        git_repo::{commit_snapshot, prepare_worktree},
+    },
 };
 use sea_orm::DatabaseConnection;
 use std::{fs, path::Path};
@@ -258,4 +261,52 @@ async fn membership_batches_and_rolls_back_failed_updates() {
         .await
         .unwrap();
     assert_eq!(distribution_health(&db, WHITE).await.unwrap().0, 1);
+}
+
+/// Requests serve cached health, which only changes on refresh, while skips follow the current configuration.
+#[tokio::test]
+async fn health_is_cached_until_refreshed() {
+    let (_dir, storage, _db) = fixture().await;
+    storage
+        .save_distribution_membership("example.com", &membership(&[(WHITE, &[DOCUMENT])]))
+        .await
+        .unwrap();
+    let count = |health: &[DistributionHealth]| {
+        health
+            .iter()
+            .find(|h| h.url == WHITE)
+            .unwrap()
+            .document_count
+    };
+    assert_eq!(
+        count(
+            &storage
+                .distribution_health("example.com", &[])
+                .await
+                .unwrap()
+        ),
+        1
+    );
+
+    storage
+        .save_distribution_membership("example.com", &membership(&[(WHITE, &[])]))
+        .await
+        .unwrap();
+    let cached = storage
+        .distribution_health("example.com", &[DIRECTORY.into()])
+        .await
+        .unwrap();
+    assert_eq!(count(&cached), 1);
+    assert!(cached.iter().find(|h| h.url == DIRECTORY).unwrap().skipped);
+
+    storage
+        .refresh_distribution_health("example.com")
+        .await
+        .unwrap();
+    let refreshed = storage
+        .distribution_health("example.com", &[])
+        .await
+        .unwrap();
+    assert_eq!(count(&refreshed), 0);
+    assert!(refreshed.iter().all(|h| !h.skipped));
 }

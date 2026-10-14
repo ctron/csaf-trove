@@ -1,5 +1,5 @@
 //! Durable processing checkpoints and targeted document maintenance.
-use super::{Storage, documents, results};
+use super::{Storage, documents};
 use crate::models::result::ProviderSummary;
 use anyhow::{Context, Result};
 use csaf_trove_entity::{check_failure, document, revision_history};
@@ -66,7 +66,7 @@ impl Storage {
 
     /// Reads one provider's cached summary without scanning other providers.
     pub async fn load_summary(&self, domain: &str) -> Result<Option<ProviderSummary>> {
-        results::load_summary(&self.results_dir, domain).await
+        self.results_dir(domain).read_json("summary.json").await
     }
 
     /// Explicitly rebuilds a cached summary, preserving its validation timestamp and operator note.

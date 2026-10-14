@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     models::{
-        source::{Source, sanitize_domain},
+        source::Source,
         state::{JobPhase, JobStatus},
     },
     pipeline::{
@@ -17,6 +17,7 @@ use crate::{
             select_processing_with_progress,
         },
         git_repo,
+        provider::ProviderKey,
     },
 };
 use anyhow::{Error, Result};
@@ -304,7 +305,7 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
 async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
     let repo_path = state.storage.repo_path(domain);
-    let worktree_dir = state.work_dir().join(sanitize_domain(domain));
+    let worktree_dir = state.work_dir().join(ProviderKey::from(domain.as_str()));
 
     let result = async {
         // Maintenance must never block a sync; failures only leave the repository unconsolidated.
@@ -380,6 +381,12 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
             .storage
             .save_distribution_membership(domain, &sync_result.membership)
             .await?;
+        timed_processing_step(
+            domain,
+            "distribution_health",
+            state.storage.refresh_distribution_health(domain),
+        )
+        .await?;
 
         // only advance the since token once the full run succeeded, so a failure in a later
         // phase causes the affected documents to be processed again on the next run
@@ -400,12 +407,19 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
 /// Nothing is fetched from the provider; existing results are updated in place.
 async fn run_revalidation(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
-    let worktree_dir = state.work_dir().join(sanitize_domain(domain));
+    let worktree_dir = state.work_dir().join(ProviderKey::from(domain.as_str()));
 
     // No checkout is needed: processing materializes the selected committed inputs.
     let result = process_snapshot(state, source, &worktree_dir, true, &[]).await;
     cleanup_worktree(&worktree_dir).await;
-    result
+    result?;
+    timed_processing_step(
+        domain,
+        "distribution_health",
+        state.storage.refresh_distribution_health(domain),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Identifies validation logic, dependency versions and effective signature policy.
