@@ -13,3 +13,4 @@ dashboard/dist/
 /.cursor
 /.vscode
 /opencode.jsonc
+/deploy/inventory.yml
