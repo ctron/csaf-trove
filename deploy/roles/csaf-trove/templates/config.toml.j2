@@ -22,3 +22,9 @@ cve_search_max_hits = {{ csaf_trove_cve_cache_max_hits }}
 [mcp]
 enabled = {{ csaf_trove_mcp_enabled | bool | lower }}
 allowed_hosts = {{ csaf_trove_mcp_allowed_hosts | to_json }}
+
+[rate_limit]
+enabled = {{ csaf_trove_rate_limit_enabled | bool | lower }}
+requests_per_minute = {{ csaf_trove_rate_limit_requests_per_minute }}
+burst = {{ csaf_trove_rate_limit_burst }}
+max_wait = "{{ csaf_trove_rate_limit_max_wait }}"

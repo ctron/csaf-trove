@@ -29,6 +29,7 @@ csaf-trove-migration = { path = "migration" }
 csaf-walker = { version = "0.19", default-features = false }
 futures-util = "0.3"
 git2 = { version = "0.21", features = ["https"] }
+governor = "0.10"
 gloo-net = "0.7"
 gloo-timers = { version = "0.4", features = ["futures"] }
 hex = "0.4"

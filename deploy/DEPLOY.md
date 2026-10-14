@@ -48,6 +48,16 @@ Requests are only accepted for the hosts in `csaf_trove_mcp_allowed_hosts`, whic
 `csaf_trove_domain`. The CVE search cache is tuned with `csaf_trove_cve_cache_capacity`,
 `csaf_trove_cve_cache_ttl` and `csaf_trove_cve_cache_max_hits`.
 
+### Rate limiting
+
+API, MCP and aggregator requests are rate limited per client IP address (IPv6 per /64), behind
+Caddy using the address it forwards. By default a client may make 60 requests per minute with
+bursts of up to 60; requests over that are delayed by up to 10 seconds and then rejected with
+`429 Too Many Requests`. Dashboard assets, GitHub webhooks and requests carrying the API token are
+not limited. Tune or disable it with `csaf_trove_rate_limit_requests_per_minute`,
+`csaf_trove_rate_limit_burst`, `csaf_trove_rate_limit_max_wait` and
+`csaf_trove_rate_limit_enabled`.
+
 ## After deployment
 
 ### File descriptor limits

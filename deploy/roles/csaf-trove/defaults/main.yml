@@ -46,6 +46,14 @@ csaf_trove_cve_cache_ttl: "15m"
 # Maximum number of documents returned for a single CVE search.
 csaf_trove_cve_cache_max_hits: 500
 
+# Per-client rate limiting of API, MCP and aggregator requests (dashboard assets are not limited).
+# Requests over the rate are delayed up to the maximum wait, then rejected with 429.
+# The defaults leave interactive dashboard and MCP use unaffected, but slow down scraping.
+csaf_trove_rate_limit_enabled: true
+csaf_trove_rate_limit_requests_per_minute: 60
+csaf_trove_rate_limit_burst: 60
+csaf_trove_rate_limit_max_wait: "10s"
+
 # Read-only MCP (Model Context Protocol) endpoint at /mcp.
 csaf_trove_mcp_enabled: false
 # Host headers the MCP endpoint accepts (DNS-rebinding protection); must not be empty.

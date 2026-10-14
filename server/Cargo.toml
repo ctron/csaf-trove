@@ -19,6 +19,7 @@ csaf-trove-migration = { workspace = true }
 csaf-walker = { workspace = true, features = ["csaf", "crypto-openssl"] }
 futures-util = { workspace = true }
 git2 = { workspace = true }
+governor = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 humantime = { workspace = true }

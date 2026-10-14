@@ -7,6 +7,7 @@ mod mcp;
 mod memory;
 mod models;
 mod pipeline;
+mod rate_limit;
 mod scheduler;
 mod storage;
 
@@ -18,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-use actix_web::{App, HttpResponse, HttpServer, web};
+use actix_web::{App, HttpResponse, HttpServer, middleware, web};
 use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
 use bytesize::ByteSize;
@@ -41,6 +42,7 @@ use crate::{
         source::Source,
         state::{JobPhase, JobStatus},
     },
+    rate_limit::{RateLimitConfig, RateLimiter},
     storage::{Storage, cache::CacheConfig},
 };
 
@@ -77,6 +79,9 @@ pub struct Config {
     /// MCP endpoint settings.
     #[serde(default)]
     pub mcp: McpConfig,
+    /// Per-client rate limiting of API, MCP and aggregator requests.
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 /// Aggregator configuration for generating `aggregator.json`.
@@ -598,10 +603,27 @@ async fn main() -> Result<()> {
         tracing::info!("Serving read-only MCP endpoint at /mcp");
     }
 
+    let limiter =
+        RateLimiter::new(&state.config.rate_limit).context("Invalid rate limit settings")?;
+    if let Some(limiter) = &limiter {
+        limiter.spawn_cleanup();
+        let config = &state.config.rate_limit;
+        tracing::info!(
+            requests_per_minute = config.requests_per_minute,
+            burst = config.burst,
+            max_wait = ?config.max_wait,
+            "Rate limiting API, MCP and aggregator requests per client"
+        );
+    }
+
     let server_state = state.clone();
     HttpServer::new(move || {
         let generated = generate();
+        let limiter = limiter.clone();
         App::new()
+            .wrap(middleware::from_fn(move |req, next| {
+                rate_limit::middleware(limiter.clone(), req, next)
+            }))
             .wrap(TracingLogger::default())
             .app_data(web::Data::from(server_state.clone()))
             .configure(|cfg| match &mcp {
