@@ -28,8 +28,9 @@ use std::{
 /// Path prefixes subject to rate limiting; dashboard assets are served without limits.
 const LIMITED_PREFIXES: &[&str] = &["/api/", "/mcp", "/.well-known/"];
 
-/// Path prefixes exempt from rate limiting; webhooks authenticate themselves.
-const EXEMPT_PREFIXES: &[&str] = &["/api/webhook/"];
+/// Path prefixes exempt from rate limiting; webhooks authenticate themselves and the startup
+/// status is cheap and polled by the dashboard while the server starts.
+const EXEMPT_PREFIXES: &[&str] = &["/api/webhook/", "/api/startup"];
 
 /// Interval for dropping the state of clients that have been idle long enough to be refilled.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);

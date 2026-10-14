@@ -9,6 +9,7 @@ mod models;
 mod pipeline;
 mod rate_limit;
 mod scheduler;
+mod startup;
 mod storage;
 
 use std::{
@@ -38,11 +39,9 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 use crate::{
     hooks::Hooks,
     mcp::McpConfig,
-    models::{
-        source::Source,
-        state::{JobPhase, JobStatus},
-    },
+    models::{source::Source, state::JobStatus},
     rate_limit::{RateLimitConfig, RateLimiter},
+    startup::Startup,
     storage::{Storage, cache::CacheConfig},
 };
 
@@ -197,6 +196,8 @@ pub struct AppState {
     pub recent_sync_points: RwLock<HashMap<String, Vec<SyncPoint>>>,
     /// Hooks run after provider jobs finish.
     pub hooks: Hooks,
+    /// Startup progress; data endpoints are unavailable until it has finished.
+    pub startup: Startup,
 }
 
 impl AppState {
@@ -220,6 +221,7 @@ impl AppState {
             job_notify: watch::channel(()).0,
             recent_sync_points: RwLock::new(HashMap::new()),
             hooks: Default::default(),
+            startup: Startup::finished(),
         })
     }
 
@@ -480,35 +482,12 @@ async fn main() -> Result<()> {
         .transpose()
         .context("Failed to read webhook secret")?;
 
-    if let Some(github) = &config.github {
-        let sync_dir = data_dir.clone();
-        let sync_url = github.repo.clone();
-        match spawn_blocking(move || config_sync::sync(&sync_dir, &sync_url)).await {
-            Ok(Ok(())) => tracing::info!("Initial config sync complete"),
-            Ok(Err(e)) => tracing::warn!("Initial config sync failed: {e:#}"),
-            Err(e) => tracing::warn!("Config sync task failed: {e:#}"),
-        }
-    }
-
-    let mut sources = load_sources_from_dir(&data_dir.join("sources"))
-        .await
-        .unwrap_or_default();
-
-    for s in &config.source {
-        sources.insert(s.domain.clone(), s.clone());
-    }
-    if !config.source.is_empty() {
-        tracing::info!("Added {} inline source(s) from config", config.source.len());
-    }
-
-    tracing::info!("Loaded {} sources", sources.len());
-
     let (job_notify, _) = watch::channel(());
 
     let state = Arc::new(AppState {
         config,
         storage,
-        sources: RwLock::new(sources),
+        sources: RwLock::new(HashMap::new()),
         jobs: RwLock::new(HashMap::new()),
         api_token,
         webhook_secret,
@@ -518,75 +497,7 @@ async fn main() -> Result<()> {
         job_notify,
         recent_sync_points: RwLock::new(HashMap::new()),
         hooks: Hooks::default(),
-    });
-
-    if let Ok(sync_states) = state.storage.list_sync_states().await {
-        let mut restored = Vec::new();
-        for ss in sync_states {
-            if let Some(last_sync) = ss.last_sync {
-                let duration = state
-                    .storage
-                    .last_sync_duration(&ss.domain)
-                    .await
-                    .unwrap_or_else(|e| {
-                        tracing::warn!("Failed to load last sync duration for {}: {e}", ss.domain);
-                        None
-                    })
-                    .unwrap_or_default();
-                restored.push((ss, last_sync, duration));
-            }
-        }
-
-        let mut jobs = state.jobs.write().await;
-        for (ss, last_sync, duration) in restored {
-            jobs.insert(
-                ss.domain.clone(),
-                JobStatus {
-                    status: JobPhase::Completed,
-                    started_at: last_sync - duration,
-                    completed_at: Some(last_sync),
-                    phase: None,
-                    documents_synced: ss.documents_synced,
-                    documents_validated: ss.documents_validated,
-                    documents_total: ss.documents_total,
-                    distributions_total: 0,
-                    distribution_index: 0,
-                    distribution_documents_current: 0,
-                    distribution_documents_total: 0,
-                    phase_current: 0,
-                    phase_total: 0,
-                    error: None,
-                    completed_phases: vec![],
-                    last_completed_at: Some(last_sync),
-                    phase_started_at: None,
-                },
-            );
-        }
-        tracing::info!("Restored {} job statuses from persisted state", jobs.len());
-    }
-
-    {
-        let sources = state.sources.read().await;
-        let mut points = state.recent_sync_points.write().await;
-        for domain in sources.keys() {
-            if let Ok(Some(p)) = state.storage.recent_sync_points(domain, 30).await {
-                points.insert(domain.clone(), p);
-            }
-        }
-    }
-
-    hooks::spawn(&state);
-    // Warm the overview cache so the first page load doesn't pay for the storage walk.
-    let overview_state = state.clone();
-    tokio::spawn(async move {
-        if let Err(e) = overview_state.storage.overview_snapshot().await {
-            tracing::warn!("Failed to compute overview snapshot: {e:#}");
-        }
-    });
-
-    let scheduler_state = state.clone();
-    tokio::spawn(async move {
-        scheduler::run(scheduler_state).await;
+        startup: Startup::default(),
     });
 
     tracing::info!("Starting server on {listen}");
@@ -617,13 +528,14 @@ async fn main() -> Result<()> {
     }
 
     let server_state = state.clone();
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         let generated = generate();
         let limiter = limiter.clone();
         App::new()
             .wrap(middleware::from_fn(move |req, next| {
                 rate_limit::middleware(limiter.clone(), req, next)
             }))
+            .wrap(middleware::from_fn(startup::middleware))
             .wrap(TracingLogger::default())
             .app_data(web::Data::from(server_state.clone()))
             .configure(|cfg| match &mcp {
@@ -645,8 +557,10 @@ async fn main() -> Result<()> {
             .service(ResourceFiles::new("/", generated).resolve_not_found_to_root())
     })
     .bind(&listen)?
-    .run()
-    .await?;
+    .run();
+
+    tokio::spawn(startup::run(state));
+    server.await?;
 
     Ok(())
 }

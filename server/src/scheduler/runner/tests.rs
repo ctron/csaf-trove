@@ -2,6 +2,7 @@
 use super::*;
 use crate::{
     Config,
+    startup::Startup,
     storage::{Storage, scratch},
 };
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
@@ -74,6 +75,7 @@ fn fixture() -> (TempDir, Arc<AppState>, Source) {
         job_notify: watch::channel(()).0,
         recent_sync_points: RwLock::new(HashMap::new()),
         hooks: Default::default(),
+        startup: Startup::finished(),
     });
     let metadata = serde_json::to_vec(&serde_json::json!({
         "canonical_url":"https://example.com/provider-metadata.json", "metadata_version":"2.0",

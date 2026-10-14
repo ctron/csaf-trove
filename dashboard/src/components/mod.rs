@@ -12,6 +12,7 @@ pub mod profile_badge;
 pub mod progress_bar;
 pub mod section_heading;
 pub mod sparkline;
+pub mod startup_gate;
 pub mod table;
 pub mod theme_toggle;
 pub mod tlp_badge;

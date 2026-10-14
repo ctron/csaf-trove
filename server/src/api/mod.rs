@@ -7,10 +7,12 @@ pub mod sync;
 pub mod vulnerabilities;
 pub mod webhook;
 
+use crate::startup;
 use actix_web::web;
 
 /// Registers all API routes under `/api`.
 pub fn config(cfg: &mut web::ServiceConfig) {
+    cfg.route("/startup", web::get().to(startup::status));
     cfg.route("/overview", web::get().to(overview::get));
     cfg.route(
         "/vulnerabilities/{cve}",
