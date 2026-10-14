@@ -2,6 +2,7 @@
 
 mod api;
 mod config_sync;
+mod hooks;
 mod memory;
 mod models;
 mod pipeline;
@@ -33,6 +34,7 @@ use tracing_actix_web::TracingLogger;
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 use crate::{
+    hooks::Hooks,
     models::{
         source::Source,
         state::{JobPhase, JobStatus},
@@ -180,6 +182,8 @@ pub struct AppState {
     pub job_notify: watch::Sender<()>,
     /// Cached recent sync points per provider for sparkline rendering.
     pub recent_sync_points: RwLock<HashMap<String, Vec<SyncPoint>>>,
+    /// Hooks run after provider jobs finish.
+    pub hooks: Hooks,
 }
 
 impl AppState {
@@ -476,6 +480,7 @@ async fn main() -> Result<()> {
         sources_changed: Notify::new(),
         job_notify,
         recent_sync_points: RwLock::new(HashMap::new()),
+        hooks: Hooks::default(),
     });
 
     if let Ok(sync_states) = state.storage.list_sync_states().await {
@@ -532,6 +537,15 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    hooks::spawn(&state);
+    // Warm the overview cache so the first page load doesn't pay for the storage walk.
+    let overview_state = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = overview_state.storage.overview_snapshot().await {
+            tracing::warn!("Failed to compute overview snapshot: {e:#}");
+        }
+    });
 
     let scheduler_state = state.clone();
     tokio::spawn(async move {

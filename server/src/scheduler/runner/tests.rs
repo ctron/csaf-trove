@@ -73,6 +73,7 @@ fn fixture() -> (TempDir, Arc<AppState>, Source) {
         sources_changed: Notify::new(),
         job_notify: watch::channel(()).0,
         recent_sync_points: RwLock::new(HashMap::new()),
+        hooks: Default::default(),
     });
     let metadata = serde_json::to_vec(&serde_json::json!({
         "canonical_url":"https://example.com/provider-metadata.json", "metadata_version":"2.0",
@@ -610,4 +611,16 @@ async fn essential_checks_remain_independent_through_processing() {
     assert_eq!(doc.checks.signature.status, CheckStatus::NotEvaluated);
     assert_eq!(doc.checks.digest.status, CheckStatus::NotEvaluated);
     assert!(doc.profiles.basic.is_none());
+}
+
+/// Finished jobs notify hooks with their kind and outcome.
+#[tokio::test]
+async fn finished_job_notifies_hooks() {
+    let (_dir, state, source) = fixture();
+    let mut events = state.hooks.subscribe();
+    revalidate_provider(&state, &source).await.unwrap();
+    let event = events.try_recv().unwrap();
+    assert_eq!(event.domain, "example.com");
+    assert_eq!(event.kind, JobKind::Revalidate);
+    assert!(event.success);
 }

@@ -23,7 +23,7 @@ fn format_duration(seconds: Option<f64>) -> String {
 }
 
 /// Formats a coarse relative time like "5m ago" from an ISO 8601 timestamp.
-fn format_relative_time(timestamp: &str, now_ms: f64) -> String {
+pub(crate) fn format_relative_time(timestamp: &str, now_ms: f64) -> String {
     let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
         return timestamp.to_string();
     };

@@ -105,6 +105,15 @@ impl CheckCounts {
             CheckStatus::NotEvaluated => &mut self.not_evaluated,
         } += count;
     }
+
+    /// Adds all outcome counts from another set.
+    pub fn merge(&mut self, other: &Self) {
+        self.passed += other.passed;
+        self.failed += other.failed;
+        self.warning += other.warning;
+        self.missing += other.missing;
+        self.not_evaluated += other.not_evaluated;
+    }
 }
 
 impl DocumentChecks<CheckCounts> {
@@ -114,6 +123,14 @@ impl DocumentChecks<CheckCounts> {
             + self.parsing.issues()
             + self.signature.issues()
             + self.digest.issues()
+    }
+
+    /// Adds the counts of every stage from another summary.
+    pub fn merge(&mut self, other: &Self) {
+        self.retrieval.merge(&other.retrieval);
+        self.parsing.merge(&other.parsing);
+        self.signature.merge(&other.signature);
+        self.digest.merge(&other.digest);
     }
 }
 

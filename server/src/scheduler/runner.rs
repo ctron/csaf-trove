@@ -1,5 +1,6 @@
 use crate::{
     AppState,
+    hooks::JobFinished,
     models::{
         source::Source,
         state::{JobPhase, JobStatus},
@@ -136,7 +137,7 @@ impl BlockingProgress {
 
 /// Kind of work a tracked provider job performs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum JobKind {
+pub enum JobKind {
     /// Full pipeline: sync, commit, validate, report.
     Sync,
     /// Re-validate already stored documents without fetching anything.
@@ -261,6 +262,12 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
             tracing::error!("Pipeline for {domain} failed: {e:#}");
         }
     }
+
+    state.hooks.job_finished(JobFinished {
+        domain: domain.clone(),
+        kind,
+        success: result.is_ok(),
+    });
 
     result
 }

@@ -6,6 +6,7 @@ pub mod git_maintenance;
 pub mod git_processing;
 pub mod git_repo;
 mod membership;
+pub mod overview;
 mod path_set;
 pub mod processing;
 pub mod provider;
@@ -43,6 +44,8 @@ pub struct Storage {
     metrics_root: PathBuf,
     /// Per-provider SQLite connection pool.
     db: DbPool,
+    /// Cached storage usage and trend baselines for the overview page.
+    overview: overview::OverviewCache,
 }
 
 impl Storage {
@@ -60,6 +63,7 @@ impl Storage {
             results_root: results_root.clone(),
             metrics_root: data_dir.join("metrics"),
             db: DbPool::new(results_root),
+            overview: Default::default(),
         };
         std::fs::create_dir_all(&storage.repos_root)?;
         std::fs::create_dir_all(&storage.state_root)?;
