@@ -1,5 +1,6 @@
 use crate::{
-    components::section_heading::SectionHeading, pages::sync_status::format_relative_time,
+    components::section_heading::SectionHeading, format::format_number,
+    pages::sync_status::format_relative_time,
 };
 use csaf_trove_common::overview::{Overview, SyncActivity, Trends, ValidationOverview};
 use leptos::prelude::*;
@@ -42,24 +43,24 @@ pub fn OverviewPage() -> impl IntoView {
 #[component]
 fn OverviewMetrics(metrics: Overview) -> impl IntoView {
     let cards = [
-        ("Providers", metrics.provider_count.to_string()),
-        ("Documents", metrics.document_count.to_string()),
-        ("Retrieval errors", metrics.retrieval_errors.to_string()),
+        ("Providers", format_number(metrics.provider_count)),
+        ("Documents", format_number(metrics.document_count)),
+        ("Retrieval errors", format_number(metrics.retrieval_errors)),
         ("Storage", format_bytes(metrics.storage.total())),
     ];
     let health = &metrics.providers;
     let health_cards = [
-        ("Healthy", health.healthy.to_string()),
+        ("Healthy", format_number(health.healthy)),
         (
             "With retrieval errors",
-            health.with_retrieval_errors.to_string(),
+            format_number(health.with_retrieval_errors),
         ),
-        ("With check issues", health.with_check_issues.to_string()),
+        ("With check issues", format_number(health.with_check_issues)),
         (
             "Awaiting first sync",
-            health.awaiting_first_sync.to_string(),
+            format_number(health.awaiting_first_sync),
         ),
-        ("Stale", health.stale.to_string()),
+        ("Stale", format_number(health.stale)),
     ];
     let stale_after = csaf_trove_common::format_duration_hms(
         Duration::from_secs(health.stale_after_seconds),
@@ -96,7 +97,7 @@ fn OverviewMetrics(metrics: Overview) -> impl IntoView {
                 {storage.into_iter().map(|(label, bytes)| view! {
                     <div class="flex justify-between gap-4 py-3">
                         <dt class="text-gray-600 dark:text-gray-300">{label}</dt>
-                        <dd class="font-medium text-gray-800 dark:text-white whitespace-nowrap" title=format!("{bytes} bytes")>{format_bytes(bytes)}</dd>
+                        <dd class="font-medium text-gray-800 dark:text-white whitespace-nowrap" title=format!("{} bytes", format_number(bytes))>{format_bytes(bytes)}</dd>
                     </div>
                 }).collect_view()}
             </dl>
@@ -180,10 +181,10 @@ fn ValidationPanel(validation: ValidationOverview) -> impl IntoView {
                     {stages.into_iter().map(|(label, counts)| view! {
                         <tr>
                             <td class="py-2 text-gray-600 dark:text-gray-300">{label}</td>
-                            <td class="py-2 text-right">{counts.passed}</td>
-                            <td class=format!("py-2 text-right {}", highlight(counts.failed, "text-red-600 dark:text-red-400"))>{counts.failed}</td>
-                            <td class=format!("py-2 text-right {}", highlight(counts.warning, "text-yellow-600 dark:text-yellow-400"))>{counts.warning}</td>
-                            <td class="py-2 text-right">{counts.missing}</td>
+                            <td class="py-2 text-right">{format_number(counts.passed)}</td>
+                            <td class=format!("py-2 text-right {}", highlight(counts.failed, "text-red-600 dark:text-red-400"))>{format_number(counts.failed)}</td>
+                            <td class=format!("py-2 text-right {}", highlight(counts.warning, "text-yellow-600 dark:text-yellow-400"))>{format_number(counts.warning)}</td>
+                            <td class="py-2 text-right">{format_number(counts.missing)}</td>
                         </tr>
                     }).collect_view()}
                 </tbody>
@@ -207,8 +208,8 @@ fn SyncPanel(sync: SyncActivity) -> impl IntoView {
     view! {
         <Panel title="Sync activity">
             <dl class="divide-y divide-gray-200 dark:divide-gray-700">
-                <Row label="Running" value=sync.running.to_string() />
-                <Row label="Failed" value=sync.failed.to_string() class=failed_class />
+                <Row label="Running" value=format_number(sync.running) />
+                <Row label="Failed" value=format_number(sync.failed) class=failed_class />
                 <Row label="Last completed" value=last_completed />
             </dl>
         </Panel>
@@ -233,7 +234,7 @@ fn TrendsPanel(trends: Trends) -> impl IntoView {
                 <tbody class="divide-y divide-gray-200 dark:divide-gray-700 text-gray-800 dark:text-white">
                     {windows.into_iter().map(|(label, delta)| match delta {
                         Some(delta) => view! {
-                            <tr title=format!("Compared across {} providers with history", delta.providers)>
+                            <tr title=format!("Compared across {} providers with history", format_number(delta.providers))>
                                 <td class="py-2 text-gray-600 dark:text-gray-300">{label}</td>
                                 <td class="py-2 text-right">{format_signed(delta.documents)}</td>
                                 <td class=format!("py-2 text-right {}", trend_class(-delta.retrieval_errors as f64))>{format_signed(delta.retrieval_errors)}</td>
@@ -286,7 +287,11 @@ fn format_points(delta: f64) -> String {
 
 /// Formats a count difference with an explicit sign.
 fn format_signed(delta: i64) -> String {
-    format!("{delta:+}")
+    format!(
+        "{}{}",
+        if delta < 0 { "-" } else { "+" },
+        format_number(delta.unsigned_abs())
+    )
 }
 
 /// Formats byte sizes using binary units.
@@ -299,7 +304,7 @@ fn format_bytes(bytes: u64) -> String {
         unit += 1;
     }
     if unit == 0 {
-        format!("{bytes} B")
+        format!("{} B", format_number(bytes))
     } else {
         format!("{value:.1} {}", units[unit])
     }
@@ -313,7 +318,7 @@ mod tests {
     #[test]
     fn formats_storage_sizes() {
         assert_eq!(format_bytes(0), "0 B");
-        assert_eq!(format_bytes(1023), "1023 B");
+        assert_eq!(format_bytes(1023), "1,023 B");
         assert_eq!(format_bytes(1024), "1.0 KiB");
         assert_eq!(format_bytes(1536), "1.5 KiB");
         assert_eq!(format_bytes(1024 * 1024), "1.0 MiB");
@@ -326,6 +331,9 @@ mod tests {
         assert_eq!(format_signed(12), "+12");
         assert_eq!(format_signed(-3), "-3");
         assert_eq!(format_signed(0), "+0");
+        assert_eq!(format_signed(1_234), "+1,234");
+        assert_eq!(format_signed(-194_665), "-194,665");
+        assert_eq!(format_signed(i64::MIN), "-9,223,372,036,854,775,808");
         assert_eq!(format_points(0.004), "+0.4 pp");
         assert_eq!(format_points(-0.1), "-10.0 pp");
     }

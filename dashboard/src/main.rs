@@ -1,5 +1,6 @@
 mod app;
 mod components;
+mod format;
 mod models;
 mod pages;
 

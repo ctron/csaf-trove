@@ -1,3 +1,4 @@
+use crate::format::format_number;
 use leptos::prelude::*;
 
 /// Computes the page numbers to display with windowing.
@@ -89,7 +90,7 @@ pub fn Pagination(
                             } else if p == cur {
                                 view! {
                                     <span class="px-2 py-1 text-sm text-blue-500 rounded-md dark:bg-gray-800 bg-blue-100/60">
-                                        {p}
+                                        {format_number(p)}
                                     </span>
                                 }.into_any()
                             } else {
@@ -98,7 +99,7 @@ pub fn Pagination(
                                     <button
                                         class="px-2 py-1 text-sm text-gray-500 rounded-md dark:hover:bg-gray-800 dark:text-gray-300 hover:bg-gray-100 cursor-pointer"
                                         on:click=move |_| on_change.run(new_offset)
-                                    >{p}</button>
+                                    >{format_number(p)}</button>
                                 }.into_any()
                             }
                         }).collect::<Vec<_>>()
@@ -125,10 +126,10 @@ pub fn Pagination(
                 <span class="font-medium text-gray-700 dark:text-gray-100">
                     {move || {
                         let o = offset.get();
-                        format!("{} - {}", o + 1, o + count)
+                        format!("{} - {}", format_number(o + 1), format_number(o + count))
                     }}
                 </span>
-                {format!(" of {total} records")}
+                {format!(" of {} records", format_number(total))}
             </div>
         </div>
     }

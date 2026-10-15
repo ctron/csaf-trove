@@ -1,24 +1,26 @@
+use crate::{
+    components::{
+        alert::{Alert, AlertVariant},
+        badge::{Badge, BadgeVariant},
+        breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
+        content_tabs::{ContentTab, ContentTabs},
+        doc_profile_badge::DocProfileBadge,
+        document_checks::{CheckSummaryView, DocumentIssuesBadge},
+        empty_state::EmptyState,
+        pagination::Pagination,
+        progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate, format_rate},
+        table::{Table, Tbody, Td, Th, Thead},
+        tlp_badge::TlpBadge,
+    },
+    format::format_number,
+    models::{
+        DistributionHealth, PaginatedDocuments, ProfileSummary, ProviderDetail, encode_path_segment,
+    },
+};
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal_with_options, use_params_map},
-};
-
-use crate::components::{
-    alert::{Alert, AlertVariant},
-    badge::{Badge, BadgeVariant},
-    breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
-    content_tabs::{ContentTab, ContentTabs},
-    doc_profile_badge::DocProfileBadge,
-    document_checks::{CheckSummaryView, DocumentIssuesBadge},
-    empty_state::EmptyState,
-    pagination::Pagination,
-    progress_bar::{ProgressBar, ProgressColor, color_for_pass_rate, format_rate},
-    table::{Table, Tbody, Td, Th, Thead},
-    tlp_badge::TlpBadge,
-};
-use crate::models::{
-    DistributionHealth, PaginatedDocuments, ProfileSummary, ProviderDetail, encode_path_segment,
 };
 
 /// Fetches provider detail from the API. Returns `None` for 404 (no sync yet).
@@ -80,7 +82,7 @@ fn profile_row(label: &'static str, profile: Option<ProfileSummary>) -> impl Int
             let pct = p.pass_rate * 100.0;
             let color = color_for_pass_rate(p.pass_rate);
             let rate_label = format_rate(p.pass_rate, 1);
-            let detail = format!("{} tests passed \u{00b7} {} tests failed", p.valid, p.invalid);
+            let detail = format!("{} tests passed \u{00b7} {} tests failed", format_number(p.valid), format_number(p.invalid));
             view! {
                 <div class="mb-4 last:mb-0">
                     <div class="flex items-center justify-between mb-1">
@@ -132,7 +134,7 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
             // Overview card
             <div class="bg-white rounded-lg shadow-md dark:bg-gray-800 p-6">
                 <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-4">"Overview"</h2>
-                <p class="text-4xl font-bold text-gray-800 dark:text-white">{summary.document_count}</p>
+                <p class="text-4xl font-bold text-gray-800 dark:text-white">{format_number(summary.document_count)}</p>
                 <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">"documents"</p>
 
                 <div class="space-y-2 text-sm text-gray-600 dark:text-gray-400">
@@ -237,7 +239,7 @@ fn FailingTestsView(tests: Vec<crate::models::FailingTest>) -> impl IntoView {
                     view! {
                         <tr>
                             <Td>{test_id}</Td>
-                            <Td>{t.count}</Td>
+                            <Td>{format_number(t.count)}</Td>
                             <Td><Badge variant=variant>{sev_label}</Badge></Td>
                         </tr>
                     }
@@ -308,7 +310,7 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                 BadgeVariant::Success
                             };
                             view! {
-                                <Badge variant=err_variant>{d.check_issues}</Badge>
+                                <Badge variant=err_variant>{format_number(d.check_issues)}</Badge>
                             }.into_any()
                         };
                         view! {
@@ -320,7 +322,7 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                         {tlp_badges}
                                     </div>
                                 </Td>
-                                <Td>{d.document_count}</Td>
+                                <Td>{format_number(d.document_count)}</Td>
                                 <Td>{rate_badge(d.basic_pass_rate)}</Td>
                                 <Td>{rate_badge(d.extended_pass_rate)}</Td>
                                 <Td>{rate_badge(d.full_pass_rate)}</Td>
@@ -445,7 +447,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                             <Td><DocProfileBadge detail=doc.profiles.full /></Td>
                                             <Td><DocumentIssuesBadge checks=doc.checks /></Td>
                                             <Td>{if doc.version_count > 1 {
-                                                view! { <Badge variant=BadgeVariant::Neutral>{doc.version_count}</Badge> }.into_any()
+                                                view! { <Badge variant=BadgeVariant::Neutral>{format_number(u64::from(doc.version_count))}</Badge> }.into_any()
                                             } else {
                                                 view! { <span /> }.into_any()
                                             }}</Td>

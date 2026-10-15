@@ -1,18 +1,21 @@
-use crate::components::{
-    alert::{Alert, AlertVariant},
-    badge::{Badge, BadgeVariant},
-    breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
-    content_tabs::{ContentTab, ContentTabs},
-    diff_view::DiffView,
-    document_checks::CheckBadge,
-    pagination::Pagination,
-    section_heading::SubHeading,
-    table::{Table, Tbody, Td, Th, Thead},
-    tlp_badge::TlpBadge,
-};
-use crate::models::{
-    DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument, PaginatedVersions,
-    RevisionEntry, encode_path_segment,
+use crate::{
+    components::{
+        alert::{Alert, AlertVariant},
+        badge::{Badge, BadgeVariant},
+        breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
+        content_tabs::{ContentTab, ContentTabs},
+        diff_view::DiffView,
+        document_checks::CheckBadge,
+        pagination::Pagination,
+        section_heading::SubHeading,
+        table::{Table, Tbody, Td, Th, Thead},
+        tlp_badge::TlpBadge,
+    },
+    format::format_number,
+    models::{
+        DiffLineInfo, DocumentValidation, DocumentVersionInfo, HistoricalDocument,
+        PaginatedVersions, RevisionEntry, encode_path_segment,
+    },
 };
 use csaf_trove_common::{
     document_checks::CheckStatus,
@@ -697,14 +700,20 @@ fn ProfileSection(
             let (variant, badge_label) = if d.passed {
                 (BadgeVariant::Success, "Pass".to_string())
             } else if d.error_count > 0 {
-                (BadgeVariant::Danger, format!("{} errors", d.error_count))
+                (
+                    BadgeVariant::Danger,
+                    format!("{} errors", format_number(d.error_count)),
+                )
             } else if d.warning_count > 0 {
                 (
                     BadgeVariant::Warning,
-                    format!("{} warnings", d.warning_count),
+                    format!("{} warnings", format_number(d.warning_count)),
                 )
             } else {
-                (BadgeVariant::Info, format!("{} info", d.info_count))
+                (
+                    BadgeVariant::Info,
+                    format!("{} info", format_number(d.info_count)),
+                )
             };
 
             view! {
@@ -942,7 +951,7 @@ fn ProductStatusBadges(statuses: Vec<ProductStatusCount>) -> impl IntoView {
         <div class="flex flex-wrap gap-1">
             {statuses.into_iter().map(|s| {
                 let (label, variant) = product_status_label(&s.status);
-                let text = format!("{} {label}", s.count);
+                let text = format!("{} {label}", format_number(s.count as u64));
                 view! { <Badge variant=variant>{text}</Badge> }
             }).collect::<Vec<_>>()}
         </div>

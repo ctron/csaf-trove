@@ -1,3 +1,4 @@
+use crate::format::format_number;
 use csaf_trove_common::SyncPoint;
 use leptos::prelude::*;
 
@@ -29,7 +30,7 @@ pub fn Sparkline(points: Vec<SyncPoint>, global_max: u64) -> impl IntoView {
             let (v, title) = match point {
                 Some(p) => {
                     let date = p.timestamp.date().to_string();
-                    (p.count, format!("{date}: {}", p.count))
+                    (p.count, format!("{date}: {}", format_number(p.count)))
                 }
                 None => (0, "0".to_string()),
             };

@@ -1,5 +1,8 @@
-use crate::components::badge::{Badge, BadgeVariant};
-use crate::models::DocumentProfileDetail;
+use crate::{
+    components::badge::{Badge, BadgeVariant},
+    format::format_number,
+    models::DocumentProfileDetail,
+};
 use leptos::prelude::*;
 
 /// Displays a per-document profile validation badge showing test pass counts.
@@ -10,7 +13,11 @@ pub fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
     match detail {
         Some(d) if d.passed => {
             let label = if d.total_tests > 0 {
-                format!("{}/{}", d.total_tests, d.total_tests)
+                format!(
+                    "{}/{}",
+                    format_number(d.total_tests),
+                    format_number(d.total_tests)
+                )
             } else {
                 "Pass".to_string()
             };
@@ -19,17 +26,17 @@ pub fn DocProfileBadge(detail: Option<DocumentProfileDetail>) -> impl IntoView {
         Some(d) => {
             let passed = d.total_tests.saturating_sub(d.failing_test_count);
             let label = if d.total_tests > 0 {
-                format!("{}/{}", passed, d.total_tests)
+                format!("{}/{}", format_number(passed), format_number(d.total_tests))
             } else {
                 let mut parts = Vec::new();
                 if d.error_count > 0 {
-                    parts.push(format!("{} errors", d.error_count));
+                    parts.push(format!("{} errors", format_number(d.error_count)));
                 }
                 if d.warning_count > 0 {
-                    parts.push(format!("{} warnings", d.warning_count));
+                    parts.push(format!("{} warnings", format_number(d.warning_count)));
                 }
                 if d.info_count > 0 {
-                    parts.push(format!("{} info", d.info_count));
+                    parts.push(format!("{} info", format_number(d.info_count)));
                 }
                 if parts.is_empty() {
                     "Fail".to_string()

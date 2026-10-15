@@ -1,4 +1,7 @@
-use crate::components::badge::{Badge, BadgeVariant};
+use crate::{
+    components::badge::{Badge, BadgeVariant},
+    format::format_number,
+};
 use leptos::prelude::*;
 
 /// A line-style tab bar for switching between content sections.
@@ -36,7 +39,7 @@ pub fn ContentTab(
         <button class=class on:click=move |_| on_click.run(())>
             {children()}
             {move || count.and_then(|count| count.get()).map(|count| view! {
-                <span class="ml-2"><Badge variant=BadgeVariant::Neutral>{count}</Badge></span>
+                <span class="ml-2"><Badge variant=BadgeVariant::Neutral>{format_number(count)}</Badge></span>
             })}
         </button>
     }

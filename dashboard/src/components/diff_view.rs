@@ -1,5 +1,8 @@
-use crate::components::section_heading::SubHeading;
-use crate::models::{DiffLineInfo, DiffTag};
+use crate::{
+    components::section_heading::SubHeading,
+    format::format_number,
+    models::{DiffLineInfo, DiffTag},
+};
 use leptos::prelude::*;
 use std::collections::HashSet;
 
@@ -132,7 +135,7 @@ fn CollapsedSection(
                         set_expanded.update(|s| { s.insert(idx); });
                     }
                 >
-                    "⋯ " {count.to_string()} " lines hidden ⋯"
+                    "⋯ " {format_number(count as u64)} " lines hidden ⋯"
                 </div>
             }
             .into_any()
@@ -332,9 +335,9 @@ pub fn DiffView(lines: Vec<DiffLineInfo>) -> impl IntoView {
         <SubHeading>"Changes (compared to next version)"</SubHeading>
         <div class="flex items-center gap-4 mb-2">
             <p class="text-sm text-gray-500 dark:text-gray-400">
-                <span class="text-emerald-500">"+" {additions.to_string()} " added"</span>
+                <span class="text-emerald-500">"+" {format_number(additions as u64)} " added"</span>
                 " "
-                <span class="text-red-500">"-" {deletions.to_string()} " removed"</span>
+                <span class="text-red-500">"-" {format_number(deletions as u64)} " removed"</span>
             </p>
             {if collapsed_count > 0 {
                 Some(view! {

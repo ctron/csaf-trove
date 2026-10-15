@@ -1,11 +1,14 @@
-use crate::components::{
-    badge::{Badge, BadgeVariant},
-    note_indicator::NoteIndicator,
-    profile_badge::ProfileBadge,
-    section_heading::SectionHeading,
-    table::{Table, Tbody, Td, Th, Thead},
+use crate::{
+    components::{
+        badge::{Badge, BadgeVariant},
+        note_indicator::NoteIndicator,
+        profile_badge::ProfileBadge,
+        section_heading::SectionHeading,
+        table::{Table, Tbody, Td, Th, Thead},
+    },
+    format::format_number,
+    models::{ProviderSummary, encode_path_segment},
 };
-use crate::models::{ProviderSummary, encode_path_segment};
 use csaf_trove_common::document_checks::DocumentCheckSummary;
 use leptos::prelude::*;
 use std::cmp::Ordering;
@@ -151,7 +154,7 @@ fn ProviderChecks(checks: Option<DocumentCheckSummary>) -> impl IntoView {
     } else {
         BadgeVariant::Success
     };
-    view! { <Badge variant=variant>{issues.to_string()}</Badge> }
+    view! { <Badge variant=variant>{format_number(issues)}</Badge> }
 }
 
 /// Renders provider summaries with sortable name, document count, and profile columns.
@@ -194,7 +197,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                                     {note.map(|text| view! { <NoteIndicator text=text /> })}
                                 </span>
                             </Td>
-                            <Td>{p.document_count}</Td>
+                            <Td>{format_number(p.document_count)}</Td>
                             <Td><ProfileBadge profile=p.profiles.basic /></Td>
                             <Td><ProfileBadge profile=p.profiles.extended /></Td>
                             <Td><ProfileBadge profile=p.profiles.full /></Td>

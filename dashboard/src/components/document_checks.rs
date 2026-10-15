@@ -1,6 +1,9 @@
 //! Shared presentation of essential document outcomes and provider counts.
 
-use crate::components::badge::{Badge, BadgeVariant};
+use crate::{
+    components::badge::{Badge, BadgeVariant},
+    format::format_number,
+};
 use csaf_trove_common::document_checks::{CheckCounts, CheckOutcome, CheckStatus, DocumentChecks};
 use leptos::prelude::*;
 
@@ -94,6 +97,7 @@ pub fn CheckSummaryView(
             {outcomes.into_iter().filter(|(_, _, count)| *count > 0).map(|(status, key, count)| {
                 let (label, variant) = presentation(status);
                 let href = format!("{provider_url}?status={stage}-{key}");
+                let count = format_number(count);
                 view! { <a href=href aria-label=format!("{stage}: {count} {}", label.to_lowercase())><Badge variant=variant>{format!("{count} {}", label.to_lowercase())}</Badge></a> }
             }).collect::<Vec<_>>()}
         </div>

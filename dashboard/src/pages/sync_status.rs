@@ -1,10 +1,13 @@
-use crate::components::{
-    badge::{Badge, BadgeVariant},
-    section_heading::SectionHeading,
-    sparkline::Sparkline,
-    table::{Table, Tbody, Td, Th, Thead},
+use crate::{
+    components::{
+        badge::{Badge, BadgeVariant},
+        section_heading::SectionHeading,
+        sparkline::Sparkline,
+        table::{Table, Tbody, Td, Th, Thead},
+    },
+    format::format_number,
+    models::{JobStatus, encode_path_segment},
 };
-use crate::models::{JobStatus, encode_path_segment};
 use csaf_trove_common::PipelinePhase;
 use leptos::prelude::*;
 use std::collections::HashMap;
@@ -49,11 +52,11 @@ pub(crate) fn format_relative_time(timestamp: &str, now_ms: f64) -> String {
 /// Formats progress with a question mark when its total is unknown.
 fn format_counts(current: u64, total: u64) -> String {
     let total = if total > 0 {
-        total.to_string()
+        format_number(total)
     } else {
         "?".to_string()
     };
-    format!("{current} / {total}")
+    format!("{} / {total}", format_number(current))
 }
 
 /// Formats the progress column based on the current phase and document counts.
@@ -142,6 +145,11 @@ mod tests {
         job.distributions_total = 2;
         job.distribution_documents_total = 10;
         assert_eq!(format_progress(&job), "1 / 2 (3 / 10)");
+        job.distribution_documents_current = 1_234;
+        job.distribution_documents_total = 194_665;
+        assert_eq!(format_progress(&job), "1 / 2 (1,234 / 194,665)");
+        job.distribution_documents_total = 0;
+        assert_eq!(format_progress(&job), "1 / 2 (1,234 / ?)");
     }
 }
 

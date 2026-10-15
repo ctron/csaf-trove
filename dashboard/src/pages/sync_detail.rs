@@ -1,19 +1,20 @@
-use std::time::Duration;
-
+use crate::{
+    components::{
+        badge::{Badge, BadgeVariant},
+        breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
+        pagination::Pagination,
+        table::{Table, Tbody, Td, Th, Thead},
+    },
+    format::format_number,
+    models::encode_path_segment,
+};
 use csaf_trove_common::{CommitInfo, Paginated, format_duration_hms};
 use leptos::prelude::*;
 use leptos_router::{
     NavigateOptions,
     hooks::{query_signal_with_options, use_params_map},
 };
-
-use crate::components::{
-    badge::{Badge, BadgeVariant},
-    breadcrumb::{Breadcrumb, BreadcrumbCurrent, BreadcrumbItem},
-    pagination::Pagination,
-    table::{Table, Tbody, Td, Th, Thead},
-};
-use crate::models::encode_path_segment;
+use std::time::Duration;
 
 /// Fetches paginated sync history from the API.
 async fn fetch_sync_history(
@@ -114,7 +115,7 @@ pub fn SyncDetailPage() -> impl IntoView {
                                                 <Td>{entry.id}</Td>
                                                 <Td class="whitespace-nowrap">{date}</Td>
                                                 <Td class="whitespace-nowrap">{format_duration(entry.duration_ms)}</Td>
-                                                <Td><Badge variant=variant>{entry.files_changed}</Badge></Td>
+                                                <Td><Badge variant=variant>{format_number(entry.files_changed as u64)}</Badge></Td>
                                             </tr>
                                         }
                                     }).collect::<Vec<_>>()}
