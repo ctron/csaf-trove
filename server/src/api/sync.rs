@@ -273,13 +273,10 @@ pub async fn trigger(
     }
 
     let state = state.into_inner();
-    let handle = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
-        handle.block_on(async move {
-            if let Err(e) = crate::scheduler::runner::run_provider(&state, &source).await {
-                tracing::error!("Manual sync for {} failed: {e}", source.domain);
-            }
-        });
+    tokio::spawn(async move {
+        if let Err(e) = crate::scheduler::runner::run_provider(&state, &source).await {
+            tracing::error!("Manual sync for {} failed: {e}", source.domain);
+        }
     });
 
     Ok(HttpResponse::Accepted().json(serde_json::json!({ "status": "started" })))
@@ -308,13 +305,10 @@ pub async fn revalidate(
         .ok_or(ApiError::NotFound)?;
 
     let state = state.into_inner();
-    let handle = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
-        handle.block_on(async move {
-            if let Err(e) = revalidate_provider(&state, &source).await {
-                tracing::error!("Re-validation for {} failed: {e}", source.domain);
-            }
-        });
+    tokio::spawn(async move {
+        if let Err(e) = revalidate_provider(&state, &source).await {
+            tracing::error!("Re-validation for {} failed: {e}", source.domain);
+        }
     });
 
     Ok(HttpResponse::Accepted().json(serde_json::json!({ "status": "accepted" })))

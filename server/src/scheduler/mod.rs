@@ -2,7 +2,7 @@ pub mod runner;
 
 use crate::{AppState, memory, models::state::JobPhase, pipeline::aggregator::generate_aggregator};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::Semaphore, task::spawn_blocking, time::sleep};
+use tokio::{sync::Semaphore, time::sleep};
 
 /// Interval between memory samples, including idle periods to observe retention.
 const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
@@ -97,14 +97,11 @@ async fn sync_all(state: &Arc<AppState>) {
     for source in sources {
         let state = state.clone();
         let semaphore = semaphore.clone();
-        let handle = tokio::runtime::Handle::current();
-        handles.push(spawn_blocking(move || {
-            handle.block_on(async move {
-                let _permit = semaphore.acquire().await;
-                if let Err(e) = runner::run_provider(&state, &source).await {
-                    tracing::error!("Sync for {} failed: {e}", source.domain);
-                }
-            });
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire().await;
+            if let Err(e) = runner::run_provider(&state, &source).await {
+                tracing::error!("Sync for {} failed: {e}", source.domain);
+            }
         }));
     }
 

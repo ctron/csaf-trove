@@ -80,19 +80,24 @@ where
         context: &Self::Context,
         result: Result<RetrievedAdvisory, RetrievalError<DiscoveredAdvisory, S>>,
     ) -> Result<(), Self::Error> {
-        if let Err(err) = &result {
-            let url = err.url().to_string();
-            let error = format!("{err}");
-            tracing::warn!("Failed to retrieve {url}: {error}");
-            self.retrieval_errors
-                .lock()
-                .push(RetrievalFailure { url, error });
-            self.state.increment_job_synced(&self.domain).await;
-            return Ok(());
+        match result {
+            Err(err) => {
+                let url = err.url().to_string();
+                let error = format!("{err}");
+                tracing::warn!("Failed to retrieve {url}: {error}");
+                self.retrieval_errors
+                    .lock()
+                    .push(RetrievalFailure { url, error });
+            }
+            Ok(advisory) => {
+                <TroveStoreVisitor as RetrievedVisitor<S>>::visit_advisory(
+                    &self.inner,
+                    context,
+                    Ok(advisory),
+                )
+                .await?;
+            }
         }
-
-        <TroveStoreVisitor as RetrievedVisitor<S>>::visit_advisory(&self.inner, context, result)
-            .await?;
         self.state.increment_job_synced(&self.domain).await;
         Ok(())
     }
@@ -169,7 +174,6 @@ pub async fn sync_provider(
         tracing::info!("{domain}: starting full sync (no since_token)");
     }
 
-    // TODO(#6): remove custom client once upstream csaf-walker sets a User-Agent in Fetcher::new
     let user_agent = source
         .user_agent
         .clone()

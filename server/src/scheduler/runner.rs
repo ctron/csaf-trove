@@ -436,7 +436,7 @@ fn validator_identity(source: &Source) -> Result<String> {
     /// Bump when validation or integrity checks, or the persisted result format, change.
     ///
     /// Changing it forces every provider to be fully revalidated on its next run.
-    const VALIDATION_REVISION: u32 = 3;
+    const VALIDATION_REVISION: u32 = 4;
     hash.update(VALIDATION_REVISION.to_le_bytes());
     hash.update(dependency_fingerprint(include_str!("../../../Cargo.lock"))?);
     hash.update([u8::from(source.accept_v3_signatures)]);
