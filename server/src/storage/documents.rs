@@ -1133,60 +1133,6 @@ pub async fn load_provider_info(db: &DatabaseConnection) -> Result<Option<Provid
     }))
 }
 
-/// Backfills `test_count` and `failing_test_count` columns for rows that
-/// predate the migration (i.e. where these columns are still NULL).
-pub async fn backfill_test_counts(db: &DatabaseConnection) -> Result<()> {
-    use csaf::validation::Validatable;
-    type Csaf20 = csaf::schema::csaf2_0::schema::CommonSecurityAdvisoryFramework;
-    type Csaf21 = csaf::schema::csaf2_1::schema::CommonSecurityAdvisoryFramework;
-
-    let row = db
-        .query_one_raw(Statement::from_string(
-            DbBackend::Sqlite,
-            "SELECT COUNT(*) AS cnt FROM documents WHERE basic_test_count IS NULL AND basic_passed IS NOT NULL",
-        ))
-        .await?;
-    let needs: i64 = row.map(|r| r.try_get("", "cnt").unwrap_or(0)).unwrap_or(0);
-    if needs == 0 {
-        return Ok(());
-    }
-
-    tracing::info!("Backfilling test counts for {needs} documents");
-
-    db.execute_unprepared(
-        "UPDATE documents SET
-            basic_failing_test_count = COALESCE((SELECT COUNT(DISTINCT test_id) FROM check_failures WHERE document_id = documents.id AND profile = 'basic'), 0),
-            extended_failing_test_count = COALESCE((SELECT COUNT(DISTINCT test_id) FROM check_failures WHERE document_id = documents.id AND profile = 'extended'), 0),
-            full_failing_test_count = COALESCE((SELECT COUNT(DISTINCT test_id) FROM check_failures WHERE document_id = documents.id AND profile = 'full'), 0)
-         WHERE basic_test_count IS NULL AND basic_passed IS NOT NULL",
-    )
-    .await?;
-
-    for (version_str, basic, extended, full) in [
-        (
-            "2.0",
-            Csaf20::tests_in_preset("basic").map_or(0, |v| v.len()),
-            Csaf20::tests_in_preset("extended").map_or(0, |v| v.len()),
-            Csaf20::tests_in_preset("full").map_or(0, |v| v.len()),
-        ),
-        (
-            "2.1",
-            Csaf21::tests_in_preset("basic").map_or(0, |v| v.len()),
-            Csaf21::tests_in_preset("extended").map_or(0, |v| v.len()),
-            Csaf21::tests_in_preset("full").map_or(0, |v| v.len()),
-        ),
-    ] {
-        db.execute_unprepared(&format!(
-            "UPDATE documents SET basic_test_count = {basic}, extended_test_count = {extended}, full_test_count = {full}
-             WHERE csaf_version = '{version_str}' AND basic_test_count IS NULL AND basic_passed IS NOT NULL",
-        ))
-        .await?;
-    }
-
-    tracing::info!("Test count backfill complete");
-    Ok(())
-}
-
 /// Counts each essential outcome independently using the same stored states as the filters.
 pub async fn document_check_summary(db: &DatabaseConnection) -> Result<DocumentCheckSummary> {
     let rows = db.query_all_raw(Statement::from_string(DbBackend::Sqlite,
