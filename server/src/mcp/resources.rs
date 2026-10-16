@@ -21,13 +21,13 @@ pub fn templates() -> Vec<ResourceTemplate> {
         ResourceTemplate::new("csaf://{domain}/{tracking_id}", "advisory")
             .with_title("CSAF advisory")
             .with_description(
-                "Raw JSON of the current version of an advisory. The tracking ID is percent-encoded.",
+                "Raw JSON of the current version of an advisory. The provider identifier and tracking ID are percent-encoded.",
             )
             .with_mime_type("application/json"),
         ResourceTemplate::new("csaf://{domain}/{tracking_id}@{commit_id}", "advisory-version")
             .with_title("CSAF advisory version")
             .with_description(
-                "Raw JSON of a historical version of an advisory, by commit ID from list_document_versions.",
+                "Raw JSON of a historical version of an advisory, by commit ID from list_document_versions. The provider identifier and tracking ID are percent-encoded.",
             )
             .with_mime_type("application/json"),
     ]
@@ -36,7 +36,7 @@ pub fn templates() -> Vec<ResourceTemplate> {
 /// A parsed advisory resource URI.
 #[derive(Debug, PartialEq, Eq)]
 struct AdvisoryRef {
-    /// Provider domain.
+    /// Decoded provider domain or metadata URL.
     domain: String,
     /// Decoded CSAF tracking ID.
     tracking_id: String,
@@ -51,9 +51,10 @@ fn parse(uri: &str) -> Option<AdvisoryRef> {
         Some((tracking_id, commit_id)) => (tracking_id, Some(commit_id.to_string())),
         None => (rest, None),
     };
+    let domain = percent_decode_str(domain).decode_utf8().ok()?;
     let tracking_id = percent_decode_str(tracking_id).decode_utf8().ok()?;
     (!domain.is_empty() && !tracking_id.is_empty()).then(|| AdvisoryRef {
-        domain: domain.to_string(),
+        domain: domain.into_owned(),
         tracking_id: tracking_id.into_owned(),
         commit_id: commit_id.filter(|c| !c.is_empty()),
     })
@@ -106,7 +107,7 @@ mod tests {
     use super::*;
     use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
-    /// Characters a client must escape in a tracking ID to keep it a single URI segment.
+    /// Characters a client must escape in a provider identifier or tracking ID to keep it a single URI segment.
     const SEGMENT: &AsciiSet = &CONTROLS
         .add(b' ')
         .add(b'"')
@@ -114,10 +115,12 @@ mod tests {
         .add(b'%')
         .add(b'/')
         .add(b'?')
-        .add(b'@');
+        .add(b'@')
+        .add(b':');
 
     /// Builds the resource URI of an advisory, optionally at a specific version.
     fn uri(domain: &str, tracking_id: &str, commit_id: Option<&str>) -> String {
+        let domain = utf8_percent_encode(domain, SEGMENT);
         let tracking_id = utf8_percent_encode(tracking_id, SEGMENT);
         match commit_id {
             Some(commit_id) => format!("{SCHEME}{domain}/{tracking_id}@{commit_id}"),
@@ -126,19 +129,25 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_tracking_ids() {
-        for tracking_id in ["RHSA-2024:1234", "a/b@c d%", "cisco-sa-x"] {
-            for commit_id in [None, Some("abc123")] {
-                let uri = uri("example.com", tracking_id, commit_id);
-                assert_eq!(
-                    parse(&uri),
-                    Some(AdvisoryRef {
-                        domain: "example.com".into(),
-                        tracking_id: tracking_id.into(),
-                        commit_id: commit_id.map(Into::into),
-                    }),
-                    "{uri}"
-                );
+    fn round_trips_provider_identifiers_and_tracking_ids() {
+        for domain in [
+            "example.com",
+            "https://msrc.microsoft.com/csaf/provider-metadata.json",
+            "https://example.com:8443/a%2Fb?key=value#fragment",
+        ] {
+            for tracking_id in ["RHSA-2024:1234", "a/b@c d%", "cisco-sa-x"] {
+                for commit_id in [None, Some("abc123")] {
+                    let uri = uri(domain, tracking_id, commit_id);
+                    assert_eq!(
+                        parse(&uri),
+                        Some(AdvisoryRef {
+                            domain: domain.into(),
+                            tracking_id: tracking_id.into(),
+                            commit_id: commit_id.map(Into::into),
+                        }),
+                        "{uri}"
+                    );
+                }
             }
         }
     }
@@ -150,6 +159,7 @@ mod tests {
             "csaf://example.com",
             "csaf:///x",
             "csaf://example.com/",
+            "csaf://%FF/x",
         ] {
             assert_eq!(parse(uri), None, "{uri}");
         }

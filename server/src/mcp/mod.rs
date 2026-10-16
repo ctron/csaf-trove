@@ -28,7 +28,8 @@ Use find_advisories_by_cve to find advisories for a CVE across all providers. \
 Use list_providers and get_provider for provider health, list_documents and get_document for \
 per-document validation results, and get_document_content for an advisory's notes, \
 vulnerabilities and scores. Document versions can be listed and diffed. \
-Raw advisory JSON is available as the resource csaf://{domain}/{tracking_id}. \
+Raw advisory JSON is available as the resource csaf://{domain}/{tracking_id}, with both \
+identifiers percent-encoded (domain may be a full metadata URL). \
 All data is read-only.";
 
 /// MCP endpoint configuration.
