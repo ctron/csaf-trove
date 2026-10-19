@@ -384,6 +384,7 @@ async fn retrieval_error_summary_recovery_and_identical_download() {
     let errors = vec![crate::pipeline::sync::RetrievalFailure {
         url: "https://example.com/a.json".into(),
         error: "HTTP 503".into(),
+        missing: false,
     }];
     let summary_path = state.data_dir.join("results/example.com/summary.json");
     let summary_bytes = fs::read(&summary_path).unwrap();

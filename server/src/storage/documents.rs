@@ -8,10 +8,13 @@ use sea_orm::{
 };
 use std::collections::HashMap;
 
-use crate::models::result::{
-    CveHit, DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
-    DocumentValidation, FailingTest, ProfileResults, ProfileSummary, ProviderSummary,
-    RevisionEntry, SignatureSummary,
+use crate::{
+    models::result::{
+        CveHit, DocumentCheckFailure, DocumentProfileDetail, DocumentProfileResults,
+        DocumentValidation, FailingTest, ProfileResults, ProfileSummary, ProviderSummary,
+        RevisionEntry, SignatureSummary,
+    },
+    pipeline::sync::RetrievalFailure,
 };
 use csaf_trove_common::{
     CommitInfo, Paginated, SyncPoint,
@@ -374,7 +377,14 @@ fn check_condition(stage: &str, status: &str) -> sea_orm::sea_query::SimpleExpr 
     )
 }
 
-/// Matches profile errors or any failed essential check.
+/// Matches documents that could not be retrieved, including those reported as not found.
+fn retrieval_error_condition() -> Condition {
+    Condition::any()
+        .add(check_condition("retrieval", "failed"))
+        .add(check_condition("retrieval", "missing"))
+}
+
+/// Matches profile errors, any failed essential check, or a missing document.
 fn failing_condition() -> Condition {
     ["retrieval", "parsing", "signature", "digest"]
         .into_iter()
@@ -391,6 +401,7 @@ fn failing_condition() -> Condition {
             ),
             |c, stage| c.add(check_condition(stage, "failed")),
         )
+        .add(check_condition("retrieval", "missing"))
 }
 
 /// Warning counts that, together with [`failing_condition`], mark a document as needing attention.
@@ -463,9 +474,7 @@ pub async fn load_documents_paginated(
         Some("failing") => query = query.filter(failing_condition()),
         Some("warnings") => query = query.filter(warning_condition()),
         Some("passing") => query = query.filter(passing_condition()),
-        Some("errors" | "retrieval-errors") => {
-            query = query.filter(check_condition("retrieval", "failed"))
-        }
+        Some("errors" | "retrieval-errors") => query = query.filter(retrieval_error_condition()),
         Some("parse-errors") => query = query.filter(check_condition("parsing", "failed")),
         Some("signature-errors") => query = query.filter(check_condition("signature", "failed")),
         Some("digest-errors") => query = query.filter(check_condition("digest", "failed")),
@@ -720,7 +729,7 @@ pub async fn build_summary_from_db(
                 SUM(CASE WHEN json_extract(document_checks, '$.signature.status') = 'passed' THEN 1 ELSE 0 END) AS sv,
                 SUM(CASE WHEN json_extract(document_checks, '$.signature.status') = 'failed' THEN 1 ELSE 0 END) AS si,
                 SUM(CASE WHEN json_extract(document_checks, '$.signature.status') = 'missing' THEN 1 ELSE 0 END) AS sm,
-                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') = 'failed' THEN 1 ELSE 0 END) AS re
+                SUM(CASE WHEN json_extract(document_checks, '$.retrieval.status') IN ('failed', 'missing') THEN 1 ELSE 0 END) AS re
             FROM documents",
         ))
         .await?;
@@ -918,17 +927,19 @@ pub async fn distribution_health(
         .unwrap_or((0, 0, None, None, None)))
 }
 
-/// Records a completed sync run with the number of documents that changed and its duration.
+/// Records a completed sync run with the number of changed and missing documents and its duration.
 pub async fn save_sync_run(
     db: &DatabaseConnection,
     timestamp: OffsetDateTime,
     documents_changed: u64,
+    documents_missing: u64,
     duration: Duration,
 ) -> Result<()> {
     sync_run::ActiveModel {
         timestamp: Set(timestamp),
         documents_changed: Set(documents_changed as i64),
         duration_ms: Set(Some(duration.whole_milliseconds() as i64)),
+        documents_missing: Set(Some(documents_missing as i64)),
         ..Default::default()
     }
     .insert(db)
@@ -964,6 +975,7 @@ pub async fn load_sync_runs(db: &DatabaseConnection, max_entries: u64) -> Result
             timestamp: row.timestamp,
             files_changed: row.documents_changed as usize,
             duration_ms: row.duration_ms,
+            documents_missing: row.documents_missing.map(|n| n as u64),
         })
         .collect();
 
@@ -993,6 +1005,7 @@ pub async fn load_sync_runs_paginated(
             timestamp: row.timestamp,
             files_changed: row.documents_changed as usize,
             duration_ms: row.duration_ms,
+            documents_missing: row.documents_missing.map(|n| n as u64),
         })
         .collect();
 
@@ -1064,20 +1077,33 @@ pub async fn save_provider_info(db: &DatabaseConnection, info: &ProviderInfo) ->
 
 /// Persists retrieval errors as document entries.
 ///
-/// For each `(url, error)` pair, either updates the `retrieval_error` column on an
+/// For each failure, either updates the `retrieval_error` column on an
 /// existing document (matched by its original URL) or inserts a stub
 /// row when no prior document exists. Returns whether stored error state changed.
 pub async fn save_retrieval_errors(
     db: &DatabaseConnection,
-    errors: &[(String, String)],
+    errors: &[RetrievalFailure],
 ) -> Result<bool> {
     let txn = db.begin().await?;
     let mut changed = false;
 
-    for (url, error) in errors {
+    for RetrievalFailure {
+        url,
+        error,
+        missing,
+    } in errors
+    {
         let tracking_id = tracking_id_from_url(url);
+        let retrieval = CheckOutcome {
+            status: if *missing {
+                CheckStatus::Missing
+            } else {
+                CheckStatus::Failed
+            },
+            ..CheckOutcome::failed(error.clone())
+        };
         let checks = serde_json::to_string(&DocumentChecks {
-            retrieval: CheckOutcome::failed(error.clone()),
+            retrieval,
             ..Default::default()
         })?;
 
@@ -1087,7 +1113,9 @@ pub async fn save_retrieval_errors(
             .await?;
 
         if let Some(doc) = existing {
-            if doc.retrieval_error.as_deref() == Some(error.as_str()) {
+            if doc.retrieval_error.as_deref() == Some(error.as_str())
+                && doc.document_checks == checks
+            {
                 continue;
             }
             let mut active: document::ActiveModel = doc.into();

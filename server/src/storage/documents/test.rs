@@ -6,6 +6,7 @@ use super::{
     ProviderInfo, load_provider_info, load_sync_runs, load_sync_runs_paginated, save_provider_info,
     save_sync_run,
 };
+use crate::pipeline::sync::RetrievalFailure;
 use csaf_trove_common::{
     CommitInfo,
     document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks},
@@ -17,7 +18,7 @@ use sea_orm::{
 };
 use time::{Duration, OffsetDateTime};
 
-/// Both history queries preserve recorded durations, legacy rows and pagination.
+/// Both history queries preserve recorded durations and missing counts, legacy rows and pagination.
 #[tokio::test]
 async fn sync_history_durations() {
     let db = database("sqlite::memory:", None).await;
@@ -31,7 +32,7 @@ async fn sync_history_durations() {
     .insert(&db)
     .await
     .unwrap();
-    save_sync_run(&db, timestamp, 5, Duration::milliseconds(135_250))
+    save_sync_run(&db, timestamp, 5, 2, Duration::milliseconds(135_250))
         .await
         .unwrap();
 
@@ -39,7 +40,9 @@ async fn sync_history_durations() {
     assert_eq!(recent.len(), 2);
     assert_eq!(recent[0].duration_ms, Some(135_250));
     assert_eq!(recent[0].files_changed, 5);
+    assert_eq!(recent[0].documents_missing, Some(2));
     assert_eq!(recent[1].duration_ms, None);
+    assert_eq!(recent[1].documents_missing, None);
     assert_eq!(load_sync_runs(&db, 1).await.unwrap().len(), 1);
 
     let page = load_sync_runs_paginated(&db, 0, 1).await.unwrap();
@@ -47,19 +50,19 @@ async fn sync_history_durations() {
     assert_eq!(page.items.len(), 1);
     assert_eq!(page.items[0].id, recent[0].id);
     assert_eq!(page.items[0].duration_ms, Some(135_250));
+    assert_eq!(page.items[0].documents_missing, Some(2));
     let legacy_page = load_sync_runs_paginated(&db, 1, 1).await.unwrap();
     assert_eq!(legacy_page.items[0].id, recent[1].id);
     assert_eq!(legacy_page.items[0].duration_ms, None);
+    assert_eq!(legacy_page.items[0].documents_missing, None);
 
     let mut json = serde_json::to_value(&recent[0]).unwrap();
     assert_eq!(json["duration_ms"], 135_250);
     json.as_object_mut().unwrap().remove("duration_ms");
-    assert!(
-        serde_json::from_value::<CommitInfo>(json)
-            .unwrap()
-            .duration_ms
-            .is_none()
-    );
+    json.as_object_mut().unwrap().remove("documents_missing");
+    let legacy = serde_json::from_value::<CommitInfo>(json).unwrap();
+    assert!(legacy.duration_ms.is_none());
+    assert!(legacy.documents_missing.is_none());
 }
 
 /// Opens a database and applies the requested prefix of migrations.
@@ -506,6 +509,86 @@ async fn check_filters_match_summary_counts() {
     assert_eq!(second.items[0].tracking_id, "digest-fail");
 }
 
+/// Builds a retrieval failure for the given URL.
+fn failure(url: &str, error: &str, missing: bool) -> RetrievalFailure {
+    RetrievalFailure {
+        url: url.into(),
+        error: error.into(),
+        missing,
+    }
+}
+
+/// A document reported as not found is counted as missing, and still as a retrieval error.
+#[tokio::test]
+async fn missing_document_is_counted_separately() {
+    let db = database("sqlite::memory:", None).await;
+    let url = "https://example.com/gone.json";
+    assert!(
+        super::save_retrieval_errors(&db, &[failure(url, "Client error: 503", false)])
+            .await
+            .unwrap()
+    );
+    // The same message with a different classification must still update the stored status.
+    assert!(
+        super::save_retrieval_errors(&db, &[failure(url, "Client error: 503", true)])
+            .await
+            .unwrap()
+    );
+    assert!(
+        !super::save_retrieval_errors(&db, &[failure(url, "Client error: 503", true)])
+            .await
+            .unwrap()
+    );
+    let doc = super::load_document(&db, "gone").await.unwrap().unwrap();
+    assert_eq!(doc.checks.retrieval.status, CheckStatus::Missing);
+    assert_eq!(doc.retrieval_error.as_deref(), Some("Client error: 503"));
+    let summary = super::build_summary_from_db(&db, "example.com")
+        .await
+        .unwrap();
+    assert_eq!(summary.retrieval_errors, 1);
+    let checks = summary.checks.unwrap();
+    assert_eq!(checks.retrieval.missing, 1);
+    assert_eq!(checks.retrieval.failed, 0);
+    for filter in ["retrieval-missing", "retrieval-errors", "failing"] {
+        let page = super::load_documents_paginated(&db, 0, 10, Some(filter))
+            .await
+            .unwrap();
+        assert_eq!(page.total, 1, "{filter}");
+    }
+}
+
+/// The migration reclassifies only stored 404 retrieval failures as missing.
+#[tokio::test]
+async fn missing_document_migration() {
+    let db = database("sqlite::memory:", Some(12)).await;
+    let failed = serde_json::to_string(&DocumentChecks {
+        retrieval: CheckOutcome::failed("failed"),
+        ..Default::default()
+    })
+    .unwrap();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Sqlite,
+        "INSERT INTO documents (tracking_id, title, url, signature_present, document_checks, retrieval_error) VALUES
+            ('gone', '', 'https://example.com/gone.json', 0, $1, 'source error: Fetch error: Client error: 404 Not Found'),
+            ('down', '', 'https://example.com/down.json', 0, $1, 'source error: Fetch error: Client error: 503 Service Unavailable')",
+        [failed.into()],
+    ))
+    .await
+    .unwrap();
+    Migrator::up(&db, None).await.unwrap();
+    let status = async |id| {
+        super::load_document(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .checks
+            .retrieval
+            .status
+    };
+    assert_eq!(status("gone").await, CheckStatus::Missing);
+    assert_eq!(status("down").await, CheckStatus::Failed);
+}
+
 /// A failed retrieval hides stale checks and profile results; a later validation replaces them.
 #[tokio::test]
 async fn retrieval_failure_invalidates_checks_until_recovery() {
@@ -515,7 +598,7 @@ async fn retrieval_failure_invalidates_checks_until_recovery() {
     set_checks(&db, "example", &successful_checks()).await;
     let original = super::load_document(&db, "example").await.unwrap().unwrap();
     assert!(original.profiles.basic.is_some());
-    super::save_retrieval_errors(&db, &[(original.url.clone(), "HTTP 503".into())])
+    super::save_retrieval_errors(&db, &[failure(&original.url, "HTTP 503", false)])
         .await
         .unwrap();
     let failed = super::load_document(&db, "example").await.unwrap().unwrap();

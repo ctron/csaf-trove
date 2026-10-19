@@ -99,6 +99,7 @@ pub(crate) async fn build_status_entries(state: &AppState) -> HashMap<String, Sy
                         phase: None,
                         documents_synced: 0,
                         documents_validated: 0,
+                        documents_missing: 0,
                         documents_total: 0,
                         distributions_total: 0,
                         distribution_index: 0,

@@ -141,6 +141,8 @@ pub struct JobStatus {
     pub phase: Option<PipelinePhase>,
     pub documents_synced: u64,
     pub documents_validated: u64,
+    #[serde(default)]
+    pub documents_missing: u64,
     pub documents_total: u64,
     #[serde(default)]
     pub distributions_total: u64,

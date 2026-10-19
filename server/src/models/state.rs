@@ -18,6 +18,9 @@ pub struct SyncState {
     /// Number of documents validated during the last run.
     #[serde(default)]
     pub documents_validated: u64,
+    /// Number of documents reported as not found during the last run.
+    #[serde(default)]
+    pub documents_missing: u64,
     /// Total number of documents known for this provider.
     pub documents_total: u64,
 }
@@ -31,6 +34,7 @@ impl SyncState {
             since_token: None,
             documents_synced: 0,
             documents_validated: 0,
+            documents_missing: 0,
             documents_total: 0,
         }
     }
@@ -53,6 +57,9 @@ pub struct JobStatus {
     pub documents_synced: u64,
     /// Documents validated so far.
     pub documents_validated: u64,
+    /// Documents the provider reported as not found.
+    #[serde(default)]
+    pub documents_missing: u64,
     /// Total documents expected.
     pub documents_total: u64,
     /// Total distributions for the current phase.

@@ -186,6 +186,7 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
         }),
         documents_synced: 0,
         documents_validated: 0,
+        documents_missing: 0,
         documents_total: 0,
         distributions_total: 0,
         distribution_index: 0,
@@ -214,6 +215,7 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 phase: None,
                 documents_synced: 0,
                 documents_validated: 0,
+                documents_missing: 0,
                 documents_total: 0,
                 distributions_total: 0,
                 distribution_index: 0,
@@ -243,6 +245,7 @@ async fn run_job(state: &Arc<AppState>, source: &Source, kind: JobKind) -> Resul
                 phase: None,
                 documents_synced: 0,
                 documents_validated: 0,
+                documents_missing: 0,
                 documents_total: 0,
                 distributions_total: 0,
                 distribution_index: 0,
@@ -279,6 +282,7 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
         Ok(mut sync_state) => {
             sync_state.documents_synced = job.documents_synced;
             sync_state.documents_validated = job.documents_validated;
+            sync_state.documents_missing = job.documents_missing;
             sync_state.documents_total = job.documents_total;
             if let Err(e) = state.storage.save_sync_state(&sync_state).await {
                 tracing::warn!("Failed to persist job counts for {domain}: {e}");
@@ -293,7 +297,13 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
     let duration = job.completed_at.unwrap_or(now) - job.started_at;
     if let Err(e) = state
         .storage
-        .save_sync_run(domain, now, job.documents_synced, duration)
+        .save_sync_run(
+            domain,
+            now,
+            job.documents_synced,
+            job.documents_missing,
+            duration,
+        )
         .await
     {
         tracing::warn!("Failed to save sync run for {domain}: {e}");
@@ -343,6 +353,10 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
                 return Err(e);
             }
         };
+
+        if let Some(job) = state.jobs.write().await.get_mut(domain) {
+            job.documents_missing = sync_result.missing_count();
+        }
 
         state.update_job_phase(domain, PipelinePhase::Commit).await;
         let committed = {
@@ -641,11 +655,10 @@ async fn process_snapshot(
         .await?;
     }
     if !retrieval_errors.is_empty() {
-        let pairs = retrieval_errors
-            .iter()
-            .map(|failure| (failure.url.clone(), failure.error.clone()))
-            .collect::<Vec<_>>();
-        changed |= state.storage.save_retrieval_errors(domain, &pairs).await?;
+        changed |= state
+            .storage
+            .save_retrieval_errors(domain, retrieval_errors)
+            .await?;
     }
     if changed || state.storage.load_summary(domain).await?.is_none() {
         state.update_job_phase(domain, PipelinePhase::Summary).await;

@@ -92,6 +92,7 @@ pub fn SyncDetailPage() -> impl IntoView {
                                         <Th>"Date"</Th>
                                         <Th>"Duration"</Th>
                                         <Th>"Documents Changed"</Th>
+                                        <Th>"Missing"</Th>
                                     </tr>
                                 </Thead>
                                 <Tbody>
@@ -110,12 +111,21 @@ pub fn SyncDetailPage() -> impl IntoView {
                                         } else {
                                             BadgeVariant::Neutral
                                         };
+                                        let missing = entry.documents_missing.map(|missing| {
+                                            let variant = if missing > 0 {
+                                                BadgeVariant::Warning
+                                            } else {
+                                                BadgeVariant::Neutral
+                                            };
+                                            view! { <Badge variant=variant>{format_number(missing)}</Badge> }
+                                        });
                                         view! {
                                             <tr>
                                                 <Td>{entry.id}</Td>
                                                 <Td class="whitespace-nowrap">{date}</Td>
                                                 <Td class="whitespace-nowrap">{format_duration(entry.duration_ms)}</Td>
                                                 <Td><Badge variant=variant>{format_number(entry.files_changed as u64)}</Badge></Td>
+                                                <Td>{missing.map(IntoAny::into_any).unwrap_or_else(|| "\u{2014}".into_any())}</Td>
                                             </tr>
                                         }
                                     }).collect::<Vec<_>>()}

@@ -3,6 +3,7 @@
 use super::*;
 use crate::{
     models::result::DistributionHealth,
+    pipeline::sync::RetrievalFailure,
     storage::{
         documents::distribution_health,
         git_repo::{commit_snapshot, prepare_worktree},
@@ -45,8 +46,16 @@ async fn fixture() -> (TempDir, Storage, DatabaseConnection) {
         .save_retrieval_errors(
             "example.com",
             &[
-                (DOCUMENT.into(), "temporary".into()),
-                (UNRELATED.into(), "HTTP 404".into()),
+                RetrievalFailure {
+                    url: DOCUMENT.into(),
+                    error: "temporary".into(),
+                    missing: false,
+                },
+                RetrievalFailure {
+                    url: UNRELATED.into(),
+                    error: "HTTP 404".into(),
+                    missing: true,
+                },
             ],
         )
         .await

@@ -371,16 +371,24 @@ impl Storage {
         Ok(Some(points))
     }
 
-    /// Records a completed sync run with the number of documents changed and its duration.
+    /// Records a completed sync run with the number of changed and missing documents and its duration.
     pub async fn save_sync_run(
         &self,
         domain: &str,
         timestamp: OffsetDateTime,
         documents_changed: u64,
+        documents_missing: u64,
         duration: Duration,
     ) -> Result<()> {
         let db = self.db.get(domain).await?;
-        documents::save_sync_run(&db, timestamp, documents_changed, duration).await
+        documents::save_sync_run(
+            &db,
+            timestamp,
+            documents_changed,
+            documents_missing,
+            duration,
+        )
+        .await
     }
 
     /// Returns the duration of the most recent sync run of a provider, if recorded.
@@ -523,7 +531,7 @@ impl Storage {
     pub async fn save_retrieval_errors(
         &self,
         domain: &str,
-        errors: &[(String, String)],
+        errors: &[RetrievalFailure],
     ) -> Result<bool> {
         let db = self.db.get(domain).await?;
         documents::save_retrieval_errors(&db, errors).await

@@ -455,9 +455,12 @@ fn build_document_validation(doc: DocumentResult) -> DocumentValidation {
         extended: build_doc_profile_detail(&doc, "extended"),
         full: build_doc_profile_detail(&doc, "full"),
     };
-    let retrieval_error = (doc.checks.retrieval.status == CheckStatus::Failed)
-        .then(|| doc.checks.retrieval.message.clone())
-        .flatten();
+    let retrieval_error = matches!(
+        doc.checks.retrieval.status,
+        CheckStatus::Failed | CheckStatus::Missing
+    )
+    .then(|| doc.checks.retrieval.message.clone())
+    .flatten();
     DocumentValidation {
         checks: doc.checks,
         tracking_id: doc.tracking_id,

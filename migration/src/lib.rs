@@ -15,6 +15,7 @@ mod m20240110_000010_distribution_membership;
 
 mod m20240111_000011_document_checks;
 mod m20240112_000012_document_vulnerabilities;
+mod m20240113_000013_missing_documents;
 
 /// Migrator that applies all schema migrations in order.
 pub struct Migrator;
@@ -34,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240110_000010_distribution_membership::Migration),
             Box::new(m20240111_000011_document_checks::Migration),
             Box::new(m20240112_000012_document_vulnerabilities::Migration),
+            Box::new(m20240113_000013_missing_documents::Migration),
         ]
     }
 }

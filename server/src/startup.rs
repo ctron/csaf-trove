@@ -190,6 +190,7 @@ async fn restore_jobs(state: &AppState) {
                 phase: None,
                 documents_synced: ss.documents_synced,
                 documents_validated: ss.documents_validated,
+                documents_missing: ss.documents_missing,
                 documents_total: ss.documents_total,
                 distributions_total: 0,
                 distribution_index: 0,

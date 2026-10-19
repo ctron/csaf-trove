@@ -6,7 +6,7 @@ use crate::{AppState, models::source::Source as AppSource};
 use anyhow::Result;
 use csaf_walker::{
     common::{
-        fetcher::Fetcher,
+        fetcher::{self, Fetcher},
         progress::{Progress, ProgressBar},
         retrieve::RetrievalError,
     },
@@ -14,10 +14,11 @@ use csaf_walker::{
     metadata::MetadataRetriever,
     model::metadata::TlpLabel,
     retrieve::{RetrievalContext, RetrievedAdvisory, RetrievedVisitor, RetrievingVisitor},
-    source::{HttpOptions, HttpSource, Source},
+    source::{HttpOptions, HttpSource, HttpSourceError, Source},
     walker::Walker,
 };
 use parking_lot::Mutex;
+use reqwest::StatusCode;
 use std::{
     fmt::Debug,
     path::Path,
@@ -35,6 +36,17 @@ pub struct RetrievalFailure {
     pub url: String,
     /// Human-readable error description.
     pub error: String,
+    /// The provider reported the document as not found (HTTP 404).
+    #[serde(default)]
+    pub missing: bool,
+}
+
+/// Returns whether a source error means the document does not exist at the provider.
+fn is_not_found(err: &HttpSourceError) -> bool {
+    matches!(
+        err,
+        HttpSourceError::Fetcher(fetcher::Error::ClientError(StatusCode::NOT_FOUND))
+    )
 }
 
 /// Result of a successful sync run.
@@ -49,6 +61,13 @@ pub struct SyncResult {
     pub started_at: OffsetDateTime,
 }
 
+impl SyncResult {
+    /// Number of documents the provider reported as not found.
+    pub fn missing_count(&self) -> u64 {
+        self.retrieval_errors.iter().filter(|f| f.missing).count() as u64
+    }
+}
+
 /// Wraps [`TroveStoreVisitor`] to increment the synced document count and collect retrieval errors.
 struct CountingStoreVisitor {
     /// Inner visitor that performs the actual storage.
@@ -61,10 +80,7 @@ struct CountingStoreVisitor {
     retrieval_errors: Arc<Mutex<Vec<RetrievalFailure>>>,
 }
 
-impl<S: Source + Debug> RetrievedVisitor<S> for CountingStoreVisitor
-where
-    S::Error: 'static,
-{
+impl<S: Source<Error = HttpSourceError> + Debug> RetrievedVisitor<S> for CountingStoreVisitor {
     type Error = TroveStoreError;
     type Context = ();
 
@@ -84,10 +100,14 @@ where
             Err(err) => {
                 let url = err.url().to_string();
                 let error = format!("{err}");
+                let RetrievalError::Source { err: source, .. } = &err;
+                let missing = is_not_found(source);
                 tracing::warn!("Failed to retrieve {url}: {error}");
-                self.retrieval_errors
-                    .lock()
-                    .push(RetrievalFailure { url, error });
+                self.retrieval_errors.lock().push(RetrievalFailure {
+                    url,
+                    error,
+                    missing,
+                });
             }
             Ok(advisory) => {
                 <TroveStoreVisitor as RetrievedVisitor<S>>::visit_advisory(
@@ -239,6 +259,7 @@ pub async fn sync_provider(
                             .trim_start_matches("Fetch error: ")
                             .trim_start_matches("Client error: ")
                     ),
+                    missing: false,
                 });
                 Ok(())
             }
@@ -280,4 +301,21 @@ pub async fn sync_provider(
         distribution_errors,
         started_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Only a 404 response marks a document as missing.
+    #[test]
+    fn classifies_not_found() {
+        let error = |status| HttpSourceError::Fetcher(fetcher::Error::ClientError(status));
+        assert!(is_not_found(&error(StatusCode::NOT_FOUND)));
+        assert!(!is_not_found(&error(StatusCode::FORBIDDEN)));
+        assert!(!is_not_found(&HttpSourceError::Fetcher(
+            fetcher::Error::RateLimited(Duration::from_secs(1))
+        )));
+    }
 }

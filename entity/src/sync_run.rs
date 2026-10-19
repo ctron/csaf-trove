@@ -10,6 +10,8 @@ pub struct Model {
     pub timestamp: OffsetDateTime,
     pub documents_changed: i64,
     pub duration_ms: Option<i64>,
+    /// Documents reported as not found during the run; absent for older runs.
+    pub documents_missing: Option<i64>,
 }
 
 impl ActiveModelBehavior for ActiveModel {}

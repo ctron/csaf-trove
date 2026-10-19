@@ -115,4 +115,7 @@ pub struct CommitInfo {
     /// Total run duration in milliseconds, if recorded.
     #[serde(default)]
     pub duration_ms: Option<i64>,
+    /// Documents the provider reported as not found, if recorded.
+    #[serde(default)]
+    pub documents_missing: Option<u64>,
 }

@@ -612,6 +612,7 @@ fn DocumentDetailContent(
                                             ("Digests", CheckStatus::Missing) => "No SHA-256 or SHA-512 digest supplied.",
                                             ("Signature" | "Digests", _) => "Details were not recorded for this check. They will be available after revalidation.",
                                             ("Retrieval", CheckStatus::Passed) => "Document retrieved successfully.",
+                                            ("Retrieval", CheckStatus::Missing) => "Document not found at the provider (HTTP 404).",
                                             ("Parsing", CheckStatus::Passed) => "Document parsed successfully.",
                                             _ => "See the diagnostic above for details.",
                                         };
