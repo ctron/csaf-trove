@@ -1,7 +1,8 @@
 //! Durable processing checkpoints and targeted document maintenance.
 use super::{Storage, documents};
-use crate::models::result::ProviderSummary;
+use crate::{models::result::ProviderSummary, pipeline::sync::RetrievalFailure};
 use anyhow::{Context, Result};
+use csaf_trove_common::document_checks::{CheckStatus, DocumentChecks};
 use csaf_trove_entity::{check_failure, document, document_vulnerability, revision_history};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
@@ -142,5 +143,31 @@ impl Storage {
             .into_tuple::<String>()
             .all(&db)
             .await?)
+    }
+
+    /// Loads all persisted retrieval failures, so they can be retried or preserved.
+    pub async fn retrieval_failures(&self, domain: &str) -> Result<Vec<RetrievalFailure>> {
+        let db = self.db.get(domain).await?;
+        document::Entity::find()
+            .filter(document::Column::RetrievalError.is_not_null())
+            .select_only()
+            .columns([
+                document::Column::Url,
+                document::Column::RetrievalError,
+                document::Column::DocumentChecks,
+            ])
+            .into_tuple::<(String, String, String)>()
+            .all(&db)
+            .await?
+            .into_iter()
+            .map(|(url, error, checks)| {
+                let checks: DocumentChecks = serde_json::from_str(&checks)?;
+                Ok(RetrievalFailure {
+                    url,
+                    error,
+                    missing: checks.retrieval.status == CheckStatus::Missing,
+                })
+            })
+            .collect()
     }
 }

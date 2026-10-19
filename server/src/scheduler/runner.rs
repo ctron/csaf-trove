@@ -430,8 +430,11 @@ async fn run_revalidation(state: &Arc<AppState>, source: &Source) -> Result<()> 
     let domain = &source.domain;
     let worktree_dir = state.work_dir().join(ProviderKey::from(domain.as_str()));
 
+    // Nothing is fetched, so revalidating an older committed copy must not hide that the
+    // latest retrieval failed; the persisted failures are applied again after validation.
+    let failures = state.storage.retrieval_failures(domain).await?;
     // No checkout is needed: processing materializes the selected committed inputs.
-    let result = process_snapshot(state, source, &worktree_dir, true, &[]).await;
+    let result = process_snapshot(state, source, &worktree_dir, true, &failures).await;
     cleanup_worktree(&worktree_dir).await;
     result?;
     timed_processing_step(

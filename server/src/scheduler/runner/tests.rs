@@ -6,7 +6,7 @@ use crate::{
     storage::{Storage, scratch},
 };
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
-use std::{collections::HashMap, fs};
+use std::{collections::HashMap, fs, slice};
 use tempfile::TempDir;
 use tokio::sync::{Notify, RwLock, watch};
 
@@ -626,4 +626,39 @@ async fn finished_job_notifies_hooks() {
     assert_eq!(event.domain, "example.com");
     assert_eq!(event.kind, JobKind::Revalidate);
     assert!(event.success);
+}
+
+/// Revalidating an older committed copy keeps a missing document marked as missing.
+#[tokio::test]
+async fn revalidation_preserves_retrieval_failures() {
+    let (_dir, state, source) = fixture();
+    process(&state, &source).await.unwrap();
+    let failure = RetrievalFailure {
+        url: "https://example.com/a.json".into(),
+        error: "Client error: 404 Not Found".into(),
+        missing: true,
+    };
+    state
+        .storage
+        .save_retrieval_errors(&source.domain, slice::from_ref(&failure))
+        .await
+        .unwrap();
+    run_revalidation(&state, &source).await.unwrap();
+    let failures = state
+        .storage
+        .retrieval_failures(&source.domain)
+        .await
+        .unwrap();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].url, failure.url);
+    assert_eq!(failures[0].error, failure.error);
+    assert!(failures[0].missing);
+    let summary = state
+        .storage
+        .load_summary(&source.domain)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.retrieval_errors, 1);
+    assert_eq!(summary.checks.unwrap().retrieval.missing, 1);
 }

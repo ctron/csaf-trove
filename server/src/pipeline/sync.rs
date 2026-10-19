@@ -20,6 +20,7 @@ use csaf_walker::{
 use parking_lot::Mutex;
 use reqwest::StatusCode;
 use std::{
+    collections::HashSet,
     fmt::Debug,
     path::Path,
     sync::Arc,
@@ -188,8 +189,19 @@ pub async fn sync_provider(
         }
     }
 
+    let mut retry = HashSet::new();
     if let Some(ref since) = sync_state.since_token {
-        tracing::info!("{domain}: starting incremental sync (since {since})");
+        retry = state
+            .storage
+            .retrieval_failures(domain)
+            .await?
+            .into_iter()
+            .map(|failure| failure.url)
+            .collect();
+        tracing::info!(
+            "{domain}: starting incremental sync (since {since}, retrying {} failed documents)",
+            retry.len()
+        );
     } else {
         tracing::info!("{domain}: starting full sync (no since_token)");
     }
@@ -227,6 +239,7 @@ pub async fn sync_provider(
     let mut walker = Walker::new(MembershipSource {
         inner: http_source,
         since: sync_state.since_token.map(SystemTime::from),
+        retry: Arc::new(retry),
         membership: membership.clone(),
     });
     walker = walker.with_distribution_filter(move |ctx: &DistributionContext| {

@@ -8,7 +8,7 @@ use csaf_walker::{
 };
 use parking_lot::Mutex;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
     time::SystemTime,
 };
@@ -23,6 +23,8 @@ pub struct MembershipSource<S> {
     pub inner: S,
     /// Earliest modification time requiring a download.
     pub since: Option<SystemTime>,
+    /// Advisory URLs whose last retrieval failed, downloaded again regardless of `since`.
+    pub retry: Arc<HashSet<String>>,
     /// Shared snapshots, including successful empty indexes.
     pub membership: Arc<Mutex<DistributionMembership>>,
 }
@@ -49,7 +51,7 @@ impl<S: Source> Source for MembershipSource<S> {
             .lock()
             .insert(url, advisories.iter().map(|a| a.url.to_string()).collect());
         if let Some(since) = self.since {
-            advisories.retain(|a| a.modified >= since);
+            advisories.retain(|a| a.modified >= since || self.retry.contains(a.url.as_str()));
         }
         Ok(advisories)
     }

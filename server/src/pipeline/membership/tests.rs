@@ -77,6 +77,7 @@ async fn membership_precedes_incremental_filtering() {
             ]),
         },
         since: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(20)),
+        retry: Arc::default(),
         membership: Arc::default(),
     };
     assert_eq!(
@@ -117,4 +118,27 @@ async fn membership_precedes_incremental_filtering() {
         source.membership.lock()[second.url().as_str()],
         recorded[second.url().as_str()]
     );
+}
+
+/// Advisories whose last retrieval failed are retried even when unchanged since the last sync.
+#[tokio::test]
+async fn retries_failed_retrievals() {
+    let feed = DistributionContext::Feed {
+        url: Url::parse("https://feeds.example/.well-known/csaf/white.json").unwrap(),
+        tlp_label: TlpLabel::Clear,
+    };
+    let failed = advisory(&feed, "https://feeds.example/2026/failed.json", 10);
+    let unchanged = advisory(&feed, "https://feeds.example/2026/unchanged.json", 10);
+    let source = MembershipSource {
+        inner: IndexSource {
+            indexes: BTreeMap::from([(
+                feed.url().to_string(),
+                vec![failed.clone(), unchanged.clone()],
+            )]),
+        },
+        since: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(20)),
+        retry: Arc::new(HashSet::from([failed.url.to_string()])),
+        membership: Arc::default(),
+    };
+    assert_eq!(source.load_index(feed).await.unwrap(), vec![failed]);
 }
