@@ -3,8 +3,9 @@ mod test;
 use anyhow::Result;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, DbBackend,
-    EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
-    Statement, TransactionTrait, sea_query::Expr,
+    EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+    Set, Statement, TransactionTrait,
+    sea_query::{Alias, Expr, ExprTrait},
 };
 use std::collections::HashMap;
 
@@ -362,100 +363,37 @@ pub async fn save_documents(
     Ok(total)
 }
 
-/// Validation error counts that make a document fail; warnings and infos do not.
-const ERROR_COUNT_COLUMNS: [document::Column; 3] = [
-    document::Column::BasicErrorCount,
-    document::Column::ExtendedErrorCount,
-    document::Column::FullErrorCount,
-];
+/// Indexed virtual column holding the outcome of an essential check stage.
+fn check_column(stage: &str) -> Expr {
+    Expr::col(Alias::new(format!("{stage}_status")))
+}
 
-/// Matches a typed essential check outcome in persisted JSON.
-fn check_condition(stage: &str, status: &str) -> sea_orm::sea_query::SimpleExpr {
-    Expr::cust_with_values(
-        "COALESCE(json_extract(document_checks, ?), 'not_evaluated') = ?",
-        [format!("$.{stage}.status"), status.to_string()],
-    )
+/// Matches a typed essential check outcome.
+fn check_condition(stage: &str, status: &str) -> Expr {
+    check_column(stage).eq(status)
+}
+
+/// Matches any of the given essential check outcomes.
+fn check_in(stage: &str, statuses: &[&str]) -> Expr {
+    check_column(stage).is_in(statuses.iter().copied())
 }
 
 /// Matches documents that could not be retrieved, including those reported as not found.
-fn retrieval_error_condition() -> Condition {
-    Condition::any()
-        .add(check_condition("retrieval", "failed"))
-        .add(check_condition("retrieval", "missing"))
+fn retrieval_error_condition() -> Expr {
+    check_in("retrieval", &["failed", "missing"])
 }
 
-/// Matches profile errors, any failed essential check, or a missing document.
-fn failing_condition() -> Condition {
-    ["retrieval", "parsing", "signature", "digest"]
-        .into_iter()
-        .fold(
-            Condition::any().add(
-                Condition::all()
-                    .add(check_condition("retrieval", "passed"))
-                    .add(check_condition("parsing", "passed"))
-                    .add(
-                        ERROR_COUNT_COLUMNS
-                            .into_iter()
-                            .fold(Condition::any(), |c, col| c.add(col.gt(0))),
-                    ),
-            ),
-            |c, stage| c.add(check_condition(stage, "failed")),
-        )
-        .add(check_condition("retrieval", "missing"))
+/// Matches any of the given overall document outcomes.
+///
+/// The indexed virtual `overall_status` column classifies each document as `failing` (profile
+/// errors, a failed essential check, or a missing document), `warning` (profile or digest
+/// warnings only), or `passing` (evaluated without either; absent integrity inputs are allowed).
+fn overall_in(statuses: &[&str]) -> Expr {
+    Expr::col(Alias::new("overall_status")).is_in(statuses.iter().copied())
 }
 
-/// Warning counts that, together with [`failing_condition`], mark a document as needing attention.
-const WARNING_COUNT_COLUMNS: [document::Column; 3] = [
-    document::Column::BasicWarningCount,
-    document::Column::ExtendedWarningCount,
-    document::Column::FullWarningCount,
-];
-
-/// Matches documents with warnings (validation or integrity) or anything [`failing_condition`] matches.
-fn warning_condition() -> Condition {
-    failing_condition()
-        .add(
-            Condition::all()
-                .add(check_condition("retrieval", "passed"))
-                .add(check_condition("parsing", "passed"))
-                .add(
-                    WARNING_COUNT_COLUMNS
-                        .into_iter()
-                        .fold(Condition::any(), |c, col| c.add(col.gt(0))),
-                ),
-        )
-        .add(check_condition("digest", "warning"))
-}
-
-/// Matches evaluated documents without errors or warnings; absent integrity inputs are allowed.
-fn passing_condition() -> Condition {
-    ERROR_COUNT_COLUMNS
-        .into_iter()
-        .chain(WARNING_COUNT_COLUMNS)
-        .fold(Condition::all(), |c, col| {
-            c.add(Condition::any().add(col.is_null()).add(col.eq(0)))
-        })
-        .add(check_condition("retrieval", "passed"))
-        .add(check_condition("parsing", "passed"))
-        .add(
-            Condition::any()
-                .add(check_condition("signature", "passed"))
-                .add(check_condition("signature", "missing")),
-        )
-        .add(
-            Condition::any()
-                .add(check_condition("digest", "passed"))
-                .add(check_condition("digest", "missing")),
-        )
-}
-
-/// Loads a paginated, optionally filtered list of document validation results.
-pub async fn load_documents_paginated(
-    db: &DatabaseConnection,
-    offset: u64,
-    limit: u64,
-    status_filter: Option<&str>,
-) -> Result<Paginated<DocumentValidation>> {
+/// Builds the document query for an optional status filter; unknown filters match everything.
+fn filtered_documents(status_filter: Option<&str>) -> Select<document::Entity> {
     let mut query = document::Entity::find();
 
     match status_filter {
@@ -463,17 +401,13 @@ pub async fn load_documents_paginated(
             let condition = ["retrieval", "parsing", "signature", "digest"]
                 .into_iter()
                 .fold(Condition::any(), |condition, stage| {
-                    ["failed", "warning", "missing"]
-                        .into_iter()
-                        .fold(condition, |condition, status| {
-                            condition.add(check_condition(stage, status))
-                        })
+                    condition.add(check_in(stage, &["failed", "warning", "missing"]))
                 });
             query = query.filter(condition);
         }
-        Some("failing") => query = query.filter(failing_condition()),
-        Some("warnings") => query = query.filter(warning_condition()),
-        Some("passing") => query = query.filter(passing_condition()),
+        Some("failing") => query = query.filter(overall_in(&["failing"])),
+        Some("warnings") => query = query.filter(overall_in(&["failing", "warning"])),
+        Some("passing") => query = query.filter(overall_in(&["passing"])),
         Some("errors" | "retrieval-errors") => query = query.filter(retrieval_error_condition()),
         Some("parse-errors") => query = query.filter(check_condition("parsing", "failed")),
         Some("signature-errors") => query = query.filter(check_condition("signature", "failed")),
@@ -500,7 +434,17 @@ pub async fn load_documents_paginated(
         }
         None => {}
     }
+    query
+}
 
+/// Loads a paginated, optionally filtered list of document validation results.
+pub async fn load_documents_paginated(
+    db: &DatabaseConnection,
+    offset: u64,
+    limit: u64,
+    status_filter: Option<&str>,
+) -> Result<Paginated<DocumentValidation>> {
+    let query = filtered_documents(status_filter);
     let total = query.clone().count(db).await?;
 
     let docs = query

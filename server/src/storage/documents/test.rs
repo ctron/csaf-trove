@@ -11,10 +11,11 @@ use csaf_trove_common::{
     CommitInfo,
     document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks},
 };
-use csaf_trove_entity::sync_run;
+use csaf_trove_entity::{document, sync_run};
 use csaf_trove_migration::{Migrator, MigratorTrait};
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend, Set, Statement,
+    ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend, QueryOrder,
+    QueryTrait, Set, Statement,
 };
 use time::{Duration, OffsetDateTime};
 
@@ -554,6 +555,154 @@ async fn missing_document_is_counted_separately() {
             .await
             .unwrap();
         assert_eq!(page.total, 1, "{filter}");
+    }
+}
+
+/// Status filters are answered from the check status indexes instead of parsing every document.
+#[tokio::test]
+async fn status_filters_use_indexes() {
+    let db = database("sqlite::memory:", None).await;
+    for (filter, index) in [
+        ("retrieval-missing", "idx_documents_retrieval_status"),
+        ("retrieval-errors", "idx_documents_retrieval_status"),
+        ("signature-failed", "idx_documents_signature_status"),
+        ("document-issues", "idx_documents_digest_status"),
+        ("failing", "idx_documents_overall_status"),
+        ("warnings", "idx_documents_overall_status"),
+        ("passing", "idx_documents_overall_status"),
+    ] {
+        let query = super::filtered_documents(Some(filter))
+            .order_by_asc(document::Column::TrackingId)
+            .build(DbBackend::Sqlite);
+        let plan = db
+            .query_all_raw(Statement {
+                sql: format!("EXPLAIN QUERY PLAN {}", query.sql),
+                ..query
+            })
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.try_get::<String>("", "detail").unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(plan.contains(index), "{filter}: {plan}");
+    }
+}
+
+/// The overall outcome places each document in the failing, warning and passing filters.
+#[tokio::test]
+async fn overall_status_filters() {
+    let db = database("sqlite::memory:", None).await;
+    let checks = |retrieval, parsing, signature, digest| {
+        serde_json::to_string(&DocumentChecks {
+            retrieval: CheckOutcome::new(retrieval),
+            parsing: CheckOutcome::new(parsing),
+            signature: CheckOutcome::new(signature),
+            digest: CheckOutcome::new(digest),
+        })
+        .unwrap()
+    };
+    use CheckStatus::{Failed, Missing, NotEvaluated, Passed, Warning};
+    // (tracking ID, checks, basic error count, basic warning count, expected filters)
+    let cases = [
+        (
+            "clean",
+            checks(Passed, Passed, Passed, Passed),
+            0,
+            0,
+            "passing",
+        ),
+        (
+            "unsigned",
+            checks(Passed, Passed, Missing, Missing),
+            0,
+            0,
+            "passing",
+        ),
+        (
+            "errors",
+            checks(Passed, Passed, Passed, Passed),
+            2,
+            1,
+            "failing warnings",
+        ),
+        (
+            "signature",
+            checks(Passed, Passed, Failed, Passed),
+            0,
+            0,
+            "failing warnings",
+        ),
+        (
+            "gone",
+            checks(Missing, NotEvaluated, NotEvaluated, NotEvaluated),
+            0,
+            0,
+            "failing warnings",
+        ),
+        (
+            "unparsed",
+            checks(Passed, Failed, NotEvaluated, NotEvaluated),
+            0,
+            0,
+            "failing warnings",
+        ),
+        (
+            "warned",
+            checks(Passed, Passed, Passed, Passed),
+            0,
+            3,
+            "warnings",
+        ),
+        (
+            "digest",
+            checks(Passed, Passed, Passed, Warning),
+            0,
+            0,
+            "warnings",
+        ),
+        (
+            "unknown",
+            checks(Passed, Passed, NotEvaluated, Passed),
+            0,
+            0,
+            "",
+        ),
+        (
+            "stale",
+            checks(NotEvaluated, NotEvaluated, NotEvaluated, NotEvaluated),
+            2,
+            0,
+            "",
+        ),
+    ];
+    for (id, checks, errors, warnings, _) in &cases {
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "INSERT INTO documents (tracking_id, title, url, signature_present, document_checks, basic_error_count, basic_warning_count)
+                VALUES ($1, '', '', 0, $2, $3, $4)",
+            [(*id).into(), checks.clone().into(), (*errors).into(), (*warnings).into()],
+        ))
+        .await
+        .unwrap();
+    }
+    for filter in ["failing", "warnings", "passing"] {
+        let page = super::load_documents_paginated(&db, 0, 100, Some(filter))
+            .await
+            .unwrap();
+        let mut actual = page
+            .items
+            .iter()
+            .map(|doc| doc.tracking_id.as_str())
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        let mut expected = cases
+            .iter()
+            .filter(|case| case.4.split(' ').any(|f| f == filter))
+            .map(|case| case.0)
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(actual, expected, "{filter}");
     }
 }
 
