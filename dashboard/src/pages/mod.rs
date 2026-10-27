@@ -1,4 +1,5 @@
 pub mod document;
+pub mod endpoints;
 pub mod home;
 pub mod overview;
 pub mod provider;

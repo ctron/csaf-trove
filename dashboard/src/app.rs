@@ -1,8 +1,8 @@
 use crate::{
     components::{startup_gate::StartupGate, theme_toggle::ThemeToggle},
     pages::{
-        document::DocumentPage, home::HomePage, overview::OverviewPage, provider::ProviderPage,
-        sync_detail::SyncDetailPage, sync_status::SyncStatusPage,
+        document::DocumentPage, endpoints::EndpointsPage, home::HomePage, overview::OverviewPage,
+        provider::ProviderPage, sync_detail::SyncDetailPage, sync_status::SyncStatusPage,
     },
 };
 use leptos::prelude::*;
@@ -20,9 +20,10 @@ pub fn App() -> impl IntoView {
                     <div class="container flex items-center justify-between px-6 py-4 mx-auto">
                         <a href="/" class="text-xl font-bold text-gray-800 dark:text-white no-underline hover:no-underline">"csaf-trove"</a>
                         <div class="flex items-center gap-x-4">
-                            <a href="/" class="text-gray-600 border-b-2 border-transparent transition-colors duration-300 hover:text-gray-800 hover:border-blue-500 dark:text-gray-300 dark:hover:text-gray-200 no-underline hover:no-underline">"Providers"</a>
                             <a href="/overview" class="text-gray-600 border-b-2 border-transparent transition-colors duration-300 hover:text-gray-800 hover:border-blue-500 dark:text-gray-300 dark:hover:text-gray-200 no-underline hover:no-underline">"Overview"</a>
+                            <a href="/" class="text-gray-600 border-b-2 border-transparent transition-colors duration-300 hover:text-gray-800 hover:border-blue-500 dark:text-gray-300 dark:hover:text-gray-200 no-underline hover:no-underline">"Providers"</a>
                             <a href="/sync" class="text-gray-600 border-b-2 border-transparent transition-colors duration-300 hover:text-gray-800 hover:border-blue-500 dark:text-gray-300 dark:hover:text-gray-200 no-underline hover:no-underline">"Sync Status"</a>
+                            <a href="/endpoints" class="text-gray-600 border-b-2 border-transparent transition-colors duration-300 hover:text-gray-800 hover:border-blue-500 dark:text-gray-300 dark:hover:text-gray-200 no-underline hover:no-underline">"Endpoints"</a>
                             <a
                                 href="https://github.com/ctron/csaf-trove"
                                 target="_blank"
@@ -48,6 +49,7 @@ pub fn App() -> impl IntoView {
                                 <Route path=path!("/providers/:domain/documents/:tracking_id/:tab?/:commit_id?") view=DocumentPage />
                                 <Route path=path!("/sync") view=SyncStatusPage />
                                 <Route path=path!("/sync/:domain") view=SyncDetailPage />
+                                <Route path=path!("/endpoints") view=EndpointsPage />
                             </Routes>
                         </StartupGate>
                     </div>
