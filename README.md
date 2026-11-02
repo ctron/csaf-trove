@@ -12,18 +12,23 @@ csaf-trove periodically fetches CSAF documents from configured providers, valida
 
 - **Multi-provider sync** — incremental and full sync with per-document error tracking
 - **Validation** — CSAF profile validation with per-document results and history
-- **Version tracking** — tracks document changes over time
+- **Version tracking** — document history and diffs between versions
+- **CVE search** — finds matching advisories across providers
+- **REST API and MCP server** — read access for integrations and AI clients; MCP is opt-in
 - **Web dashboard** — provider summaries, document details, and sync activity sparklines
 - **CSAF lister** — generates `aggregator.json` for use as a CSAF lister
 - **GitHub config sync** — provider list managed via a GitHub repository with webhook support
 
-Scratch advisories in `work/` use zstd compression (`.json.zst`, level 3), including during full syncs
-and revalidation. Signatures, checksums, and provider metadata remain plain files. Validation and Git
-insertion decompress individual advisories in memory; Git retains the original JSON bytes and paths,
-so document history and diffs remain compatible with existing repositories. No configuration or
-repository migration is required.
-
 ## Running locally
+
+Requires a current stable Rust toolchain, the `wasm32-unknown-unknown` target,
+[Trunk](https://trunkrs.dev/), and OpenSSL development libraries with `pkg-config`
+(on Debian/Ubuntu: `libssl-dev pkg-config`).
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install --locked trunk
+```
 
 Create a `local-config.toml` in the repository root (it is ignored by Git). This example keeps all data in
 `./data`, skips the GitHub config sync, and defines a provider inline:
@@ -49,26 +54,32 @@ you can also copy files from `sources/` into `data/sources/`.
 Build the dashboard first, since the server embeds `dashboard/dist`, then start the server:
 
 ```sh
-(cd dashboard && trunk build)
+trunk -C dashboard/Trunk.toml build
 cargo run -p csaf-trove-server -- --config local-config.toml
 ```
 
-The dashboard is then available at <http://127.0.0.1:8080>. For dashboard development, run `trunk serve` in
-`dashboard/` instead. It serves on <http://127.0.0.1:9090> and proxies API requests to the server on port 8080.
+The dashboard is then available at <http://127.0.0.1:8080>. For dashboard development, run `trunk -C dashboard/Trunk.toml serve`
+from the repository root instead. It serves on <http://127.0.0.1:9090> and proxies API requests to the server on port 8080.
 
-## Refreshing cached summaries
+## MCP server
 
-Provider pages serve cached summaries. Syncs rebuild them when results change or the cache is missing;
-unchanged syncs reuse existing summaries, including older summary formats.
+Enable the read-only MCP server in your configuration:
 
-To upgrade selected summaries once using stored validation results, stop the service and run:
-
-```sh
-csaf-trove-server --config /etc/csaf-trove/config.toml --refresh-summaries suse.com vulnerabilities.ncsc.nl
+```toml
+[mcp]
+enabled = true
 ```
 
-Run this as the service user so file ownership is preserved, then restart the service. The command
-processes providers sequentially and exits without starting the HTTP server, scheduler, downloads, or
-validation. It preserves the last validation timestamp and operator note. Each provider must already
-have a cached summary and validation database. Stop the service first to avoid racing a sync's summary
-publication.
+Connect an MCP client using Streamable HTTP at `http://127.0.0.1:8080/mcp`.
+It provides CVE search, provider and document queries, validation results, version history and diffs.
+See [MCP setup and capabilities](docs/mcp.md) for remote access and available tools.
+
+## Documentation
+
+- [Deployment](deploy/DEPLOY.md) — Ansible, TLS, API authentication, webhooks and rate limiting
+- [Operations](docs/operations.md) — scratch storage and refreshing cached summaries
+- [REST API routes](server/src/api/mod.rs) — providers, documents, CVE search and sync control under `/api`
+
+CSAF lister output is optional: configure `[aggregator]` to publish
+`/.well-known/csaf-aggregator/aggregator.json`. Full mirror hosting remains a
+[design proposal](docs/design-aggregator-mirror.md).
