@@ -1,9 +1,14 @@
 use crate::{
-    components::section_heading::SectionHeading, format::format_number,
+    components::{
+        badge::{Badge, BadgeVariant},
+        section_heading::SectionHeading,
+    },
+    format::format_number,
     pages::sync_status::format_relative_time,
 };
 use csaf_trove_common::overview::{Overview, SyncActivity, Trends, ValidationOverview};
 use leptos::prelude::*;
+use std::collections::BTreeMap;
 use std::time::Duration;
 use time::format_description::well_known::Rfc3339;
 
@@ -91,6 +96,11 @@ fn OverviewMetrics(metrics: Overview) -> impl IntoView {
                 <SyncPanel sync=metrics.sync />
                 <TrendsPanel trends=metrics.trends />
             </div>
+        </div>
+        <div class="mb-8">
+            <Panel title="CSAF versions">
+                <CsafVersions counts=metrics.csaf_versions />
+            </Panel>
         </div>
         <Panel title="Storage breakdown">
             <dl class="divide-y divide-gray-200 dark:divide-gray-700">
@@ -336,5 +346,47 @@ mod tests {
         assert_eq!(format_signed(i64::MIN), "-9,223,372,036,854,775,808");
         assert_eq!(format_points(0.004), "+0.4 pp");
         assert_eq!(format_points(-0.1), "-10.0 pp");
+    }
+}
+
+/// Shows the current specification version distribution.
+#[component]
+pub(crate) fn CsafVersions(counts: Option<BTreeMap<String, u64>>) -> impl IntoView {
+    match counts {
+        None => view! {
+            <p class="text-sm text-gray-500 dark:text-gray-400">"Available after revalidation"</p>
+        }
+        .into_any(),
+        Some(counts) => {
+            let total: u64 = counts.values().sum();
+            if total == 0 {
+                return view! {
+                    <p class="text-sm text-gray-500 dark:text-gray-400">"No documents available"</p>
+                }
+                .into_any();
+            }
+            view! {
+                <dl class="divide-y divide-gray-200 dark:divide-gray-700">
+                    {counts.into_iter().map(|(version, count)| {
+                        let percentage = count as f64 / total as f64 * 100.0;
+                        let variant = if version == "Unknown" { BadgeVariant::Neutral } else { BadgeVariant::Info };
+                        view! {
+                            <div class="py-3">
+                                <div class="flex items-center justify-between gap-4">
+                                    <dt><Badge variant>{version}</Badge></dt>
+                                    <dd class="flex items-baseline gap-3 text-sm">
+                                        <span class="font-medium tabular-nums text-gray-800 dark:text-white">{format_number(count)}</span>
+                                        <span class="text-gray-500 dark:text-gray-400 tabular-nums">{format!("{percentage:.1}%")}</span>
+                                    </dd>
+                                </div>
+                                <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden" aria-hidden="true">
+                                    <div class="h-full rounded-full bg-blue-500" style=format!("width: {percentage}%")></div>
+                                </div>
+                            </div>
+                        }
+                    }).collect_view()}
+                </dl>
+            }.into_any()
+        }
     }
 }

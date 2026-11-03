@@ -28,6 +28,7 @@ pub(crate) async fn list_summaries(state: &AppState) -> Result<Vec<ProviderSumma
     for (domain, source) in sources.iter() {
         if source.enabled && !known.contains(domain) {
             providers.push(ProviderSummary {
+                csaf_versions: None,
                 checks: Some(Default::default()),
                 provider: domain.clone(),
                 publisher_name: None,
@@ -92,6 +93,7 @@ pub(crate) async fn load_detail(
         None if is_known_source => {
             let stub = ProviderDetail {
                 summary: ProviderSummary {
+                    csaf_versions: None,
                     checks: Some(Default::default()),
                     provider: domain,
                     publisher_name: None,

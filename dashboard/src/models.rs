@@ -1,6 +1,7 @@
 use csaf_trove_common::document_checks::{DocumentCheckSummary, DocumentChecks};
 use csaf_trove_common::{PipelinePhase, SyncPoint};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 fn default_version_count() -> u32 {
     1
@@ -8,6 +9,9 @@ fn default_version_count() -> u32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSummary {
+    /// Document counts by CSAF specification version; absent before revalidation.
+    #[serde(default)]
+    pub csaf_versions: Option<BTreeMap<String, u64>>,
     /// Independent essential document outcome counts; absent in old cached summaries.
     #[serde(default)]
     pub checks: Option<DocumentCheckSummary>,

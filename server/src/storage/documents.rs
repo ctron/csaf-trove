@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 mod test;
 
 use anyhow::Result;
@@ -765,7 +766,13 @@ pub async fn build_summary_from_db(
     };
 
     let checks = document_check_summary(db).await?;
+    let mut csaf_versions = BTreeMap::new();
+    for row in db.query_all_raw(Statement::from_string(DbBackend::Sqlite,
+        "SELECT COALESCE(csaf_version, 'Unknown') AS version, COUNT(*) AS count FROM documents GROUP BY COALESCE(csaf_version, 'Unknown')")).await? {
+        csaf_versions.insert(row.try_get::<String>("", "version")?, row.try_get::<i64>("", "count")? as u64);
+    }
     Ok(ProviderSummary {
+        csaf_versions: Some(csaf_versions),
         checks: Some(checks),
         provider: domain.to_string(),
         publisher_name,

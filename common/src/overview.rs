@@ -1,10 +1,14 @@
 use crate::document_checks::DocumentCheckSummary;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use time::OffsetDateTime;
 
 /// Totals from the latest provider summaries and managed storage files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Overview {
+    /// Document counts by CSAF specification version; absent before revalidation.
+    #[serde(default)]
+    pub csaf_versions: Option<BTreeMap<String, u64>>,
     /// Providers listed on the providers page, including those awaiting sync.
     pub provider_count: u64,
     /// Document records in the latest completed provider summaries.

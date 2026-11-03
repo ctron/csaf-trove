@@ -139,6 +139,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::for_test(dir.path());
         let summary = ProviderSummary {
+            csaf_versions: None,
             checks: None,
             provider: "a.example".into(),
             publisher_name: None,

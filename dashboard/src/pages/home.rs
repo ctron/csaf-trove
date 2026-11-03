@@ -174,6 +174,7 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                 <tr>
                     <ProviderSortHeading column=ProviderSort::Name label="Provider" sort=sort />
                     <ProviderSortHeading column=ProviderSort::Documents label="Documents" sort=sort />
+                    <Th>"CSAF versions"</Th>
                     <ProviderSortHeading column=ProviderSort::Basic label="Basic" sort=sort />
                     <ProviderSortHeading column=ProviderSort::Extended label="Extended" sort=sort />
                     <ProviderSortHeading column=ProviderSort::Full label="Full" sort=sort />
@@ -198,6 +199,29 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                                 </span>
                             </Td>
                             <Td>{format_number(p.document_count)}</Td>
+                            <Td>
+                                <div class="flex flex-wrap gap-2">
+                                    {match p.csaf_versions {
+                                        Some(counts) if !counts.is_empty() => {
+                                            let total: u64 = counts.values().sum();
+                                            let mixed = counts.len() > 1;
+                                            counts.into_iter().map(|(version, count)| {
+                                                let percentage = if total == 0 { 0.0 } else { count as f64 / total as f64 * 100.0 };
+                                                let variant = if version == "Unknown" { BadgeVariant::Neutral } else { BadgeVariant::Info };
+                                                view! {
+                                                    <span title=format!("{} documents", format_number(count))>
+                                                        <Badge variant>
+                                                            <span class="whitespace-nowrap">{version}{mixed.then(|| format!(" · {percentage:.0}%"))}</span>
+                                                        </Badge>
+                                                    </span>
+                                                }
+                                            }).collect_view().into_any()
+                                        }
+                                        Some(_) => view! { <span class="text-sm text-gray-500 dark:text-gray-400">"No documents"</span> }.into_any(),
+                                        None => view! { <span class="text-sm text-gray-500 dark:text-gray-400" title="Available after revalidation">"Pending"</span> }.into_any(),
+                                    }}
+                                </div>
+                            </Td>
                             <Td><ProfileBadge profile=p.profiles.basic /></Td>
                             <Td><ProfileBadge profile=p.profiles.extended /></Td>
                             <Td><ProfileBadge profile=p.profiles.full /></Td>

@@ -2,6 +2,7 @@ use super::metrics::MetricsTimeSeries;
 use csaf_trove_common::CommitInfo;
 use csaf_trove_common::document_checks::{DocumentCheckSummary, DocumentChecks};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Combined detail view for a provider including summary, metrics, and sync history.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +59,9 @@ pub struct DistributionHealth {
 /// Validation summary for a single CSAF provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSummary {
+    /// Document counts by CSAF specification version; absent before revalidation.
+    #[serde(default)]
+    pub csaf_versions: Option<BTreeMap<String, u64>>,
     /// Independent essential document outcome counts; absent in old cached summaries.
     #[serde(default)]
     pub checks: Option<DocumentCheckSummary>,

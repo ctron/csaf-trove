@@ -11,6 +11,7 @@ use actix_web::{HttpResponse, web};
 use csaf_trove_common::overview::{
     Overview, ProviderHealth, SyncActivity, TrendDelta, Trends, ValidationOverview,
 };
+use std::collections::BTreeMap;
 use std::{collections::HashSet, time::Duration};
 use time::OffsetDateTime;
 
@@ -40,7 +41,16 @@ pub(crate) async fn build(state: &AppState) -> Result<Overview, ApiError> {
         sync_activity(jobs.values())
     };
 
+    let csaf_versions = summaries
+        .iter()
+        .try_fold(BTreeMap::new(), |mut counts, summary| {
+            for (version, count) in summary.csaf_versions.as_ref()? {
+                *counts.entry(version.clone()).or_insert(0) += count;
+            }
+            Some(counts)
+        });
     let overview = Overview {
+        csaf_versions,
         provider_count: summaries.len() as u64 + awaiting_first_sync,
         document_count: summaries.iter().map(|s| s.document_count).sum(),
         retrieval_errors: summaries.iter().map(|s| s.retrieval_errors).sum(),
@@ -210,6 +220,7 @@ mod tests {
         validated_at: OffsetDateTime,
     ) -> ProviderSummary {
         ProviderSummary {
+            csaf_versions: None,
             checks: Some(DocumentCheckSummary {
                 parsing: CheckCounts {
                     passed: documents - failed_parsing,
@@ -311,5 +322,28 @@ mod tests {
             })
         );
         assert_eq!(trend_delta(&summaries, |_| None), None);
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    /// Old summaries remain readable until scheduled revalidation.
+    #[test]
+    fn old_summary_has_no_version_statistics() -> Result<(), serde_json::Error> {
+        let value = tests_summary()?;
+        assert!(value.csaf_versions.is_none());
+        Ok(())
+    }
+
+    /// Builds a legacy summary without version counts.
+    fn tests_summary() -> Result<ProviderSummary, serde_json::Error> {
+        serde_json::from_value(serde_json::json!({
+            "provider": "example.com", "publisher_name": null,
+            "validated_at": "2026-01-01T00:00:00Z", "document_count": 0,
+            "profiles": {"basic": null, "extended": null, "full": null},
+            "top_failing_tests": []
+        }))
     }
 }

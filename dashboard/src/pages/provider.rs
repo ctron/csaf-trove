@@ -159,6 +159,10 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                 </div>
 
                 <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                    <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">"CSAF versions"</h3>
+                    <crate::pages::overview::CsafVersions counts=summary.csaf_versions.clone() />
+                </div>
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
                     <a href={sync_href} class="text-sm text-blue-600 dark:text-blue-400 hover:underline">"Sync History \u{2192}"</a>
                 </div>
             </div>
@@ -424,6 +428,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                 <tr>
                                     <Th>"Tracking ID"</Th>
                                     <Th>"Title"</Th>
+                                    <Th>"CSAF"</Th>
                                     <Th>"Basic"</Th>
                                     <Th>"Extended"</Th>
                                     <Th>"Full"</Th>
@@ -442,6 +447,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                                 <a href={href}>{tid}</a>
                                             </Td>
                                             <Td class="truncate max-w-xs">{title}</Td>
+                                            <Td><Badge variant=BadgeVariant::Neutral>{doc.csaf_version.unwrap_or_else(|| "Unknown".into())}</Badge></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.basic /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.extended /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.full /></Td>

@@ -22,6 +22,7 @@ fn storage(config: CacheConfig) -> (TempDir, Storage) {
 /// Builds a minimal summary for a provider.
 pub(crate) fn summary(provider: &str, document_count: u64) -> ProviderSummary {
     ProviderSummary {
+        csaf_versions: None,
         checks: None,
         provider: provider.into(),
         publisher_name: None,
