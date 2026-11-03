@@ -1,5 +1,6 @@
 pub mod aggregator;
 pub mod auth;
+pub mod endpoints;
 pub mod error;
 pub mod overview;
 pub mod providers;
@@ -13,6 +14,7 @@ use actix_web::web;
 /// Registers all API routes under `/api`.
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.route("/startup", web::get().to(startup::status));
+    cfg.route("/endpoints", web::get().to(endpoints::get));
     cfg.route("/overview", web::get().to(overview::get));
     cfg.route(
         "/vulnerabilities/{cve}",

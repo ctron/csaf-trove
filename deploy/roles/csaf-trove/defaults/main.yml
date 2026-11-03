@@ -63,6 +63,12 @@ csaf_trove_mcp_allowed_hosts:
 # Firewall (UFW).
 csaf_trove_firewall_enabled: true
 
+# Publish the CSAF lister document after provider syncs.
+csaf_trove_aggregator_enabled: true
+csaf_trove_aggregator_name: "csaf-trove"
+csaf_trove_aggregator_namespace: "https://{{ csaf_trove_domain }}"
+csaf_trove_aggregator_canonical_url: "https://{{ csaf_trove_domain }}/.well-known/csaf-aggregator/aggregator.json"
+
 # Caddy reverse proxy.
 csaf_trove_caddy_enabled: true
 

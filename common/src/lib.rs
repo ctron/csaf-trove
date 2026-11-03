@@ -2,6 +2,7 @@
 
 pub mod document_checks;
 pub mod document_content;
+pub mod endpoints;
 pub mod overview;
 pub mod startup;
 use serde::{Deserialize, Serialize};

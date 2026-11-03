@@ -1,4 +1,5 @@
 use crate::components::section_heading::{SectionHeading, SubHeading};
+use csaf_trove_common::endpoints::Endpoints;
 use leptos::prelude::*;
 
 /// Path of the MCP endpoint.
@@ -59,9 +60,25 @@ fn origin() -> String {
         .unwrap_or_default()
 }
 
+/// Loads the operator's public endpoint settings.
+async fn fetch_endpoints() -> Result<Endpoints, String> {
+    let response = gloo_net::http::Request::get("/api/endpoints")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.ok() {
+        return Err(format!(
+            "Unable to load endpoints (HTTP {}).",
+            response.status()
+        ));
+    }
+    response.json().await.map_err(|error| error.to_string())
+}
+
 /// Describes the MCP and CSAF aggregator endpoints offered by this instance.
 #[component]
 pub fn EndpointsPage() -> impl IntoView {
+    let endpoints = LocalResource::new(fetch_endpoints);
     let origin = origin();
     let mcp_url = format!("{origin}{MCP_PATH}");
     let aggregator_url = format!("{origin}{AGGREGATOR_PATH}");
@@ -71,28 +88,42 @@ pub fn EndpointsPage() -> impl IntoView {
         "{{\n  \"mcpServers\": {{\n    \"csaf-trove\": {{\n      \"type\": \"http\",\n      \"url\": \"{mcp_url}\"\n    }}\n  }}\n}}"
     );
 
+    let mcp_url = StoredValue::new(mcp_url);
+    let aggregator_url = StoredValue::new(aggregator_url);
+    let aggregator_href = StoredValue::new(aggregator_href);
+    let claude_command = StoredValue::new(claude_command);
+    let client_config = StoredValue::new(client_config);
+
     view! {
         <div>
             <SectionHeading>"Endpoints"</SectionHeading>
             <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
-                "Besides this dashboard, csaf-trove offers machine-readable access to its data. Both endpoints are read-only, may be disabled by the operator, and are rate limited per client."
+                "Besides this dashboard, csaf-trove offers machine-readable access to its data. Enabled endpoints are shown below. They are read-only and rate limited per client."
             </p>
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Suspense fallback=|| view! { <p>"Loading endpoints..."</p> }>
+                {move || endpoints.get().and_then(|result| result.err()).map(|error| view! {
+                    <p role="alert" class="text-red-500 dark:text-red-400">{error}</p>
+                })}
+                {move || endpoints.get().and_then(Result::ok).filter(|settings| !settings.mcp && !settings.aggregator).map(|_| view! {
+                    <p class="text-gray-500 dark:text-gray-400">"No public endpoints are enabled."</p>
+                })}
+            <div class="grid grid-cols-1 lg:grid-cols-2 items-start gap-4">
+                <Show when=move || endpoints.get().is_some_and(|result| result.is_ok_and(|settings| settings.mcp))>
                 <Panel title="MCP endpoint">
                     <p class="text-gray-600 dark:text-gray-300 mb-4">
                         "A "
                         <a href="https://modelcontextprotocol.io" target="_blank" rel="noopener noreferrer">"Model Context Protocol"</a>
                         " server that lets LLM clients query providers, advisories, validation results, document history and sync status."
                     </p>
-                    <Field label="URL"><Code>{mcp_url}</Code></Field>
+                    <Field label="URL"><Code>{mcp_url.get_value()}</Code></Field>
                     <Field label="Transport">
                         <span class="text-gray-800 dark:text-white">"Streamable HTTP (stateless, JSON responses)"</span>
                     </Field>
                     <SubHeading>"Connecting a client"</SubHeading>
                     <p class="text-sm text-gray-600 dark:text-gray-300 mb-2">"Claude Code:"</p>
-                    <Code block=true>{claude_command}</Code>
+                    <Code block=true>{claude_command.get_value()}</Code>
                     <p class="text-sm text-gray-600 dark:text-gray-300 mt-4 mb-2">"Clients using a JSON configuration:"</p>
-                    <Code block=true>{client_config}</Code>
+                    <Code block=true>{client_config.get_value()}</Code>
                     <SubHeading>"Tools"</SubHeading>
                     <dl class="divide-y divide-gray-200 dark:divide-gray-700">
                         {MCP_TOOLS.iter().map(|(name, description)| view! {
@@ -110,6 +141,8 @@ pub fn EndpointsPage() -> impl IntoView {
                     </p>
                     <Code block=true>"csaf://{domain}/{tracking_id}"</Code>
                 </Panel>
+                </Show>
+                <Show when=move || endpoints.get().is_some_and(|result| result.is_ok_and(|settings| settings.aggregator))>
                 <Panel title="Aggregator endpoint">
                     <p class="text-gray-600 dark:text-gray-300 mb-4">
                         "An "
@@ -121,7 +154,7 @@ pub fn EndpointsPage() -> impl IntoView {
                         ", so CSAF tooling can discover them through this instance."
                     </p>
                     <Field label="URL">
-                        <a href=aggregator_href target="_blank" rel="noopener noreferrer" class="font-mono text-sm break-all">{aggregator_url}</a>
+                        <a href=aggregator_href.get_value() target="_blank" rel="noopener noreferrer" class="font-mono text-sm break-all">{aggregator_url.get_value()}</a>
                     </Field>
                     <SubHeading>"Provider selection"</SubHeading>
                     <p class="text-sm text-gray-600 dark:text-gray-300">
@@ -130,7 +163,9 @@ pub fn EndpointsPage() -> impl IntoView {
                         "), unless the operator overrides this. The document is regenerated after providers sync."
                     </p>
                 </Panel>
+                </Show>
             </div>
+            </Suspense>
         </div>
     }
 }

@@ -48,6 +48,17 @@ Requests are only accepted for the hosts in `csaf_trove_mcp_allowed_hosts`, whic
 `csaf_trove_domain`. The CVE search cache is tuned with `csaf_trove_cve_cache_capacity`,
 `csaf_trove_cve_cache_ttl` and `csaf_trove_cve_cache_max_hits`.
 
+### Aggregator endpoint
+
+The deployment enables CSAF lister output at
+`https://<domain>/.well-known/csaf-aggregator/aggregator.json`. The document becomes
+available after a provider sync with eligible providers. Set
+`csaf_trove_aggregator_enabled=false` to disable generation. Customize its identity
+with `csaf_trove_aggregator_name`, `csaf_trove_aggregator_namespace` and
+`csaf_trove_aggregator_canonical_url`.
+
+Existing installations must reapply the playbook to add the aggregator configuration.
+
 ### Rate limiting
 
 API, MCP and aggregator requests are rate limited per client IP address (IPv6 per /64), behind
