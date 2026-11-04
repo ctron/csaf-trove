@@ -76,6 +76,7 @@ fn fixture() -> (TempDir, Arc<AppState>, Source) {
         recent_sync_points: RwLock::new(HashMap::new()),
         hooks: Default::default(),
         startup: Startup::finished(),
+        aggregator: RwLock::new(None),
     });
     let metadata = serde_json::to_vec(&serde_json::json!({
         "canonical_url":"https://example.com/provider-metadata.json", "metadata_version":"2.0",

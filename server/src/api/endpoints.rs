@@ -33,7 +33,6 @@ mod tests {
                     canonical_url: "https://example.com/aggregator.json".into(),
                     contact_details: None,
                     issuing_authority: None,
-                    output_dir: None,
                 });
                 let app = test::init_service(
                     App::new()

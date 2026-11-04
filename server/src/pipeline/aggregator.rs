@@ -16,15 +16,12 @@ use std::{
     sync::Arc,
 };
 
-/// Generates the `aggregator.json` file from all synced providers.
+/// Generates the `aggregator.json` document from all synced providers and caches it in memory.
 pub async fn generate_aggregator(state: &Arc<AppState>) -> Result<()> {
     let config = match &state.config.aggregator {
         Some(c) => c,
         None => return Ok(()),
     };
-
-    let output_dir = state.aggregator_dir();
-    tokio::fs::create_dir_all(&output_dir).await?;
 
     let sources = state.sources.read().await;
     let all_info = state.storage.load_all_provider_info().await?;
@@ -89,13 +86,11 @@ pub async fn generate_aggregator(state: &Arc<AppState>) -> Result<()> {
         last_updated: Utc::now(),
     };
 
-    let path = output_dir.join("aggregator.json");
-    let data = serde_json::to_string_pretty(&doc)?;
-    tokio::fs::write(&path, data).await?;
+    let data = serde_json::to_vec_pretty(&doc)?;
+    *state.aggregator.write().await = Some(data.into());
 
     tracing::info!(
-        "Aggregator: wrote {} with {} provider(s)",
-        path.display(),
+        "Aggregator: generated with {} provider(s)",
         doc.csaf_providers.len()
     );
 

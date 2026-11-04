@@ -23,6 +23,7 @@ use std::{
 use actix_web::{App, HttpResponse, HttpServer, middleware, web};
 use actix_web_static_files::ResourceFiles;
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use bytesize::ByteSize;
 use clap::Parser;
 use csaf_trove_common::{PipelinePhase, SyncPoint};
@@ -98,8 +99,6 @@ pub struct AggregatorConfig {
     pub contact_details: Option<String>,
     /// Optional issuing authority description.
     pub issuing_authority: Option<String>,
-    /// Output directory for generated aggregator files (defaults to `<data_dir>/aggregator`).
-    pub output_dir: Option<PathBuf>,
 }
 
 /// Aggregator category per the CSAF specification.
@@ -198,6 +197,8 @@ pub struct AppState {
     pub hooks: Hooks,
     /// Startup progress; data endpoints are unavailable until it has finished.
     pub startup: Startup,
+    /// Most recently generated `aggregator.json`, if any.
+    pub aggregator: RwLock<Option<Bytes>>,
 }
 
 impl AppState {
@@ -222,21 +223,13 @@ impl AppState {
             recent_sync_points: RwLock::new(HashMap::new()),
             hooks: Default::default(),
             startup: Startup::finished(),
+            aggregator: RwLock::new(None),
         })
     }
 
     /// Returns the scratch directory for temporary worktrees.
     pub fn work_dir(&self) -> PathBuf {
         self.data_dir.join("work")
-    }
-
-    /// Returns the output directory for aggregator files.
-    pub fn aggregator_dir(&self) -> PathBuf {
-        self.config
-            .aggregator
-            .as_ref()
-            .and_then(|a| a.output_dir.clone())
-            .unwrap_or_else(|| self.data_dir.join("aggregator"))
     }
 
     /// Reloads provider sources from the sources directory on disk.
@@ -498,6 +491,7 @@ async fn main() -> Result<()> {
         recent_sync_points: RwLock::new(HashMap::new()),
         hooks: Hooks::default(),
         startup: Startup::default(),
+        aggregator: RwLock::new(None),
     });
 
     tracing::info!("Starting server on {listen}");

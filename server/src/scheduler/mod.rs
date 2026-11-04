@@ -24,14 +24,12 @@ pub async fn run(state: Arc<AppState>) {
 
     tokio::spawn(sample_memory(state.clone()));
 
+    // publish from stored provider information right away, as a full sync can take hours
+    regenerate_aggregator(&state).await;
+
     loop {
         sync_all(&state).await;
-
-        if state.config.aggregator.is_some()
-            && let Err(e) = generate_aggregator(&state).await
-        {
-            tracing::error!("Aggregator generation failed: {e:#}");
-        }
+        regenerate_aggregator(&state).await;
 
         tracing::info!(
             "Scheduled sync complete, sleeping for {}",
@@ -44,6 +42,15 @@ pub async fn run(state: Arc<AppState>) {
                 tracing::info!("Sources changed, triggering early sync");
             }
         }
+    }
+}
+
+/// Regenerates the aggregator document if enabled, logging failures.
+async fn regenerate_aggregator(state: &Arc<AppState>) {
+    if state.config.aggregator.is_some()
+        && let Err(e) = generate_aggregator(state).await
+    {
+        tracing::error!("Aggregator generation failed: {e:#}");
     }
 }
 
