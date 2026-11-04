@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.47"
+version = "0.1.48"
 edition = "2024"
 
 [workspace.dependencies]
@@ -41,7 +41,7 @@ leptos = { version = "0.8", features = ["csr"] }
 leptos_router = "0.8"
 libsqlite3-sys = "0.37"
 moka = { version = "0.12", features = ["future"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 percent-encoding = "2"
 reqwest = "0.13"
 rmcp = "3"
