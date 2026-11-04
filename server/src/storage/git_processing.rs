@@ -303,38 +303,60 @@ pub fn materialize_processing(
     selection: &ProcessingSelection,
     output: &Path,
 ) -> Result<()> {
-    test_block_on(|| materialize_processing_with_progress(repo_path, selection, output, |_, _| {}))
-        .map(|_| ())
+    test_block_on(|| {
+        materialize_processing_with_progress(repo_path, selection, output, |_, _, _| {})
+    })
+    .map(|_| ())
 }
 
-/// Like [`materialize_processing`], but calls `progress(current, total)` per extracted file.
+/// Counts selected files, then reports extraction progress with the known total.
 pub async fn materialize_processing_with_progress(
     repo_path: &Path,
     selection: &ProcessingSelection,
     output: &Path,
-    progress: impl Fn(u64, u64),
+    progress: impl Fn(PipelinePhase, u64, u64),
 ) -> Result<u64> {
     fs::create_dir_all(output)?;
     let repo = Repository::open_bare(repo_path)?;
     let tree = repo
         .find_commit(Oid::from_str(&selection.checkpoint.commit_id)?)?
         .tree()?;
+    let mut total = 0;
+    progress(PipelinePhase::CountValidationFiles, 0, 0);
+    visit_processing_files(&repo, &tree, selection, |_, _| {
+        total += 1;
+        progress(PipelinePhase::CountValidationFiles, total, 0);
+        Ok(())
+    })
+    .await?;
     let mut files = 0u64;
     let mut documents = 0u64;
-    let mut write = |path: &str, oid| -> Result<()> {
+    progress(PipelinePhase::ExtractValidationFiles, 0, total);
+    visit_processing_files(&repo, &tree, selection, |path, oid| {
         let blob = repo.find_blob(oid)?;
         scratch::write(output, Path::new(path), blob.content())?;
         files += 1;
         if advisory_path(path).as_deref() == Some(path) {
             documents += 1;
         }
-        progress(files, 0);
+        progress(PipelinePhase::ExtractValidationFiles, files, total);
         Ok(())
-    };
+    })
+    .await?;
+    Ok(documents)
+}
+
+/// Visits the same selected blob identities for counting and extraction without loading contents.
+async fn visit_processing_files(
+    repo: &Repository,
+    tree: &Tree<'_>,
+    selection: &ProcessingSelection,
+    mut visit: impl FnMut(&str, Oid) -> Result<()>,
+) -> Result<()> {
     if selection.full {
-        visit_blobs(&tree, |path, oid| {
+        visit_blobs(tree, |path, oid| {
             if path.starts_with("metadata/") || advisory_path(path).is_some() {
-                write(path, oid)?;
+                visit(path, oid)?;
             }
             Ok(())
         })?;
@@ -342,7 +364,7 @@ pub async fn materialize_processing_with_progress(
         if let Ok(entry) = tree.get_path(Path::new("metadata")) {
             let metadata = repo.find_tree(entry.id())?;
             visit_blobs(&metadata, |path, oid| {
-                write(&format!("metadata/{path}"), oid)
+                visit(&format!("metadata/{path}"), oid)
             })?;
         }
         let mut cursor = String::new();
@@ -355,11 +377,11 @@ pub async fn materialize_processing_with_progress(
                 let entry = tree
                     .get_path(Path::new(advisory))
                     .with_context(|| format!("Missing selected input {advisory}"))?;
-                write(advisory, entry.id())?;
+                visit(advisory, entry.id())?;
                 for suffix in [".asc", ".sha256", ".sha512"] {
                     let path = format!("{advisory}{suffix}");
                     match tree.get_path(Path::new(&path)) {
-                        Ok(entry) => write(&path, entry.id())?,
+                        Ok(entry) => visit(&path, entry.id())?,
                         Err(error) if error.code() == ErrorCode::NotFound => {}
                         Err(error) => return Err(error.into()),
                     }
@@ -370,8 +392,7 @@ pub async fn materialize_processing_with_progress(
             }
         }
     }
-    progress(files, files);
-    Ok(documents)
+    Ok(())
 }
 
 /// Visits blob identities without retaining paths or hiding callback failures.
@@ -438,9 +459,14 @@ mod tests {
         let output = dir.path().join("validation");
         let events = Mutex::new(Vec::new());
         let count = test_block_on(|| {
-            materialize_processing_with_progress(&repo, &selected, &output, |current, total| {
-                events.lock().unwrap().push((current, total));
-            })
+            materialize_processing_with_progress(
+                &repo,
+                &selected,
+                &output,
+                |phase, current, total| {
+                    events.lock().unwrap().push((phase, current, total));
+                },
+            )
         })
         .unwrap();
         assert_eq!(count, 2);
@@ -453,7 +479,67 @@ mod tests {
             b"signature"
         );
         let events = events.into_inner().unwrap();
-        assert_eq!(events, [(1, 0), (2, 0), (3, 0), (4, 0), (4, 4)]);
+        assert_eq!(
+            events,
+            [
+                (PipelinePhase::CountValidationFiles, 0, 0),
+                (PipelinePhase::CountValidationFiles, 1, 0),
+                (PipelinePhase::CountValidationFiles, 2, 0),
+                (PipelinePhase::CountValidationFiles, 3, 0),
+                (PipelinePhase::CountValidationFiles, 4, 0),
+                (PipelinePhase::ExtractValidationFiles, 0, 4),
+                (PipelinePhase::ExtractValidationFiles, 1, 4),
+                (PipelinePhase::ExtractValidationFiles, 2, 4),
+                (PipelinePhase::ExtractValidationFiles, 3, 4),
+                (PipelinePhase::ExtractValidationFiles, 4, 4),
+            ]
+        );
+    }
+
+    /// Incremental counts include metadata and present sidecars, excluding unchanged advisories.
+    #[test]
+    fn incremental_materialization_counts_selected_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo.git");
+        commit(
+            &repo,
+            &dir.path().join("work"),
+            &[
+                ("example.com/a.json", b"first"),
+                ("example.com/a.json.sha256", b"digest"),
+                ("example.com/b.json", b"unchanged"),
+                ("metadata/provider-metadata.json", b"{}"),
+            ],
+        );
+        let mut selected = select_processing(&repo, None, "v1", false).unwrap();
+        selected.full = false;
+        let output = dir.path().join("validation");
+        let events = Mutex::new(Vec::new());
+        let count = test_block_on(|| async {
+            selected
+                .advisories
+                .insert("example.com/a.json".into())
+                .await?;
+            materialize_processing_with_progress(
+                &repo,
+                &selected,
+                &output,
+                |phase, current, total| {
+                    events.lock().unwrap().push((phase, current, total));
+                },
+            )
+            .await
+        })
+        .unwrap();
+        assert_eq!(count, 1);
+        assert!(!output.join("example.com/b.json.zst").exists());
+        let events = events.into_inner().unwrap();
+        let extraction: Vec<_> = events
+            .into_iter()
+            .filter(|(phase, _, _)| *phase == PipelinePhase::ExtractValidationFiles)
+            .map(|(_, current, total)| (current, total))
+            .collect();
+        assert_eq!(extraction, [(0, 3), (1, 3), (2, 3), (3, 3)]);
     }
 
     /// A failed extraction returns its original filesystem error instead of silently succeeding.

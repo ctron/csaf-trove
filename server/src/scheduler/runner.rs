@@ -579,11 +579,11 @@ async fn process_snapshot(
     })
     .await?;
     state
-        .update_job_phase(domain, PipelinePhase::ExtractValidationFiles)
+        .update_job_phase(domain, PipelinePhase::CountValidationFiles)
         .await;
     let work = validation_dir.clone();
     let progress = BlockingProgress::new();
-    let cb = progress.callback();
+    let cb = progress.stage_callback();
     let runtime = Handle::current();
     let (selection, selected_count) = timed_processing_step(
         domain,

@@ -66,6 +66,8 @@ pub enum PipelinePhase {
     CheckRecoveredDownloads,
     /// Removing previous extracted validation files.
     CleanValidationFiles,
+    /// Counting selected committed files before extraction.
+    CountValidationFiles,
     /// Extracting selected committed inputs for validation.
     ExtractValidationFiles,
     /// Removing obsolete stored validation results.
