@@ -1484,6 +1484,7 @@ dependencies = [
  "csaf-trove-common",
  "gloo-net 0.7.0",
  "gloo-timers 0.4.0",
+ "humantime",
  "js-sys",
  "leptos",
  "leptos_router",

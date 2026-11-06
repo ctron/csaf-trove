@@ -7,6 +7,7 @@ use crate::{
     pages::sync_status::format_relative_time,
 };
 use csaf_trove_common::overview::{Overview, SyncActivity, Trends, ValidationOverview};
+use humantime::format_duration;
 use leptos::prelude::*;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -49,9 +50,11 @@ pub fn OverviewPage() -> impl IntoView {
 fn OverviewMetrics(metrics: Overview) -> impl IntoView {
     let cards = [
         ("Providers", format_number(metrics.provider_count)),
-        ("Documents", format_number(metrics.document_count)),
-        ("Retrieval errors", format_number(metrics.retrieval_errors)),
         ("Storage", format_bytes(metrics.storage.total())),
+    ];
+    let document_cards = [
+        ("Total", format_number(metrics.document_count)),
+        ("Retrieval errors", format_number(metrics.retrieval_errors)),
     ];
     let health = &metrics.providers;
     let health_cards = [
@@ -67,10 +70,7 @@ fn OverviewMetrics(metrics: Overview) -> impl IntoView {
         ),
         ("Stale", format_number(health.stale)),
     ];
-    let stale_after = csaf_trove_common::format_duration_hms(
-        Duration::from_secs(health.stale_after_seconds),
-        true,
-    );
+    let stale_after = format_duration(Duration::from_secs(health.stale_after_seconds));
     let storage = [
         (
             "Repositories and document history",
@@ -82,13 +82,15 @@ fn OverviewMetrics(metrics: Overview) -> impl IntoView {
     ];
     view! {
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
-            "Document and retrieval-error counts reflect the latest completed provider summaries. Providers awaiting their first sync are included."
+            "Document totals and document retrieval-error counts reflect the latest completed provider summaries. Providers awaiting their first sync are included."
         </p>
         <StatCards cards />
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">"Documents"</h2>
+        <StatCards cards=document_cards />
         <h2 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">"Provider health"</h2>
         <StatCards cards=health_cards />
         <p class="text-xs text-gray-500 dark:text-gray-400 -mt-4 mb-8">
-            {format!("A provider is stale when its latest summary is older than {stale_after}. Healthy providers are current and have no retrieval errors or essential check issues.")}
+            {format!("A provider is stale when its last successful sync is older than {stale_after}. The summary timestamp is used when no sync timestamp is available. Healthy providers are current and have no retrieval errors or essential check issues.")}
         </p>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
             <ValidationPanel validation=metrics.validation />

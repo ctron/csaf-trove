@@ -11,8 +11,10 @@ use actix_web::{HttpResponse, web};
 use csaf_trove_common::overview::{
     Overview, ProviderHealth, SyncActivity, TrendDelta, Trends, ValidationOverview,
 };
-use std::collections::BTreeMap;
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    time::Duration,
+};
 use time::OffsetDateTime;
 
 /// Returns aggregate provider counts, health, activity, trends, and persistent storage usage.
@@ -34,6 +36,13 @@ pub(crate) async fn build(state: &AppState) -> Result<Overview, ApiError> {
             .count() as u64
     };
 
+    let last_syncs = state
+        .storage
+        .list_sync_states()
+        .await?
+        .into_iter()
+        .filter_map(|state| state.last_sync.map(|last_sync| (state.domain, last_sync)))
+        .collect();
     let snapshot = state.storage.overview_snapshot().await?;
 
     let sync = {
@@ -51,6 +60,7 @@ pub(crate) async fn build(state: &AppState) -> Result<Overview, ApiError> {
         validation: aggregate_validation(&summaries),
         providers: provider_health(
             &summaries,
+            &last_syncs,
             awaiting_first_sync,
             state.config.scheduler.sync_interval * 2,
             OffsetDateTime::now_utc(),
@@ -134,9 +144,10 @@ fn aggregate_validation(summaries: &[ProviderSummary]) -> ValidationOverview {
     validation
 }
 
-/// Classifies stored summaries by health; stale summaries are never counted as healthy.
+/// Classifies providers by health using successful sync times, falling back to validation.
 fn provider_health(
     summaries: &[ProviderSummary],
+    last_syncs: &HashMap<String, OffsetDateTime>,
     awaiting_first_sync: u64,
     stale_after: Duration,
     now: OffsetDateTime,
@@ -147,7 +158,11 @@ fn provider_health(
         ..Default::default()
     };
     for summary in summaries {
-        let stale = now - summary.validated_at > stale_after;
+        let last_sync = last_syncs
+            .get(&summary.provider)
+            .copied()
+            .unwrap_or(summary.validated_at);
+        let stale = now - last_sync > stale_after;
         let retrieval_errors = summary.retrieval_errors > 0;
         let check_issues = summary
             .checks
@@ -302,9 +317,21 @@ mod tests {
             summary("errors", 1, (1, 0), 1, 0, now),
             summary("issues", 1, (1, 0), 0, 1, now),
             summary("stale", 1, (1, 0), 0, 0, old),
+            summary("unchanged", 1, (1, 0), 0, 0, old),
+            summary("boundary", 1, (1, 0), 0, 0, old),
         ];
-        let health = provider_health(&summaries, 2, Duration::from_secs(2 * 86400), now);
-        assert_eq!(health.healthy, 1);
+        let last_syncs = HashMap::from([
+            ("unchanged".into(), now),
+            ("boundary".into(), now - time::Duration::days(2)),
+        ]);
+        let health = provider_health(
+            &summaries,
+            &last_syncs,
+            2,
+            Duration::from_secs(2 * 86400),
+            now,
+        );
+        assert_eq!(health.healthy, 3);
         assert_eq!(health.with_retrieval_errors, 1);
         assert_eq!(health.with_check_issues, 1);
         assert_eq!(health.stale, 1);

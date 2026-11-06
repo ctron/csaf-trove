@@ -77,9 +77,9 @@ pub struct ProviderHealth {
     pub with_check_issues: u64,
     /// Enabled providers without a completed summary.
     pub awaiting_first_sync: u64,
-    /// Providers whose latest summary is older than twice the sync interval.
+    /// Providers whose last successful sync (or validation fallback) is older than twice the sync interval.
     pub stale: u64,
-    /// Age in seconds after which a summary is considered stale.
+    /// Age in seconds after which a provider is considered stale.
     pub stale_after_seconds: u64,
 }
 

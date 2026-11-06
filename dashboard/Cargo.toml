@@ -9,6 +9,7 @@ console_error_panic_hook = { workspace = true }
 csaf-trove-common = { workspace = true }
 gloo-net = { workspace = true }
 gloo-timers = { workspace = true }
+humantime = { workspace = true }
 js-sys = { workspace = true }
 leptos = { workspace = true }
 leptos_router = { workspace = true }
