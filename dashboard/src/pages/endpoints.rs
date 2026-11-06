@@ -154,7 +154,7 @@ pub fn EndpointsPage() -> impl IntoView {
                         ", so CSAF tooling can discover them through this instance."
                     </p>
                     <Field label="URL">
-                        <a href=aggregator_href.get_value() target="_blank" rel="noopener noreferrer" class="font-mono text-sm break-all">{aggregator_url.get_value()}</a>
+                        <a href=aggregator_href.get_value() target="_blank" rel="noopener noreferrer" class="font-mono text-sm">{aggregator_url.get_value()}</a>
                     </Field>
                     <SubHeading>"Provider selection"</SubHeading>
                     <p class="text-sm text-gray-600 dark:text-gray-300">
@@ -187,7 +187,7 @@ fn Field(label: &'static str, children: Children) -> impl IntoView {
     view! {
         <div class="flex flex-col sm:flex-row sm:items-baseline gap-x-4 gap-y-1 mb-2">
             <span class="text-sm text-gray-500 dark:text-gray-400 sm:w-24 shrink-0">{label}</span>
-            <span class="min-w-0 break-all">{children()}</span>
+            <span class="min-w-0 wrap-anywhere">{children()}</span>
         </div>
     }
 }
