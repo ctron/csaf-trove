@@ -2,6 +2,7 @@ use super::{
     auth::verify_bearer_token,
     error::{ApiError, OptionExt},
 };
+use crate::models::result::SUMMARY_REVISION;
 use crate::{
     AppState,
     models::{
@@ -28,6 +29,7 @@ pub(crate) async fn list_summaries(state: &AppState) -> Result<Vec<ProviderSumma
     for (domain, source) in sources.iter() {
         if source.enabled && !known.contains(domain) {
             providers.push(ProviderSummary {
+                summary_revision: SUMMARY_REVISION,
                 csaf_versions: None,
                 checks: Some(Default::default()),
                 provider: domain.clone(),
@@ -93,6 +95,7 @@ pub(crate) async fn load_detail(
         None if is_known_source => {
             let stub = ProviderDetail {
                 summary: ProviderSummary {
+                    summary_revision: SUMMARY_REVISION,
                     csaf_versions: None,
                     checks: Some(Default::default()),
                     provider: domain,

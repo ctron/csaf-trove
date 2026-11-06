@@ -4,6 +4,8 @@
 //! its own task and handles events one batch at a time, so a slow hook only delays itself. Events
 //! that queue up while a hook is busy are delivered together as one batch.
 
+#[cfg(test)]
+use crate::models::result::SUMMARY_REVISION;
 use crate::{AppState, scheduler::runner::JobKind};
 use anyhow::Result;
 use std::{future::Future, sync::Arc};
@@ -139,6 +141,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::for_test(dir.path());
         let summary = ProviderSummary {
+            summary_revision: SUMMARY_REVISION,
             csaf_versions: None,
             checks: None,
             provider: "a.example".into(),

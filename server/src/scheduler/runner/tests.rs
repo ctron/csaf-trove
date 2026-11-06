@@ -1,5 +1,6 @@
 //! End-to-end processing tests with real Git snapshots and SQLite results.
 use super::*;
+use crate::models::result::SUMMARY_REVISION;
 use crate::{
     Config,
     startup::Startup,
@@ -198,6 +199,7 @@ async fn legacy_summary_refresh_is_explicit_and_persisted() {
         .unwrap();
     let expected_checks = legacy.checks.take().unwrap();
     legacy.note = Some("Operator note".into());
+    legacy.summary_revision = 0;
     state
         .storage
         .save_summary(&source.domain, &legacy)
@@ -232,14 +234,16 @@ async fn legacy_summary_refresh_is_explicit_and_persisted() {
     assert!(cached.checks.is_none());
     assert_eq!(cached.validated_at, legacy.validated_at);
 
-    state.storage.refresh_summary(&source.domain).await.unwrap();
+    crate::startup::refresh_summaries(&state).await;
     let refreshed = state
         .storage
         .load_summary(&source.domain)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(refreshed.summary_revision, SUMMARY_REVISION);
     assert_eq!(refreshed.checks, Some(expected_checks));
+    crate::startup::refresh_summaries(&state).await;
     assert_eq!(refreshed.validated_at, legacy.validated_at);
     assert_eq!(refreshed.note, legacy.note);
     assert_eq!(refreshed.document_count, legacy.document_count);

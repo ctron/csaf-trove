@@ -7,6 +7,7 @@
 * Document all functions, fields, variants, ... with a concise rustdoc snippet
 * Use `thiserror` for creating custom errors
 * Use `anyhow` for startup errors
+* For summary-only calculation or format changes, bump `SUMMARY_REVISION` in `server/src/models/result.rs`; outdated summaries refresh in the background after startup without revalidation.
 * Bump `VALIDATION_REVISION` in `server/src/scheduler/runner.rs` when validation behavior or the stored result format changes, so existing results are revalidated
 
 ## Tools

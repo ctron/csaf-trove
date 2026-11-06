@@ -123,6 +123,10 @@ pub async fn run(state: Arc<AppState>) {
     tracing::info!("Startup complete");
 
     hooks::spawn(&state);
+    let summary_state = state.clone();
+    tokio::spawn(async move {
+        refresh_summaries(&summary_state).await;
+    });
     // Warm the overview cache so the first page load doesn't pay for the storage walk.
     let overview_state = state.clone();
     tokio::spawn(async move {
@@ -250,4 +254,51 @@ pub async fn middleware(
     }
 
     Ok(next.call(req).await?.map_into_boxed_body())
+}
+
+/// Upgrades cached aggregates after readiness without revalidating stored documents.
+pub(crate) async fn refresh_summaries(state: &Arc<AppState>) {
+    use crate::models::result::SUMMARY_REVISION;
+    use std::time::Instant;
+
+    let summaries = match state.storage.list_summaries().await {
+        Ok(summaries) => summaries,
+        Err(error) => {
+            tracing::warn!("Failed to list summaries for refresh: {error:#}");
+            return;
+        }
+    };
+    for summary in summaries {
+        if summary.summary_revision >= SUMMARY_REVISION {
+            continue;
+        }
+        let domain = &summary.provider;
+        let lock = {
+            let mut locks = state.pipeline_locks.write().await;
+            locks.entry(domain.clone()).or_default().clone()
+        };
+        let _guard = lock.lock().await;
+        let started = Instant::now();
+        let result = async {
+            if state
+                .storage
+                .load_summary(domain)
+                .await?
+                .is_some_and(|summary| summary.summary_revision < SUMMARY_REVISION)
+            {
+                state.storage.refresh_summary(domain).await?;
+                state.storage.invalidate_overview();
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        match result {
+            Ok(()) => tracing::info!(
+                domain,
+                elapsed_ms = started.elapsed().as_millis(),
+                "Summary refresh complete"
+            ),
+            Err(error) => tracing::warn!(domain, "Summary refresh failed: {error:#}"),
+        }
+    }
 }

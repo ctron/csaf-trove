@@ -1,3 +1,4 @@
+use crate::models::result::SUMMARY_REVISION;
 use std::collections::BTreeMap;
 mod test;
 
@@ -772,6 +773,7 @@ pub async fn build_summary_from_db(
         csaf_versions.insert(row.try_get::<String>("", "version")?, row.try_get::<i64>("", "count")? as u64);
     }
     Ok(ProviderSummary {
+        summary_revision: SUMMARY_REVISION,
         csaf_versions: Some(csaf_versions),
         checks: Some(checks),
         provider: domain.to_string(),

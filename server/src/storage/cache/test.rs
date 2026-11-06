@@ -1,6 +1,7 @@
 //! Tests for the cross-provider caches.
 
 use super::CacheConfig;
+use crate::models::result::SUMMARY_REVISION;
 use crate::{
     models::result::{
         DocumentProfileResults, DocumentValidation, ProfileResults, ProviderSummary,
@@ -22,6 +23,7 @@ fn storage(config: CacheConfig) -> (TempDir, Storage) {
 /// Builds a minimal summary for a provider.
 pub(crate) fn summary(provider: &str, document_count: u64) -> ProviderSummary {
     ProviderSummary {
+        summary_revision: SUMMARY_REVISION,
         csaf_versions: None,
         checks: None,
         provider: provider.into(),

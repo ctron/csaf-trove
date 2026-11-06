@@ -56,9 +56,15 @@ pub struct DistributionHealth {
     pub full_pass_rate: Option<f64>,
 }
 
+/// Current revision of cached aggregate calculations.
+pub const SUMMARY_REVISION: u32 = 1;
+
 /// Validation summary for a single CSAF provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSummary {
+    /// Revision of the cached aggregate calculations; absent in legacy summaries.
+    #[serde(default)]
+    pub summary_revision: u32,
     /// Document counts by CSAF specification version; absent before revalidation.
     #[serde(default)]
     pub csaf_versions: Option<BTreeMap<String, u64>>,

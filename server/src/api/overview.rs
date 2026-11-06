@@ -1,4 +1,6 @@
 use super::error::ApiError;
+#[cfg(test)]
+use crate::models::result::SUMMARY_REVISION;
 use crate::{
     AppState,
     models::{
@@ -245,6 +247,7 @@ mod tests {
         validated_at: OffsetDateTime,
     ) -> ProviderSummary {
         ProviderSummary {
+            summary_revision: SUMMARY_REVISION,
             csaf_versions: None,
             checks: Some(DocumentCheckSummary {
                 parsing: CheckCounts {
