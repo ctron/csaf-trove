@@ -906,9 +906,9 @@ dependencies = [
 
 [[package]]
 name = "brotli-decompressor"
-version = "6.2.0"
+version = "6.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34c6783f42c21c952ad7112b354f0ba2f10760e9decea5b1b60523d6e270faaf"
+checksum = "97d9071e5b45944c5a9c06baf13a7a65ffa2c88c204015967852c90869692c05"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -1468,7 +1468,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-common"
-version = "0.1.50"
+version = "0.1.51"
 dependencies = [
  "serde",
  "strum 0.28.0",
@@ -1477,7 +1477,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-dashboard"
-version = "0.1.50"
+version = "0.1.51"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -1500,7 +1500,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-entity"
-version = "0.1.50"
+version = "0.1.51"
 dependencies = [
  "sea-orm",
  "time",
@@ -1508,7 +1508,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-migration"
-version = "0.1.50"
+version = "0.1.51"
 dependencies = [
  "sea-orm",
  "sea-orm-migration",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-server"
-version = "0.1.50"
+version = "0.1.51"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
