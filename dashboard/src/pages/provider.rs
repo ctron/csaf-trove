@@ -447,7 +447,7 @@ fn DocumentsTable(domain: String) -> impl IntoView {
                                                 <a href={href}>{tid}</a>
                                             </Td>
                                             <Td class="truncate max-w-xs">{title}</Td>
-                                            <Td><Badge variant=BadgeVariant::Neutral>{doc.csaf_version.unwrap_or_else(|| "Unknown".into())}</Badge></Td>
+                                            <Td>{doc.csaf_version.map(|version| view! { <Badge variant=BadgeVariant::Neutral>{version}</Badge> })}</Td>
                                             <Td><DocProfileBadge detail=doc.profiles.basic /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.extended /></Td>
                                             <Td><DocProfileBadge detail=doc.profiles.full /></Td>

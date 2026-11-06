@@ -41,14 +41,7 @@ pub(crate) async fn build(state: &AppState) -> Result<Overview, ApiError> {
         sync_activity(jobs.values())
     };
 
-    let csaf_versions = summaries
-        .iter()
-        .try_fold(BTreeMap::new(), |mut counts, summary| {
-            for (version, count) in summary.csaf_versions.as_ref()? {
-                *counts.entry(version.clone()).or_insert(0) += count;
-            }
-            Some(counts)
-        });
+    let csaf_versions = aggregate_csaf_versions(&summaries);
     let overview = Overview {
         csaf_versions,
         provider_count: summaries.len() as u64 + awaiting_first_sync,
@@ -73,6 +66,23 @@ pub(crate) async fn build(state: &AppState) -> Result<Overview, ApiError> {
         },
     };
     Ok(overview)
+}
+
+/// Combines available version counts without waiting for every provider to revalidate.
+fn aggregate_csaf_versions(summaries: &[ProviderSummary]) -> Option<BTreeMap<String, u64>> {
+    let mut counts = None;
+    for versions in summaries
+        .iter()
+        .filter_map(|summary| summary.csaf_versions.as_ref())
+    {
+        let counts = counts.get_or_insert_with(BTreeMap::new);
+        for (version, count) in versions {
+            if version != "Unknown" && !version.is_empty() && *count > 0 {
+                *counts.entry(version.clone()).or_insert(0) += count;
+            }
+        }
+    }
+    counts
 }
 
 /// Accumulates passed and total test counts for a weighted pass rate.
@@ -328,12 +338,32 @@ mod tests {
 #[cfg(test)]
 mod version_tests {
     use super::*;
+    use std::slice::from_ref;
 
     /// Old summaries remain readable until scheduled revalidation.
     #[test]
     fn old_summary_has_no_version_statistics() -> Result<(), serde_json::Error> {
         let value = tests_summary()?;
         assert!(value.csaf_versions.is_none());
+        Ok(())
+    }
+
+    /// Available summaries contribute even while others await revalidation.
+    #[test]
+    fn aggregates_known_versions() -> Result<(), serde_json::Error> {
+        let pending = tests_summary()?;
+        let mut first = pending.clone();
+        first.csaf_versions = Some(BTreeMap::from([("2.0".into(), 3), ("Unknown".into(), 8)]));
+        let mut second = pending.clone();
+        second.csaf_versions = Some(BTreeMap::from([("2.0".into(), 1), ("2.1".into(), 2)]));
+        assert_eq!(aggregate_csaf_versions(from_ref(&pending)), None);
+        assert_eq!(
+            aggregate_csaf_versions(&[first, pending, second]),
+            Some(BTreeMap::from([("2.0".into(), 4), ("2.1".into(), 2)]))
+        );
+        let mut empty = tests_summary()?;
+        empty.csaf_versions = Some(BTreeMap::from([("Unknown".into(), 4)]));
+        assert_eq!(aggregate_csaf_versions(&[empty]), Some(BTreeMap::new()));
         Ok(())
     }
 

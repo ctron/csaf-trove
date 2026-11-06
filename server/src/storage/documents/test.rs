@@ -17,6 +17,7 @@ use sea_orm::{
     ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, DbBackend, QueryOrder,
     QueryTrait, Set, Statement,
 };
+use std::collections::BTreeMap;
 use time::{Duration, OffsetDateTime};
 
 /// Both history queries preserve recorded durations and missing counts, legacy rows and pagination.
@@ -800,4 +801,29 @@ async fn check_details_round_trip() {
         .await
         .unwrap();
     assert_eq!(page.items[0].checks, checks);
+}
+
+/// Version totals exclude records whose documents could not provide a version.
+#[tokio::test]
+async fn version_summary_ignores_missing_versions() {
+    let db = database("sqlite::memory:", None).await;
+    let summary = super::build_summary_from_db(&db, "example.com")
+        .await
+        .unwrap();
+    assert!(summary.csaf_versions.unwrap().is_empty());
+    db.execute_unprepared(
+        "INSERT INTO documents (tracking_id, title, url, signature_present, csaf_version) VALUES
+        ('a', '', '', 0, '2.0'), ('b', '', '', 0, '2.0'), ('c', '', '', 0, '2.1'),
+        ('failed', '', '', 0, NULL), ('empty', '', '', 0, '')",
+    )
+    .await
+    .unwrap();
+    let summary = super::build_summary_from_db(&db, "example.com")
+        .await
+        .unwrap();
+    assert_eq!(summary.document_count, 5);
+    assert_eq!(
+        summary.csaf_versions.unwrap(),
+        BTreeMap::from([("2.0".into(), 2), ("2.1".into(), 1)])
+    );
 }

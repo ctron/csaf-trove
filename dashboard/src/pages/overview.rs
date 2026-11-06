@@ -354,22 +354,21 @@ mod tests {
 pub(crate) fn CsafVersions(counts: Option<BTreeMap<String, u64>>) -> impl IntoView {
     match counts {
         None => view! {
-            <p class="text-sm text-gray-500 dark:text-gray-400">"Available after revalidation"</p>
+            <Badge variant=BadgeVariant::Neutral>"n/a"</Badge>
         }
         .into_any(),
-        Some(counts) => {
+        Some(mut counts) => {
+            counts
+                .retain(|version, count| version != "Unknown" && !version.is_empty() && *count > 0);
             let total: u64 = counts.values().sum();
             if total == 0 {
-                return view! {
-                    <p class="text-sm text-gray-500 dark:text-gray-400">"No documents available"</p>
-                }
-                .into_any();
+                return view! { <Badge variant=BadgeVariant::Neutral>"-"</Badge> }.into_any();
             }
             view! {
                 <dl class="divide-y divide-gray-200 dark:divide-gray-700">
                     {counts.into_iter().map(|(version, count)| {
                         let percentage = count as f64 / total as f64 * 100.0;
-                        let variant = if version == "Unknown" { BadgeVariant::Neutral } else { BadgeVariant::Info };
+                        let variant = BadgeVariant::Info;
                         view! {
                             <div class="py-3">
                                 <div class="flex items-center justify-between gap-4">
