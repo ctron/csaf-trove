@@ -32,6 +32,10 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 web::get().to(providers::document_detail),
             )
             .route(
+                "/{domain}/document/{tracking_id}/source",
+                web::get().to(providers::document_source),
+            )
+            .route(
                 "/{domain}/document/{tracking_id}/content",
                 web::get().to(providers::document_content),
             )

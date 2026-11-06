@@ -9,6 +9,7 @@ use crate::{
         result::{ProfileResults, ProviderDetail, ProviderSummary},
         state::JobPhase,
     },
+    storage::versions::RawDocument,
 };
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::Deserialize;
@@ -236,6 +237,25 @@ pub async fn document_detail(
     Ok(HttpResponse::Ok().json(doc))
 }
 
+/// Returns the original source text of the current document version.
+pub async fn document_source(
+    state: web::Data<AppState>,
+    path: web::Path<(String, String)>,
+) -> Result<HttpResponse, ApiError> {
+    let (domain, tracking_id) = path.into_inner();
+    let source = state
+        .storage
+        .read_document_raw(&domain, &tracking_id, None, usize::MAX)
+        .await?
+        .or_not_found()?;
+    match source {
+        RawDocument::Json(source) => Ok(HttpResponse::Ok()
+            .content_type("text/plain; charset=utf-8")
+            .body(source)),
+        RawDocument::TooLarge { .. } => Ok(HttpResponse::PayloadTooLarge().finish()),
+    }
+}
+
 /// Returns the displayable content of the current version of a document.
 pub async fn document_content(
     state: web::Data<AppState>,
@@ -293,4 +313,72 @@ pub async fn document_diff(
         .await?
         .or_not_found()?;
     Ok(HttpResponse::Ok().json(diff))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        AppState,
+        pipeline::sync::RetrievalFailure,
+        storage::git_repo::{commit_all, prepare_worktree},
+    };
+    use actix_web::{App, http::StatusCode, test, test::TestRequest, web};
+    use std::fs;
+
+    /// Source responses preserve the stored bytes, even for invalid JSON, and report missing documents.
+    #[actix_web::test]
+    async fn source_preserves_original_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        let work = dir.path().join("work");
+        let prepared = prepare_worktree(&state.storage.repo_path("example.com"), &work).unwrap();
+        fs::create_dir_all(work.join("example.com")).unwrap();
+        let source = "{\n  \"document\": invalid JSON\n}\n";
+        fs::write(work.join("example.com/a.json"), source).unwrap();
+        commit_all(&prepared, "source").unwrap();
+        state
+            .storage
+            .save_retrieval_errors(
+                "example.com",
+                &[RetrievalFailure {
+                    url: "https://example.com/a.json".into(),
+                    error: "test".into(),
+                    missing: false,
+                }],
+            )
+            .await
+            .unwrap();
+        state
+            .storage
+            .record_versions("example.com", None)
+            .await
+            .unwrap();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::from(state))
+                .configure(super::super::config),
+        )
+        .await;
+        let response = test::call_service(
+            &app,
+            TestRequest::get()
+                .uri("/providers/example.com/document/a/source")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(test::read_body(response).await.as_ref(), source.as_bytes());
+        let response = test::call_service(
+            &app,
+            TestRequest::get()
+                .uri("/providers/example.com/document/missing/source")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }

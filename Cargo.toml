@@ -39,6 +39,7 @@ humantime-serde = "1"
 js-sys = "0.3"
 leptos = { version = "0.8", features = ["csr"] }
 leptos_router = "0.8"
+monaco-leptos = { version = "0.1.3", features = ["csr"] }
 libsqlite3-sys = "0.37"
 moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.13"

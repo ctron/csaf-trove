@@ -28,6 +28,7 @@ use leptos_router::{
     NavigateOptions,
     hooks::{use_navigate, use_params_map, use_query_map},
 };
+use monaco_leptos::{EditorOptions, MonacoEditor};
 use std::cmp::Ordering;
 
 /// Number of versions shown per history page.
@@ -158,7 +159,7 @@ fn format_timestamp(ts: i64) -> String {
 }
 
 /// Document detail page with Overview, Document Health, Notes & References, Vulnerabilities, Validation,
-/// Revision, and History tabs.
+/// Revision, History, and Source tabs.
 #[component]
 pub fn DocumentPage() -> impl IntoView {
     let params = use_params_map();
@@ -353,6 +354,10 @@ pub fn DocumentPage() -> impl IntoView {
                     count=Signal::derive(move || detail.get().and_then(Result::ok).map(|d| u64::from(d.version_count)))
                     on_click=Callback::new(move |_| navigate.run(history_url()))
                 >"History"</ContentTab>
+                <ContentTab
+                    active=Signal::derive(move || tab.get() == "source")
+                    on_click=Callback::new(move |_| navigate.run(format!("{}/source", document_url())))
+                >"Source"</ContentTab>
             </ContentTabs>
 
             {move || {
@@ -371,6 +376,8 @@ pub fn DocumentPage() -> impl IntoView {
                             })}
                         </Suspense>
                     }.into_any()
+                } else if t == "source" {
+                    view! { <DocumentSource domain=domain() tracking_id=tracking_id() /> }.into_any()
                 } else if t == "history" {
                     view! {
                         {move || {
@@ -435,6 +442,60 @@ pub fn DocumentPage() -> impl IntoView {
                 }
             }}
         </div>
+    }
+}
+
+/// Loads the original document text on demand and displays it in a read-only editor.
+#[component]
+fn DocumentSource(
+    /// Provider domain.
+    domain: String,
+    /// Document tracking ID.
+    tracking_id: String,
+) -> impl IntoView {
+    let source = LocalResource::new(move || {
+        let url = format!(
+            "/api/providers/{}/document/{}/source",
+            encode_path_segment(&domain),
+            encode_path_segment(&tracking_id),
+        );
+        async move {
+            let response = gloo_net::http::Request::get(&url)
+                .send()
+                .await
+                .map_err(|error| error.to_string())?;
+            if response.status() == 404 {
+                return Err("Document source not available.".to_string());
+            }
+            if !response.ok() {
+                return Err(format!(
+                    "Failed to load document source (HTTP {}).",
+                    response.status()
+                ));
+            }
+            response.text().await.map_err(|error| error.to_string())
+        }
+    });
+    let error = RwSignal::new(None::<String>);
+    let mut options = EditorOptions::default();
+    options.read_only = true;
+    options.aria_label = "Document source".into();
+    view! {
+        <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading source..."</p> }>
+            {move || source.get().map(|result| match result {
+                Ok(source) => view! {
+                    <MonacoEditor
+                        language="json"
+                        initial_value=source
+                        options=options.clone()
+                        style="height: 70vh"
+                        on_error=move |failure| error.set(Some(format!("Unable to display source: {failure}")))
+                    />
+                }.into_any(),
+                Err(message) => view! { <p role="alert" class="text-red-500 dark:text-red-400 py-4">{message}</p> }.into_any(),
+            })}
+        </Suspense>
+        {move || error.get().map(|message| view! { <p role="alert" class="text-red-500 dark:text-red-400 py-4">{message}</p> })}
     }
 }
 
