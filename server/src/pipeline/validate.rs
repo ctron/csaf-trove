@@ -21,6 +21,7 @@ use crate::{
     storage::content::extract_vulnerability_index,
 };
 use anyhow::Result;
+use csaf_rs::csaf::raw::HasParsed;
 use csaf_trove_common::document_checks::{CheckDetail, CheckOutcome, CheckStatus, DocumentChecks};
 use csaf_walker::{
     check::CheckError,
@@ -34,7 +35,7 @@ use csaf_walker::{
     retrieve::{RetrievedAdvisory, RetrievingVisitor},
     source::Source as CsafSource,
     verification::{
-        Csaf, VerificationError, VerifiedAdvisory, VerifyingVisitor,
+        RawCsaf, VerificationError, VerifiedAdvisory, VerifyingVisitor,
         check::{Check, CsafValidation},
     },
 };
@@ -46,17 +47,21 @@ enum CsafVersionTag {
     V2_1,
 }
 
-fn csaf_version_tag(csaf: &Csaf) -> CsafVersionTag {
+fn csaf_version_tag(csaf: &RawCsaf) -> CsafVersionTag {
     match csaf {
-        Csaf::V2_0(_) => CsafVersionTag::V2_0,
+        RawCsaf::V2_0(_) => CsafVersionTag::V2_0,
         _ => CsafVersionTag::V2_1,
     }
 }
 
 fn total_tests_for_profile(version: CsafVersionTag, profile: &str) -> u64 {
-    use csaf::validation::Validatable;
-    type Csaf20 = csaf::schema::csaf2_0::schema::CommonSecurityAdvisoryFramework;
-    type Csaf21 = csaf::schema::csaf2_1::schema::CommonSecurityAdvisoryFramework;
+    use csaf_rs::{
+        schema::{
+            csaf2_0::schema::CommonSecurityAdvisoryFramework as Csaf20,
+            csaf2_1::schema::CommonSecurityAdvisoryFramework as Csaf21,
+        },
+        validation::Validatable,
+    };
     let count = match version {
         CsafVersionTag::V2_0 => Csaf20::tests_in_preset(profile).map_or(0, |v| v.len()),
         CsafVersionTag::V2_1 => Csaf21::tests_in_preset(profile).map_or(0, |v| v.len()),
@@ -189,8 +194,15 @@ pub async fn validate_provider(
                 let size = result.as_ref().map_or(0, |v| v.advisory.data.len());
                 let doc = match result {
                     Ok(verified) => {
-                        let tracking_id = verified.csaf.document().tracking().id().to_string();
-                        let title = verified.csaf.document().title().to_string();
+                        let document = verified.csaf.document();
+                        let tracking_id = document
+                            .as_ref()
+                            .map(|d| d.tracking().id().to_string())
+                            .unwrap_or_default();
+                        let title = document
+                            .as_ref()
+                            .map(|d| d.title().to_string())
+                            .unwrap_or_default();
                         let meta = extract_metadata(&verified.csaf);
                         let vulnerabilities = extract_vulnerability_index(&verified.advisory.data)
                             .unwrap_or_else(|e| {
@@ -611,57 +623,63 @@ struct DocumentMetadata {
 }
 
 /// Extracts metadata fields from a parsed CSAF document.
-fn extract_metadata(csaf: &Csaf) -> DocumentMetadata {
+fn extract_metadata(csaf: &RawCsaf) -> DocumentMetadata {
     match csaf {
-        Csaf::V2_0(doc) => DocumentMetadata {
-            category: Some(doc.document.category.to_string()),
-            publisher_name: Some(doc.document.publisher.name.to_string()),
-            initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
-            current_release_date: Some(doc.document.tracking.current_release_date.clone()),
-            status: Some(doc.document.tracking.status.to_string()),
-            revision: Some(doc.document.tracking.version.to_string()),
-            aggregate_severity: doc
-                .document
-                .aggregate_severity
-                .as_ref()
-                .map(|s| s.text.to_string()),
-            csaf_version: Some("2.0".to_string()),
-            revision_history: doc
-                .document
-                .tracking
-                .revision_history
-                .iter()
-                .map(|r| RevisionEntry {
-                    number: r.number.to_string(),
-                    date: r.date.clone(),
-                    summary: r.summary.to_string(),
-                })
-                .collect(),
+        RawCsaf::V2_0(raw) => match raw.get_parsed() {
+            Ok(doc) => DocumentMetadata {
+                category: Some(doc.document.category.to_string()),
+                publisher_name: Some(doc.document.publisher.name.to_string()),
+                initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
+                current_release_date: Some(doc.document.tracking.current_release_date.clone()),
+                status: Some(doc.document.tracking.status.to_string()),
+                revision: Some(doc.document.tracking.version.to_string()),
+                aggregate_severity: doc
+                    .document
+                    .aggregate_severity
+                    .as_ref()
+                    .map(|s| s.text.to_string()),
+                csaf_version: Some("2.0".to_string()),
+                revision_history: doc
+                    .document
+                    .tracking
+                    .revision_history
+                    .iter()
+                    .map(|r| RevisionEntry {
+                        number: r.number.to_string(),
+                        date: r.date.clone(),
+                        summary: r.summary.to_string(),
+                    })
+                    .collect(),
+            },
+            Err(_) => DocumentMetadata::default(),
         },
-        Csaf::V2_1(doc) => DocumentMetadata {
-            category: Some(doc.document.category.to_string()),
-            publisher_name: Some(doc.document.publisher.name.to_string()),
-            initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
-            current_release_date: Some(doc.document.tracking.current_release_date.clone()),
-            status: Some(doc.document.tracking.status.to_string()),
-            revision: Some(doc.document.tracking.version.to_string()),
-            aggregate_severity: doc
-                .document
-                .aggregate_severity
-                .as_ref()
-                .map(|s| s.text.to_string()),
-            csaf_version: Some("2.1".to_string()),
-            revision_history: doc
-                .document
-                .tracking
-                .revision_history
-                .iter()
-                .map(|r| RevisionEntry {
-                    number: r.number.to_string(),
-                    date: r.date.clone(),
-                    summary: r.summary.to_string(),
-                })
-                .collect(),
+        RawCsaf::V2_1(raw) => match raw.get_parsed() {
+            Ok(doc) => DocumentMetadata {
+                category: Some(doc.document.category.to_string()),
+                publisher_name: Some(doc.document.publisher.name.to_string()),
+                initial_release_date: Some(doc.document.tracking.initial_release_date.clone()),
+                current_release_date: Some(doc.document.tracking.current_release_date.clone()),
+                status: Some(doc.document.tracking.status.to_string()),
+                revision: Some(doc.document.tracking.version.to_string()),
+                aggregate_severity: doc
+                    .document
+                    .aggregate_severity
+                    .as_ref()
+                    .map(|s| s.text.to_string()),
+                csaf_version: Some("2.1".to_string()),
+                revision_history: doc
+                    .document
+                    .tracking
+                    .revision_history
+                    .iter()
+                    .map(|r| RevisionEntry {
+                        number: r.number.to_string(),
+                        date: r.date.clone(),
+                        summary: r.summary.to_string(),
+                    })
+                    .collect(),
+            },
+            Err(_) => DocumentMetadata::default(),
         },
         _ => DocumentMetadata::default(),
     }

@@ -22,11 +22,11 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 console_error_panic_hook = "0.1"
-csaf-rs = "0.5"
+csaf-rs = "0.7.3"
 csaf-trove-common = { path = "common" }
 csaf-trove-entity = { path = "entity" }
 csaf-trove-migration = { path = "migration" }
-csaf-walker = { version = "0.20.0", default-features = false }
+csaf-walker = { version = "0.21.0", default-features = false }
 futures-util = "0.3"
 git2 = { version = "0.21", features = ["https"] }
 governor = "0.10"
@@ -67,12 +67,8 @@ tracing-actix-web = "0.7"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 walkdir = "2"
-walker-common = "0.20.0"
+walker-common = "0.21.0"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = "0.3"
 zstd = "0.14"
-
-[patch.crates-io]
-# Remove panics from library code: https://github.com/csaf-rs/csaf/pull/1185
-csaf-rs = { git = "https://github.com/ctron/csaf-rust", rev = "e0852f2eb416ec6020f9e745a6c5e0728376f76c" }
