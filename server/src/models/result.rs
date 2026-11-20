@@ -37,6 +37,12 @@ pub struct DistributionHealth {
     pub tlp_labels: Vec<String>,
     /// Number of documents matched to this distribution.
     pub document_count: u64,
+    /// Server-reported index body size, when Content-Length is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_size_bytes: Option<u64>,
+    /// Index body size after HTTP decompression, before parsing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoded_size_bytes: Option<u64>,
     /// Number of documents with essential check failures, warnings, or missing inputs; excludes CSAF tests.
     pub check_issues: u64,
     /// Whether this distribution was skipped by configuration.
@@ -54,6 +60,15 @@ pub struct DistributionHealth {
     /// Full profile pass rate (0.0–1.0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_pass_rate: Option<f64>,
+}
+
+/// Sizes of a successfully loaded distribution index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DistributionResourceSize {
+    /// Server-reported body size; automatic decompression may remove this header.
+    pub download_size_bytes: Option<u64>,
+    /// Actual body length after HTTP decompression, before parsing.
+    pub decoded_size_bytes: u64,
 }
 
 /// Current revision of cached aggregate calculations.

@@ -19,8 +19,8 @@ pub mod versions;
 use crate::models::{
     metrics::MetricsTimeSeries,
     result::{
-        CveSearchResult, DistributionHealth, DocumentValidation, HistoricalDocument,
-        ProviderDetail, ProviderSummary, RevisionEntry,
+        CveSearchResult, DistributionHealth, DistributionResourceSize, DocumentValidation,
+        HistoricalDocument, ProviderDetail, ProviderSummary, RevisionEntry,
     },
     state::SyncState,
 };
@@ -33,6 +33,7 @@ pub use documents::ProviderInfo;
 use futures_util::{StreamExt, TryStreamExt, stream};
 use provider::{ProviderDir, ProviderKey, read_json, write_json};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -309,6 +310,11 @@ impl Storage {
             .load_distribution_errors(domain)
             .await
             .unwrap_or_default();
+        let sizes: BTreeMap<String, DistributionResourceSize> = self
+            .state_dir(domain)
+            .read_json("distribution-sizes.json")
+            .await?
+            .unwrap_or_default();
 
         let mut results = Vec::new();
         for entry in &entries {
@@ -328,6 +334,8 @@ impl Storage {
                 url: entry.url.clone(),
                 tlp_labels: entry.tlp_labels.clone(),
                 document_count,
+                download_size_bytes: sizes.get(&entry.url).and_then(|s| s.download_size_bytes),
+                decoded_size_bytes: sizes.get(&entry.url).map(|s| s.decoded_size_bytes),
                 check_issues,
                 skipped,
                 distribution_error,
@@ -438,6 +446,17 @@ impl Storage {
             .read_json("distribution-errors.json")
             .await?
             .unwrap_or_default())
+    }
+
+    /// Replaces index sizes with successful measurements from the latest sync.
+    pub async fn save_distribution_sizes(
+        &self,
+        domain: &str,
+        sizes: &BTreeMap<String, DistributionResourceSize>,
+    ) -> Result<()> {
+        self.state_dir(domain)
+            .write_json("distribution-sizes.json", sizes)
+            .await
     }
 
     /// Persists a validation summary for a provider.

@@ -11,9 +11,36 @@ pub fn format_number(value: u64) -> String {
     formatted
 }
 
+/// Formats byte sizes using binary units.
+pub fn format_bytes(bytes: u64) -> String {
+    let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < units.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{} B", format_number(bytes))
+    } else {
+        format!("{value:.1} {}", units[unit])
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_number;
+    use super::{format_bytes, format_number};
+
+    /// Covers empty storage, the binary-unit boundary, and large sizes.
+    #[test]
+    fn formats_storage_sizes() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(1023), "1,023 B");
+        assert_eq!(format_bytes(1024), "1.0 KiB");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MiB");
+        assert_eq!(format_bytes(u64::MAX), "16.0 EiB");
+    }
 
     /// Covers zero, grouping boundaries, and integers beyond JavaScript's exact range.
     #[test]

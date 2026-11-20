@@ -12,7 +12,7 @@ use crate::{
         table::{Table, Tbody, Td, Th, Thead},
         tlp_badge::TlpBadge,
     },
-    format::format_number,
+    format::{format_bytes, format_number},
     models::{
         DistributionHealth, PaginatedDocuments, ProfileSummary, ProviderDetail, encode_path_segment,
     },
@@ -288,6 +288,8 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                 <Thead>
                     <tr>
                         <Th>"Distribution"</Th>
+                        <Th><span title="Server-reported size of changes.csv or the ROLIE feed (Content-Length), when available.">"Downloaded"</span></Th>
+                        <Th><span title="Size of changes.csv or the ROLIE feed after HTTP decompression, before parsing.">"Decoded"</span></Th>
                         <Th>"Documents"</Th>
                         <Th>"Basic"</Th>
                         <Th>"Extended"</Th>
@@ -332,6 +334,8 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                                         {tlp_badges}
                                     </div>
                                 </Td>
+                                <Td>{resource_size(d.download_size_bytes)}</Td>
+                                <Td>{resource_size(d.decoded_size_bytes)}</Td>
                                 <Td>{format_number(d.document_count)}</Td>
                                 <Td>{rate_badge(d.basic_pass_rate)}</Td>
                                 <Td>{rate_badge(d.extended_pass_rate)}</Td>
@@ -343,6 +347,15 @@ fn DistributionsCard(distributions: Vec<DistributionHealth>) -> impl IntoView {
                 </Tbody>
             </Table>
         </div>
+    }
+}
+
+/// Renders an index size, retaining exact bytes in the tooltip.
+fn resource_size(bytes: Option<u64>) -> impl IntoView {
+    view! {
+        <span class="whitespace-nowrap" title=bytes.map(|n| format!("{} bytes", format_number(n)))>
+            {bytes.map(format_bytes).unwrap_or_else(|| "—".into())}
+        </span>
     }
 }
 

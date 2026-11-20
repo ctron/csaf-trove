@@ -402,6 +402,10 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
             .storage
             .save_distribution_membership(domain, &sync_result.membership)
             .await?;
+        state
+            .storage
+            .save_distribution_sizes(domain, &sync_result.distribution_sizes)
+            .await?;
         timed_processing_step(
             domain,
             "distribution_health",

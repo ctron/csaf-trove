@@ -1,8 +1,12 @@
 use super::{
+    index::MeasuredIndexSource,
     membership::{DistributionMembership, MembershipSource},
     store::{TroveStoreError, TroveStoreVisitor},
 };
-use crate::{AppState, models::source::Source as AppSource};
+use crate::{
+    AppState,
+    models::{result::DistributionResourceSize, source::Source as AppSource},
+};
 use anyhow::Result;
 use csaf_walker::{
     common::{
@@ -20,7 +24,7 @@ use csaf_walker::{
 use parking_lot::Mutex;
 use reqwest::StatusCode;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fmt::Debug,
     path::Path,
     sync::Arc,
@@ -54,6 +58,8 @@ fn is_not_found(err: &HttpSourceError) -> bool {
 pub struct SyncResult {
     /// Complete indexes discovered before filtering unchanged advisories.
     pub membership: DistributionMembership,
+    /// Index sizes measured during this sync, keyed by distribution URL.
+    pub distribution_sizes: BTreeMap<String, DistributionResourceSize>,
     /// Documents that could not be retrieved.
     pub retrieval_errors: Vec<RetrievalFailure>,
     /// Distribution feeds that could not be loaded (e.g. 403 on restricted TLP feeds).
@@ -218,11 +224,12 @@ pub async fn sync_provider(
     let metadata = MetadataRetriever::new(domain);
 
     let membership = Arc::new(Mutex::new(DistributionMembership::new()));
+    let distribution_sizes = Arc::new(Mutex::new(BTreeMap::new()));
 
     let retrieval_errors = Arc::new(Mutex::new(Vec::new()));
     let distribution_errors = Arc::new(Mutex::new(Vec::new()));
 
-    let http_source = HttpSource::new(metadata, fetcher, HttpOptions::default());
+    let http_source = HttpSource::new(metadata, fetcher.clone(), HttpOptions::default());
     let store = TroveStoreVisitor::new(worktree_dir);
     let counting_store = CountingStoreVisitor {
         inner: store,
@@ -237,7 +244,11 @@ pub async fn sync_provider(
     let skip_dirs = source.skip_directories.clone();
     let dt = distributions_total.clone();
     let mut walker = Walker::new(MembershipSource {
-        inner: http_source,
+        inner: MeasuredIndexSource {
+            inner: http_source,
+            fetcher,
+            sizes: distribution_sizes.clone(),
+        },
         since: sync_state.since_token.map(SystemTime::from),
         retry: Arc::new(retry),
         membership: membership.clone(),
@@ -310,6 +321,7 @@ pub async fn sync_provider(
     let membership = std::mem::take(&mut *membership.lock());
     Ok(SyncResult {
         membership,
+        distribution_sizes: std::mem::take(&mut *distribution_sizes.lock()),
         retrieval_errors,
         distribution_errors,
         started_at,

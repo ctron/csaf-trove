@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{
-    models::result::DistributionHealth,
+    models::result::{DistributionHealth, DistributionResourceSize},
     pipeline::sync::RetrievalFailure,
     storage::{
         documents::distribution_health,
@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use sea_orm::DatabaseConnection;
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 use tempfile::TempDir;
 
 /// Two feeds sharing a parent directory must never share inferred membership.
@@ -318,4 +318,98 @@ async fn health_is_cached_until_refreshed() {
         .unwrap();
     assert_eq!(count(&refreshed), 0);
     assert!(refreshed.iter().all(|h| !h.skipped));
+}
+
+/// Older caches stay readable; normal refreshes preserve sizes and replace stale measurements.
+#[tokio::test]
+async fn distribution_sizes_survive_refresh_and_clear_missing_indexes() {
+    let (dir, storage, _db) = fixture().await;
+    let health = storage
+        .refresh_distribution_health("example.com")
+        .await
+        .unwrap();
+    let mut old = serde_json::to_value(&health).unwrap();
+    for row in old.as_array_mut().unwrap() {
+        row.as_object_mut().unwrap().remove("download_size_bytes");
+        row.as_object_mut().unwrap().remove("decoded_size_bytes");
+    }
+    storage
+        .results_dir("example.com")
+        .write_json("distributions.json", &old)
+        .await
+        .unwrap();
+    assert!(
+        storage
+            .distribution_health("example.com", &[])
+            .await
+            .unwrap()
+            .iter()
+            .all(|row| row.download_size_bytes.is_none() && row.decoded_size_bytes.is_none())
+    );
+
+    let sizes = BTreeMap::from([
+        (
+            DIRECTORY.into(),
+            DistributionResourceSize {
+                download_size_bytes: Some(0),
+                decoded_size_bytes: 0,
+            },
+        ),
+        (
+            WHITE.into(),
+            DistributionResourceSize {
+                download_size_bytes: None,
+                decoded_size_bytes: 1024,
+            },
+        ),
+    ]);
+    storage
+        .save_distribution_sizes("example.com", &sizes)
+        .await
+        .unwrap();
+    // Syncs with no advisory changes still update the cached sizes.
+    let health = storage
+        .refresh_distribution_health("example.com")
+        .await
+        .unwrap();
+    let directory = health.iter().find(|row| row.url == DIRECTORY).unwrap();
+    assert_eq!(directory.download_size_bytes, Some(0));
+    assert_eq!(directory.decoded_size_bytes, Some(0));
+    let white = health.iter().find(|row| row.url == WHITE).unwrap();
+    assert_eq!(white.download_size_bytes, None);
+    assert_eq!(white.decoded_size_bytes, Some(1024));
+    assert_eq!(
+        health
+            .iter()
+            .find(|row| row.url == GREEN)
+            .unwrap()
+            .decoded_size_bytes,
+        None
+    );
+
+    // Reopening and revalidation-style health refreshes retain the measurements.
+    let reopened = Storage::new(dir.path()).unwrap();
+    let refreshed = reopened
+        .refresh_distribution_health("example.com")
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(refreshed).unwrap(),
+        serde_json::to_value(health).unwrap()
+    );
+
+    // A completed sync with no successful indexes clears old sizes for failed/skipped feeds.
+    reopened
+        .save_distribution_sizes("example.com", &BTreeMap::new())
+        .await
+        .unwrap();
+    let refreshed = reopened
+        .refresh_distribution_health("example.com")
+        .await
+        .unwrap();
+    assert!(
+        refreshed
+            .iter()
+            .all(|row| row.download_size_bytes.is_none() && row.decoded_size_bytes.is_none())
+    );
 }

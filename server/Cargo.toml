@@ -17,11 +17,13 @@ csaf-trove-common = { workspace = true }
 csaf-trove-entity = { workspace = true }
 csaf-trove-migration = { workspace = true }
 csaf-walker = { workspace = true, features = ["csaf", "crypto-openssl"] }
+csv = { workspace = true }
 futures-util = { workspace = true }
 git2 = { workspace = true }
 governor = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
+http = { workspace = true }
 humantime = { workspace = true }
 humantime-serde = { workspace = true }
 libsqlite3-sys = { workspace = true }
@@ -50,6 +52,9 @@ url = { workspace = true }
 walkdir = { workspace = true }
 walker-common = { workspace = true }
 zstd = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["gzip"] }
 
 [build-dependencies]
 static-files = { workspace = true }

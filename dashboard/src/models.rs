@@ -89,6 +89,12 @@ pub struct DistributionHealth {
     #[serde(default)]
     pub tlp_labels: Vec<String>,
     pub document_count: u64,
+    /// Server-reported index body size, when available.
+    #[serde(default)]
+    pub download_size_bytes: Option<u64>,
+    /// Index body size after HTTP decompression.
+    #[serde(default)]
+    pub decoded_size_bytes: Option<u64>,
     /// Documents with essential check issues, excluding CSAF test results.
     pub check_issues: u64,
     #[serde(default)]
