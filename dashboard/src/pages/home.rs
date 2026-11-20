@@ -10,12 +10,14 @@ use crate::{
     models::{ProviderSummary, encode_path_segment},
 };
 use csaf_trove_common::document_checks::DocumentCheckSummary;
-use leptos::prelude::*;
+use leptos::{ev, html::Input, prelude::*};
 use std::cmp::Ordering;
 use time::{
     OffsetDateTime,
     format_description::{self, well_known::Rfc3339},
 };
+use wasm_bindgen::JsCast;
+use web_sys::Element;
 
 fn format_validated_at(s: &str) -> String {
     OffsetDateTime::parse(s, &Rfc3339)
@@ -157,18 +159,74 @@ fn ProviderChecks(checks: Option<DocumentCheckSummary>) -> impl IntoView {
     view! { <Badge variant=variant>{format_number(issues)}</Badge> }
 }
 
-/// Renders provider summaries with sortable name, document count, and profile columns.
+/// Matches a provider name using a case-insensitive substring, ignoring surrounding spaces.
+fn provider_matches(provider: &str, query: &str) -> bool {
+    provider
+        .to_lowercase()
+        .contains(&query.trim().to_lowercase())
+}
+
+/// Renders provider summaries with substring filtering and sortable columns.
 #[component]
 fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
     let providers = StoredValue::new(providers);
     let sort = RwSignal::new((ProviderSort::Name, false));
+    let query = RwSignal::new(String::new());
+    let search = NodeRef::<Input>::new();
+    let listener = window_event_listener(ev::keydown, move |event| {
+        if event.key() != "/"
+            || event.ctrl_key()
+            || event.meta_key()
+            || event.alt_key()
+            || event.is_composing()
+            || event.default_prevented()
+        {
+            return;
+        }
+        let editing = event
+            .target()
+            .and_then(|target| target.dyn_into::<Element>().ok())
+            .is_some_and(|target| {
+                target
+                    .closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']")
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+        if !editing && let Some(input) = search.get_untracked() {
+            event.prevent_default();
+            let _ = input.focus();
+        }
+    });
+    on_cleanup(move || listener.remove());
     let sorted_providers = move || {
         let mut rows = providers.get_value();
+        let query = query.get();
+        rows.retain(|provider| provider_matches(&provider.provider, &query));
         let (column, descending) = sort.get();
         rows.sort_by(|left, right| column.compare(left, right, descending));
         rows
     };
     view! {
+        <div class="mb-4">
+            <label for="provider-search" class="sr-only">"Filter providers"</label>
+            <input
+                id="provider-search"
+                node_ref=search
+                type="search"
+                placeholder="Filter providers… (/)"
+                aria-keyshortcuts="/"
+                class="w-full sm:max-w-sm rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                prop:value=move || query.get()
+                on:input=move |event| query.set(event_target_value(&event))
+                on:keydown=move |event| {
+                    if event.key() == "Escape" {
+                        event.prevent_default();
+                        query.set(String::new());
+                    }
+                }
+            />
+        </div>
         <Table>
             <Thead>
                 <tr>
@@ -183,7 +241,14 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                 </tr>
             </Thead>
             <Tbody>
-                {move || sorted_providers().into_iter().map(|p| {
+                {move || {
+                    let rows = sorted_providers();
+                    if rows.is_empty() {
+                        return view! {
+                            <tr><td colspan="8" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400" role="status">"No matching providers."</td></tr>
+                        }.into_any();
+                    }
+                    rows.into_iter().map(|p| {
                     let domain = p.provider.clone();
                     let href = format!("/providers/{}", encode_path_segment(&domain));
                     let checks_href = href.clone();
@@ -233,8 +298,25 @@ fn ProviderTable(providers: Vec<ProviderSummary>) -> impl IntoView {
                             <Td>{format_validated_at(&validated_at)}</Td>
                         </tr>
                     }
-                }).collect::<Vec<_>>()}
+                    }).collect_view().into_any()
+                }}
             </Tbody>
         </Table>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::provider_matches;
+
+    /// Filters literal substrings, ignores case and surrounding spaces, and clears to all rows.
+    #[test]
+    fn matches_provider_substrings() {
+        assert!(provider_matches("security.Example.COM", " EXAMPLE "));
+        assert!(provider_matches("example.com", "ample.co"));
+        assert!(provider_matches("example.com", ""));
+        assert!(provider_matches("example.com", "   "));
+        assert!(!provider_matches("example.com", "other"));
+        assert!(!provider_matches("example.com", "example.*"));
     }
 }

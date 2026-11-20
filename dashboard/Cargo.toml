@@ -26,6 +26,8 @@ workspace = true
 features = [
     "CloseEvent",
     "EventTarget",
+    "Element",
+    "KeyboardEvent",
     "Location",
     "MediaQueryList",
     "MessageEvent",
