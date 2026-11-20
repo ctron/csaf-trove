@@ -156,6 +156,7 @@ mod tests {
             signatures: None,
             top_failing_tests: vec![],
             retrieval_errors: 0,
+            mirror_on_aggregators: true,
             note: None,
         };
         state

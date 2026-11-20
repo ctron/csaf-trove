@@ -827,3 +827,33 @@ async fn version_summary_ignores_missing_versions() {
         BTreeMap::from([("2.0".into(), 2), ("2.1".into(), 1)])
     );
 }
+
+/// The summary and document views expose the mirrors flag from the provider metadata.
+#[tokio::test]
+async fn mirror_flag_flows_into_summary_and_document() {
+    let db = database("sqlite::memory:", None).await;
+    // Without provider metadata the flag defaults to allowing mirroring.
+    assert!(
+        super::build_summary_from_db(&db, "example.com")
+            .await
+            .unwrap()
+            .mirror_on_aggregators
+    );
+
+    // The fixture sets `mirror_on_aggregators: false`.
+    save_provider_info(&db, &provider_info()).await.unwrap();
+    assert!(
+        !super::build_summary_from_db(&db, "example.com")
+            .await
+            .unwrap()
+            .mirror_on_aggregators
+    );
+
+    db.execute_unprepared(
+        "INSERT INTO documents (tracking_id, title, url, signature_present) VALUES ('example', 'Example', 'https://example.com/example.json', 1)",
+    )
+    .await
+    .unwrap();
+    let doc = super::load_document(&db, "example").await.unwrap().unwrap();
+    assert!(!doc.mirror_on_aggregators);
+}

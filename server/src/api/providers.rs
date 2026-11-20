@@ -45,6 +45,7 @@ pub(crate) async fn list_summaries(state: &AppState) -> Result<Vec<ProviderSumma
                 signatures: None,
                 top_failing_tests: vec![],
                 retrieval_errors: 0,
+                mirror_on_aggregators: true,
                 note: source.note.clone(),
             });
         }
@@ -111,6 +112,7 @@ pub(crate) async fn load_detail(
                     signatures: None,
                     top_failing_tests: vec![],
                     retrieval_errors: 0,
+                    mirror_on_aggregators: true,
                     note: None,
                 },
                 metrics: None,
@@ -238,11 +240,14 @@ pub async fn document_detail(
 }
 
 /// Returns the original source text of the current document version.
+///
+/// This is the full document, so it is gated on the provider's mirrors flag.
 pub async fn document_source(
     state: web::Data<AppState>,
     path: web::Path<(String, String)>,
 ) -> Result<HttpResponse, ApiError> {
     let (domain, tracking_id) = path.into_inner();
+    ensure_mirroring_allowed(&state, &domain).await?;
     let source = state
         .storage
         .read_document_raw(&domain, &tracking_id, None, usize::MAX)
@@ -301,12 +306,25 @@ pub async fn document_version_detail(
     Ok(HttpResponse::Ok().json(doc))
 }
 
+/// Returns 403 when the provider's metadata disallows mirroring.
+///
+/// A diff exposes raw lines of the full document, so it is gated on
+/// `mirror_on_CSAF_aggregators` like the raw JSON resources.
+async fn ensure_mirroring_allowed(state: &AppState, domain: &str) -> Result<(), ApiError> {
+    if state.storage.mirroring_allowed(domain).await? {
+        Ok(())
+    } else {
+        Err(ApiError::MirroringDisabled)
+    }
+}
+
 /// Returns a structured diff between a document version and its next newer version.
 pub async fn document_diff(
     state: web::Data<AppState>,
     path: web::Path<(String, String, String)>,
 ) -> Result<HttpResponse, ApiError> {
     let (domain, tracking_id, commit_id) = path.into_inner();
+    ensure_mirroring_allowed(&state, &domain).await?;
     let diff = state
         .storage
         .diff_document_versions(&domain, &tracking_id, &commit_id)
@@ -317,13 +335,31 @@ pub async fn document_diff(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         AppState,
         pipeline::sync::RetrievalFailure,
-        storage::git_repo::{commit_all, prepare_worktree},
+        storage::{
+            ProviderInfo,
+            git_repo::{commit_all, prepare_worktree},
+        },
     };
-    use actix_web::{App, http::StatusCode, test, test::TestRequest, web};
+    use actix_web::{App, ResponseError, http::StatusCode, test, test::TestRequest, web};
     use std::fs;
+
+    /// Provider metadata fixture with the given mirrors flag.
+    fn provider_info(mirror_on_aggregators: bool) -> ProviderInfo {
+        ProviderInfo {
+            canonical_url: "https://example.com/provider-metadata.json".into(),
+            publisher_name: "Example".into(),
+            publisher_category: "vendor".into(),
+            publisher_namespace: "https://example.com".into(),
+            role: Some("csaf_provider".into()),
+            list_on_aggregators: true,
+            mirror_on_aggregators,
+            last_updated: "2024-01-01T00:00:00Z".into(),
+        }
+    }
 
     /// Source responses preserve the stored bytes, even for invalid JSON, and report missing documents.
     #[actix_web::test]
@@ -380,5 +416,78 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The source endpoint serves the full raw document, so the mirrors flag gates it with 403.
+    #[actix_web::test]
+    async fn source_forbidden_when_mirroring_disallowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        state
+            .storage
+            .save_provider_info("example.com", &provider_info(false))
+            .await
+            .unwrap();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::from(state))
+                .configure(super::super::config),
+        )
+        .await;
+        let response = test::call_service(
+            &app,
+            TestRequest::get()
+                .uri("/providers/example.com/document/a/source")
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Calls the diff handler for `domain` / `tracking_id` / `commit_id`.
+    async fn call_diff(
+        state: &std::sync::Arc<AppState>,
+        domain: &str,
+    ) -> Result<HttpResponse, ApiError> {
+        document_diff(
+            web::Data::from(state.clone()),
+            web::Path::from((domain.to_string(), "A-1".to_string(), "abc123".to_string())),
+        )
+        .await
+    }
+
+    /// A provider that disallows mirroring gets 403 on the diff, before any storage lookup.
+    #[actix_web::test]
+    async fn diff_forbidden_when_mirroring_disallowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        state
+            .storage
+            .save_provider_info("a.example", &provider_info(false))
+            .await
+            .unwrap();
+
+        let err = call_diff(&state, "a.example").await.unwrap_err();
+        assert!(matches!(err, ApiError::MirroringDisabled));
+        assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
+    }
+
+    /// When mirroring is allowed (or no metadata exists), the guard passes and the
+    /// missing document surfaces as a plain 404.
+    #[actix_web::test]
+    async fn diff_passes_guard_when_mirroring_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::for_test(dir.path());
+        state
+            .storage
+            .save_provider_info("a.example", &provider_info(true))
+            .await
+            .unwrap();
+
+        let err = call_diff(&state, "a.example").await.unwrap_err();
+        assert!(matches!(err, ApiError::NotFound));
+
+        let err = call_diff(&state, "unknown.example").await.unwrap_err();
+        assert!(matches!(err, ApiError::NotFound));
     }
 }

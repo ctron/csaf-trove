@@ -90,6 +90,10 @@ pub struct ProviderSummary {
     /// Number of documents with retrieval errors.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub retrieval_errors: u64,
+    /// Whether the provider consents to being mirrored (`mirror_on_CSAF_aggregators` in its
+    /// metadata); absent in old cached summaries, which default to `true`.
+    #[serde(default = "default_true")]
+    pub mirror_on_aggregators: bool,
     /// Operator note from the source configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -97,6 +101,10 @@ pub struct ProviderSummary {
 
 fn is_zero(v: &u64) -> bool {
     *v == 0
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_version_count() -> u32 {
@@ -204,6 +212,10 @@ pub struct DocumentValidation {
     /// Retrieval error message from the last sync attempt, if the fetch failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retrieval_error: Option<String>,
+    /// Whether the provider consents to being mirrored (`mirror_on_CSAF_aggregators` in its
+    /// metadata); when `false`, endpoints returning the full document are disabled.
+    #[serde(default = "default_true")]
+    pub mirror_on_aggregators: bool,
 }
 
 /// Per-profile failure information for a single document.
@@ -394,4 +406,33 @@ pub struct DiffLineInfo {
     pub tag: DiffTag,
     /// The line content (without trailing newline).
     pub content: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cached payloads from before the flag existed deserialize with mirroring allowed.
+    #[test]
+    fn mirror_flag_defaults_to_true() {
+        let summary: ProviderSummary = serde_json::from_value(serde_json::json!({
+            "provider": "a.example",
+            "validated_at": "2024-01-01T00:00:00Z",
+            "document_count": 0,
+            "profiles": {"basic": null, "extended": null, "full": null},
+            "top_failing_tests": []
+        }))
+        .unwrap();
+        assert!(summary.mirror_on_aggregators);
+
+        let doc: DocumentValidation = serde_json::from_value(serde_json::json!({
+            "tracking_id": "A-1",
+            "title": "Advisory",
+            "url": "https://example.com/a-1.json",
+            "profiles": {"basic": null, "extended": null, "full": null},
+            "signature_present": false
+        }))
+        .unwrap();
+        assert!(doc.mirror_on_aggregators);
+    }
 }

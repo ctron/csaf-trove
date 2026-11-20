@@ -512,11 +512,16 @@ async fn load_failures_for_docs(
     }
 
     let revisions = revision_history::Entity::find()
-        .filter(revision_history::Column::DocumentId.is_in(ids))
+        .filter(revision_history::Column::DocumentId.is_in(ids.clone()))
         .order_by_asc(revision_history::Column::DocumentId)
         .order_by_asc(revision_history::Column::Id)
         .all(db)
         .await?;
+
+    let mirror_on_aggregators = load_provider_info(db)
+        .await?
+        .map(|info| info.mirror_on_aggregators)
+        .unwrap_or(true);
 
     let mut revision_map: HashMap<i64, Vec<RevisionEntry>> = HashMap::new();
     for r in revisions {
@@ -568,6 +573,7 @@ async fn load_failures_for_docs(
                 vulnerabilities: vec![],
                 version_count: doc.version_count as u32,
                 retrieval_error: doc.retrieval_error.clone(),
+                mirror_on_aggregators,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -772,6 +778,10 @@ pub async fn build_summary_from_db(
         "SELECT csaf_version AS version, COUNT(*) AS count FROM documents WHERE csaf_version IS NOT NULL AND csaf_version != '' GROUP BY csaf_version")).await? {
         csaf_versions.insert(row.try_get::<String>("", "version")?, row.try_get::<i64>("", "count")? as u64);
     }
+    let mirror_on_aggregators = load_provider_info(db)
+        .await?
+        .map(|info| info.mirror_on_aggregators)
+        .unwrap_or(true);
     Ok(ProviderSummary {
         summary_revision: SUMMARY_REVISION,
         csaf_versions: Some(csaf_versions),
@@ -788,6 +798,7 @@ pub async fn build_summary_from_db(
         signatures: Some(signatures),
         top_failing_tests,
         retrieval_errors,
+        mirror_on_aggregators,
         note: None,
     })
 }

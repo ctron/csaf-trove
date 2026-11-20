@@ -563,6 +563,17 @@ impl Storage {
         documents::load_provider_info(&db).await
     }
 
+    /// Returns whether the provider consents to being mirrored (`mirror_on_CSAF_aggregators`).
+    ///
+    /// Providers without stored metadata count as allowing mirroring; requests for their
+    /// documents fail as not found anyway, since nothing has been synced yet.
+    pub async fn mirroring_allowed(&self, domain: &str) -> Result<bool> {
+        let Some(info) = self.load_provider_info(domain).await? else {
+            return Ok(true);
+        };
+        Ok(info.mirror_on_aggregators)
+    }
+
     /// Loads provider metadata info for all providers that have results directories.
     pub async fn load_all_provider_info(&self) -> Result<Vec<(String, ProviderInfo)>> {
         let mut result = Vec::new();

@@ -29,6 +29,12 @@ pub enum ApiError {
     #[error("forbidden")]
     Forbidden,
 
+    /// The provider's metadata disallows mirroring, so the full document is not served.
+    #[error(
+        "provider does not allow mirroring (mirror_on_CSAF_aggregators: false); the full document is not served"
+    )]
+    MirroringDisabled,
+
     /// The request conflicts with the current resource state.
     #[error("{0}")]
     Conflict(String),
@@ -43,7 +49,7 @@ impl actix_web::ResponseError for ApiError {
         match self {
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
-            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Forbidden | Self::MirroringDisabled => StatusCode::FORBIDDEN,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -65,6 +71,7 @@ impl actix_web::ResponseError for ApiError {
                 Self::NotFound => "not-found",
                 Self::Unauthorized => "unauthorized",
                 Self::Forbidden => "forbidden",
+                Self::MirroringDisabled => "mirroring-disabled",
                 Self::Conflict(_) => "conflict",
                 Self::Internal(_) => "internal-error",
             }
@@ -85,5 +92,19 @@ pub trait OptionExt<T> {
 impl<T> OptionExt<T> for Option<T> {
     fn or_not_found(self) -> Result<T, ApiError> {
         self.ok_or(ApiError::NotFound)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::ResponseError;
+
+    /// A mirroring refusal maps to 403, so clients can tell it apart from a missing resource.
+    #[test]
+    fn mirroring_disabled_is_forbidden() {
+        let err = ApiError::MirroringDisabled;
+        assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
+        assert_eq!(err.error_response().status(), StatusCode::FORBIDDEN);
     }
 }

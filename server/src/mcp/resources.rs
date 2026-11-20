@@ -1,6 +1,6 @@
 //! MCP resources exposing the raw JSON of stored advisories.
 
-use super::internal;
+use super::{internal, mirroring_disabled};
 use crate::{AppState, storage::versions::RawDocument};
 use bytesize::ByteSize;
 use percent_encoding::percent_decode_str;
@@ -68,6 +68,15 @@ pub async fn read(state: &AppState, uri: &str) -> Result<ReadResourceResult, Err
             None,
         ));
     };
+    // The resource returns the full raw document, so it is gated on the provider's mirrors flag.
+    if !state
+        .storage
+        .mirroring_allowed(&advisory.domain)
+        .await
+        .map_err(internal)?
+    {
+        return Err(mirroring_disabled(&advisory.domain));
+    }
     let raw = state
         .storage
         .read_document_raw(

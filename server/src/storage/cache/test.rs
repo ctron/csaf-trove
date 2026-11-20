@@ -38,6 +38,7 @@ pub(crate) fn summary(provider: &str, document_count: u64) -> ProviderSummary {
         signatures: None,
         top_failing_tests: vec![],
         retrieval_errors: 0,
+        mirror_on_aggregators: true,
         note: None,
     }
 }
@@ -78,6 +79,7 @@ pub(crate) fn document(tracking_id: &str, released: &str, cves: &[&str]) -> Docu
             .collect(),
         version_count: 1,
         retrieval_error: None,
+        mirror_on_aggregators: true,
     }
 }
 
@@ -290,4 +292,36 @@ async fn reload_picks_up_external_summary_changes() {
         .await
         .unwrap();
     assert_eq!(storage.list_summaries().await.unwrap()[0].document_count, 7);
+}
+
+/// The mirrors flag from the provider metadata drives `mirroring_allowed`; unknown providers allow it.
+#[tokio::test]
+async fn mirroring_allowed_follows_provider_metadata() {
+    use crate::storage::ProviderInfo;
+
+    let info = |mirror_on_aggregators| ProviderInfo {
+        canonical_url: "https://example.com/provider-metadata.json".into(),
+        publisher_name: "Example".into(),
+        publisher_category: "vendor".into(),
+        publisher_namespace: "https://example.com".into(),
+        role: Some("csaf_provider".into()),
+        list_on_aggregators: true,
+        mirror_on_aggregators,
+        last_updated: "2024-01-01T00:00:00Z".into(),
+    };
+
+    let (_dir, storage) = storage(CacheConfig::default());
+    assert!(storage.mirroring_allowed("unknown.example").await.unwrap());
+
+    storage
+        .save_provider_info("a.example", &info(false))
+        .await
+        .unwrap();
+    assert!(!storage.mirroring_allowed("a.example").await.unwrap());
+
+    storage
+        .save_provider_info("a.example", &info(true))
+        .await
+        .unwrap();
+    assert!(storage.mirroring_allowed("a.example").await.unwrap());
 }

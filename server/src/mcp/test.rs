@@ -148,3 +148,89 @@ async fn rejects_empty_allowed_hosts() {
     };
     assert!(service(state, &config).is_err());
 }
+
+/// Providers that disallow mirroring get an error instead of raw JSON or diffs.
+#[actix_web::test]
+async fn raw_json_and_diffs_blocked_when_mirroring_disallowed() {
+    use crate::storage::ProviderInfo;
+
+    let info = |mirror_on_aggregators| ProviderInfo {
+        canonical_url: "https://a.example/provider-metadata.json".into(),
+        publisher_name: "A".into(),
+        publisher_category: "vendor".into(),
+        publisher_namespace: "https://a.example".into(),
+        role: Some("csaf_provider".into()),
+        list_on_aggregators: true,
+        mirror_on_aggregators,
+        last_updated: "2024-01-01T00:00:00Z".into(),
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let state = AppState::for_test(dir.path());
+    provider(
+        &state.storage,
+        "a.example",
+        &[document("A-1", "2024-01-01T00:00:00Z", &["CVE-2024-3094"])],
+    )
+    .await;
+    state
+        .storage
+        .save_provider_info("a.example", &info(false))
+        .await
+        .unwrap();
+
+    let mcp = service(state.clone(), &McpConfig::default()).unwrap();
+    let app = test::init_service(App::new().service(web::scope("/mcp").service(mcp.scope()))).await;
+
+    // The raw advisory resource refuses to serve the full document.
+    let (status, body) = send(
+        &app,
+        rpc(
+            "localhost",
+            json!({"jsonrpc": "2.0", "id": 1, "method": "resources/read", "params": {"uri": "csaf://a.example/A-1"}}),
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("mirror_on_CSAF_aggregators"), "{body}");
+
+    // The diff tool refuses as well, before touching the git repo.
+    let (status, body) = send(
+        &app,
+        rpc(
+            "localhost",
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": "diff_document_version",
+                "arguments": {"domain": "a.example", "tracking_id": "A-1", "commit_id": "abc123"}
+            }}),
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["isError"], true, "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("mirror_on_CSAF_aggregators"), "{text}");
+
+    // With mirroring allowed, the resource passes the guard and only fails because no
+    // git blob exists in this fixture.
+    state
+        .storage
+        .save_provider_info("a.example", &info(true))
+        .await
+        .unwrap();
+    let (status, body) = send(
+        &app,
+        rpc(
+            "localhost",
+            json!({"jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": {"uri": "csaf://a.example/A-1"}}),
+        )
+        .to_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("No advisory"), "{body}");
+}

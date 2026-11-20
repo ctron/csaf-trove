@@ -219,6 +219,15 @@ pub fn DocumentPage() -> impl IntoView {
         let t = tracking_id();
         async move { fetch_document(d, t).await }
     });
+    // Whether the provider's metadata allows mirroring; when false, diffs of the full
+    // document are not served (the server answers those requests with 403).
+    let mirroring_allowed = Signal::derive(move || {
+        detail
+            .get()
+            .and_then(Result::ok)
+            .map(|d| d.mirror_on_aggregators)
+            .unwrap_or(true)
+    });
 
     // Needed by the Overview tab as well, so always loaded.
     let content = LocalResource::new(move || {
@@ -269,8 +278,10 @@ pub fn DocumentPage() -> impl IntoView {
         let v = selected_version.get();
         async move {
             match v {
-                Some(commit_id) => Some(fetch_diff(d, t, commit_id).await),
-                None => None,
+                Some(commit_id) if mirroring_allowed.get() => {
+                    Some(fetch_diff(d, t, commit_id).await)
+                }
+                _ => None,
             }
         }
     });
@@ -354,10 +365,12 @@ pub fn DocumentPage() -> impl IntoView {
                     count=Signal::derive(move || detail.get().and_then(Result::ok).map(|d| u64::from(d.version_count)))
                     on_click=Callback::new(move |_| navigate.run(history_url()))
                 >"History"</ContentTab>
-                <ContentTab
-                    active=Signal::derive(move || tab.get() == "source")
-                    on_click=Callback::new(move |_| navigate.run(format!("{}/source", document_url())))
-                >"Source"</ContentTab>
+                {move || mirroring_allowed.get().then(|| view! {
+                    <ContentTab
+                        active=Signal::derive(move || tab.get() == "source")
+                        on_click=Callback::new(move |_| navigate.run(format!("{}/source", document_url())))
+                    >"Source"</ContentTab>
+                })}
             </ContentTabs>
 
             {move || {
@@ -376,8 +389,16 @@ pub fn DocumentPage() -> impl IntoView {
                             })}
                         </Suspense>
                     }.into_any()
-                } else if t == "source" {
+                } else if t == "source" && mirroring_allowed.get() {
                     view! { <DocumentSource domain=domain() tracking_id=tracking_id() /> }.into_any()
+                } else if t == "source" {
+                    view! {
+                        <p class="text-sm text-gray-500 dark:text-gray-400 py-4">
+                            "The full document source is not served for this provider: its metadata sets "
+                            <code class="font-mono">"mirror_on_CSAF_aggregators"</code>
+                            " to false."
+                        </p>
+                    }.into_any()
                 } else if t == "history" {
                     view! {
                         {move || {
@@ -390,13 +411,25 @@ pub fn DocumentPage() -> impl IntoView {
                                             None => view! { <span /> }.into_any(),
                                         })}
                                     </Suspense>
-                                    <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading diff..."</p> }>
-                                        {move || diff.get().map(|outer| match outer {
-                                            Some(Ok(lines)) => view! { <DiffView lines=lines /> }.into_any(),
-                                            Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-sm py-4">"Diff unavailable: " {e}</p> }.into_any(),
-                                            None => view! { <span /> }.into_any(),
-                                        })}
-                                    </Suspense>
+                                    {move || if mirroring_allowed.get() {
+                                        view! {
+                                            <Suspense fallback=|| view! { <p class="text-gray-500 dark:text-gray-400 text-center py-12">"Loading diff..."</p> }>
+                                                {move || diff.get().map(|outer| match outer {
+                                                    Some(Ok(lines)) => view! { <DiffView lines=lines /> }.into_any(),
+                                                    Some(Err(e)) => view! { <p class="text-red-500 dark:text-red-400 text-sm py-4">"Diff unavailable: " {e}</p> }.into_any(),
+                                                    None => view! { <span /> }.into_any(),
+                                                })}
+                                            </Suspense>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <p class="text-sm text-gray-500 dark:text-gray-400 py-4">
+                                                "Diffs are not served for this provider: its metadata sets "
+                                                <code class="font-mono">"mirror_on_CSAF_aggregators"</code>
+                                                " to false."
+                                            </p>
+                                        }.into_any()
+                                    }}
                                 }.into_any()
                             } else {
                                 view! {

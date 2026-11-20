@@ -482,6 +482,8 @@ fn build_document_validation(doc: DocumentResult) -> DocumentValidation {
         vulnerabilities: doc.vulnerabilities,
         version_count: 1,
         retrieval_error,
+        // Placeholder; the load path fills this from the provider metadata.
+        mirror_on_aggregators: true,
     }
 }
 

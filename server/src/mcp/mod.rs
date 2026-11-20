@@ -30,6 +30,8 @@ per-document validation results, and get_document_content for an advisory's note
 vulnerabilities and scores. Document versions can be listed and diffed. \
 Raw advisory JSON is available as the resource csaf://{domain}/{tracking_id}, with both \
 identifiers percent-encoded (domain may be a full metadata URL). \
+Raw JSON and diffs are only served for providers whose metadata allows mirroring \
+(mirror_on_CSAF_aggregators); other providers return an error. \
 All data is read-only.";
 
 /// MCP endpoint configuration.
@@ -127,4 +129,15 @@ fn tool_error(message: impl Into<String>) -> Result<CallToolResult, ErrorData> {
 /// Maps an internal error to an MCP internal error.
 fn internal(error: impl std::fmt::Display) -> ErrorData {
     ErrorData::internal_error(error.to_string(), None)
+}
+
+/// Error returned when a provider's metadata disallows mirroring, so raw documents and diffs are not served.
+fn mirroring_disabled(domain: &str) -> ErrorData {
+    ErrorData::invalid_request(
+        format!(
+            "Provider {domain} does not allow mirroring (mirror_on_CSAF_aggregators: false); \
+             the full document is not served"
+        ),
+        None,
+    )
 }

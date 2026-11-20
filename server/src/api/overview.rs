@@ -273,6 +273,7 @@ mod tests {
             signatures: None,
             top_failing_tests: vec![],
             retrieval_errors,
+            mirror_on_aggregators: true,
             note: None,
         }
     }

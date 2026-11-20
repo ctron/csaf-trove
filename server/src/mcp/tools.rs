@@ -355,6 +355,20 @@ impl TroveMcp {
         &self,
         Parameters(params): Parameters<VersionParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        // A diff exposes raw lines of the full document, so it is gated on the mirrors flag.
+        if !self
+            .state
+            .storage
+            .mirroring_allowed(&params.domain)
+            .await
+            .map_err(internal)?
+        {
+            return tool_error(format!(
+                "Provider {} does not allow mirroring (mirror_on_CSAF_aggregators: false); \
+                 the full document is not served",
+                params.domain
+            ));
+        }
         match self
             .state
             .storage

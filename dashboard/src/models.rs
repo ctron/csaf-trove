@@ -7,6 +7,10 @@ fn default_version_count() -> u32 {
     1
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSummary {
     /// Document counts by CSAF specification version; absent before revalidation.
@@ -26,6 +30,9 @@ pub struct ProviderSummary {
     /// Number of documents with retrieval errors.
     #[serde(default)]
     pub retrieval_errors: u64,
+    /// Whether the provider consents to being mirrored (`mirror_on_CSAF_aggregators`).
+    #[serde(default = "default_true")]
+    pub mirror_on_aggregators: bool,
     /// Operator note from the source configuration.
     #[serde(default)]
     pub note: Option<String>,
@@ -218,6 +225,9 @@ pub struct DocumentValidation {
     /// Retrieval error message from the last sync attempt.
     #[serde(default)]
     pub retrieval_error: Option<String>,
+    /// Whether the provider consents to being mirrored; when false, raw documents and diffs are not served.
+    #[serde(default = "default_true")]
+    pub mirror_on_aggregators: bool,
 }
 
 /// A single entry in the CSAF revision history.

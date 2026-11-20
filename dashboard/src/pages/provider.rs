@@ -142,6 +142,12 @@ fn ProviderDetailView(detail: ProviderDetail) -> impl IntoView {
                         <p><span class="text-gray-500 dark:text-gray-500">"Publisher: "</span><span class="text-gray-700 dark:text-gray-300">{name}</span></p>
                     })}
                     <p><span class="text-gray-500 dark:text-gray-500">"Last synced: "</span><span class="text-gray-700 dark:text-gray-300">{summary.validated_at}</span></p>
+                    {(!summary.mirror_on_aggregators).then(|| view! {
+                        <p class="flex items-center gap-x-2">
+                            <span class="text-gray-500 dark:text-gray-500">"Mirroring: "</span>
+                            <Badge variant=BadgeVariant::Warning>"disabled by provider metadata"</Badge>
+                        </p>
+                    })}
                 </div>
 
                 <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mt-4">

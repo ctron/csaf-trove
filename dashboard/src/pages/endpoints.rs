@@ -47,7 +47,7 @@ const MCP_TOOLS: &[(&str, &str)] = &[
     ),
     (
         "diff_document_version",
-        "Changes between a document version and the next newer one.",
+        "Changes between a document version and the next newer one. Only for providers that allow mirroring.",
     ),
     ("get_sync_history", "Past sync runs of a provider."),
     ("get_sync_status", "Current sync status of every provider."),
@@ -138,6 +138,13 @@ pub fn EndpointsPage() -> impl IntoView {
                         "The raw JSON of an advisory, with both identifiers percent-encoded. Append "
                         <Code>"@{commit_id}"</Code>
                         " for a historical version."
+                    </p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                        "Raw JSON and diffs are only served for providers whose metadata allows mirroring "
+                        <Code>"(mirror_on_CSAF_aggregators)"</Code>
+                        "; for other providers they return an error. The same applies to the document "
+                        <Code>"/source"</Code>
+                        " endpoint and the Source tab of the dashboard."
                     </p>
                     <Code block=true>"csaf://{domain}/{tracking_id}"</Code>
                 </Panel>
