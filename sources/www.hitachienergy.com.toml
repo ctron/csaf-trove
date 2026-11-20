@@ -1,0 +1,2 @@
+domain = "https://aggregator.cert-bund.de/.well-known/csaf-aggregator/www_hitachienergy_com_cybersecurity_alerts-and-notifications/provider-metadata.json"
+note = "Origin serves no provider-metadata.json on hitachienergy.com; using the BSI CSAF aggregator mirror"
