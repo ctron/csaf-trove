@@ -1541,7 +1541,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-common"
-version = "0.1.54"
+version = "0.1.55"
 dependencies = [
  "serde",
  "strum",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-dashboard"
-version = "0.1.54"
+version = "0.1.55"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-entity"
-version = "0.1.54"
+version = "0.1.55"
 dependencies = [
  "sea-orm",
  "time",
@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-migration"
-version = "0.1.54"
+version = "0.1.55"
 dependencies = [
  "sea-orm",
  "sea-orm-migration",
@@ -1590,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "csaf-trove-server"
-version = "0.1.54"
+version = "0.1.55"
 dependencies = [
  "actix-web",
  "actix-web-static-files",
@@ -6326,9 +6326,9 @@ dependencies = [
 
 [[package]]
 name = "spdx"
-version = "0.13.6"
+version = "0.13.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "646c5a367da914e3babcb9cd8e91c37ccaac42325b8f86f036513ad103f2a716"
+checksum = "9704219ef7583d19c5f5ef7de4635606e5f6fc27528d41b6bae654cb5a3df1b3"
 dependencies = [
  "smallvec",
 ]
