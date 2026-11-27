@@ -79,5 +79,5 @@ zstd = "0.14"
 # memory consumption fix: https://github.com/csaf-rs/csaf/pull/1523
 csaf-rs = { git = "https://github.com/ctron/csaf-rust", rev = "32808a25ee746662334c934344611dfbc539cfc4" }
 # intern pool memory fix, until released: https://github.com/scm-rs/csaf-walker/pull/101
-csaf-walker = { git = "https://github.com/scm-rs/csaf-walker", rev = "38ca6ae0ac4f20349f30103671f4b92b6eeba95f" }
-walker-common = { git = "https://github.com/scm-rs/csaf-walker", rev = "38ca6ae0ac4f20349f30103671f4b92b6eeba95f" }
+csaf-walker = { git = "https://github.com/scm-rs/csaf-walker", rev = "e50fbb6bd8e751d3d8746d6f408e4b7f99579fd7" }
+walker-common = { git = "https://github.com/scm-rs/csaf-walker", rev = "e50fbb6bd8e751d3d8746d6f408e4b7f99579fd7" }

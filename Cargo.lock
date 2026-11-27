@@ -1645,7 +1645,7 @@ dependencies = [
 [[package]]
 name = "csaf-walker"
 version = "0.22.0"
-source = "git+https://github.com/scm-rs/csaf-walker?rev=38ca6ae0ac4f20349f30103671f4b92b6eeba95f#38ca6ae0ac4f20349f30103671f4b92b6eeba95f"
+source = "git+https://github.com/scm-rs/csaf-walker?rev=e50fbb6bd8e751d3d8746d6f408e4b7f99579fd7#e50fbb6bd8e751d3d8746d6f408e4b7f99579fd7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7525,7 +7525,7 @@ dependencies = [
 [[package]]
 name = "walker-common"
 version = "0.22.0"
-source = "git+https://github.com/scm-rs/csaf-walker?rev=38ca6ae0ac4f20349f30103671f4b92b6eeba95f#38ca6ae0ac4f20349f30103671f4b92b6eeba95f"
+source = "git+https://github.com/scm-rs/csaf-walker?rev=e50fbb6bd8e751d3d8746d6f408e4b7f99579fd7#e50fbb6bd8e751d3d8746d6f408e4b7f99579fd7"
 dependencies = [
  "anyhow",
  "async-trait",
