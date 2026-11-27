@@ -318,6 +318,18 @@ async fn persist_job_counts(state: &Arc<AppState>, domain: &str, job: &JobStatus
     }
 }
 
+/// Consolidates a provider repository's packs, logging instead of failing.
+///
+/// Maintenance must never block a sync; failures only leave the repository unconsolidated.
+async fn maintain_repository(domain: &str, repo_path: &Path) {
+    let repo = repo_path.to_path_buf();
+    match spawn_blocking(move || git_maintenance::maintain_repository(&repo)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::warn!("Git maintenance for {domain} failed: {e:#}"),
+        Err(e) => tracing::warn!("Git maintenance for {domain} panicked: {e}"),
+    }
+}
+
 /// Runs a provider sync and removes its scratch directory on success or failure.
 async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let domain = &source.domain;
@@ -325,13 +337,7 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
     let worktree_dir = state.work_dir().join(ProviderKey::from(domain.as_str()));
 
     let result = async {
-        // Maintenance must never block a sync; failures only leave the repository unconsolidated.
-        let repo = repo_path.clone();
-        match spawn_blocking(move || git_maintenance::maintain_repository(&repo)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::warn!("Git maintenance for {domain} failed: {e:#}"),
-            Err(e) => tracing::warn!("Git maintenance for {domain} panicked: {e}"),
-        }
+        maintain_repository(domain, &repo_path).await;
 
         state
             .update_job_phase(domain, PipelinePhase::Checkout)
@@ -382,6 +388,9 @@ async fn run_pipeline(state: &Arc<AppState>, source: &Source) -> Result<()> {
                 .await?
         };
         tracing::debug!(commit = %committed.commit_id, "Committed provider snapshot");
+        // A commit writes one pack per staged batch; consolidate them before the later phases
+        // open the repository, as libgit2 caches delta bases per open pack.
+        maintain_repository(domain, &repo_path).await;
 
         persist_provider_metadata(state, domain, &worktree_dir).await;
 
@@ -743,7 +752,7 @@ async fn persist_provider_metadata(state: &Arc<AppState>, domain: &str, worktree
         role: Some(role_str.to_string()),
         list_on_aggregators: metadata.list_on_csaf_aggregators,
         mirror_on_aggregators: metadata.mirror_on_csaf_aggregators,
-        last_updated: metadata.last_updated.to_rfc3339(),
+        last_updated: metadata.last_updated.to_string(),
     };
 
     if let Err(e) = state.storage.save_provider_info(domain, &info).await {

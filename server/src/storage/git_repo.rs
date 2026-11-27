@@ -134,6 +134,13 @@ pub fn commit_all(worktree: &PreparedWorktree, message: &str) -> Result<bool> {
     commit_all_with_progress(worktree, message, u64::MAX, |_, _| {})
 }
 
+/// Number of blob pack flushes after which staging reopens the repository.
+///
+/// libgit2 keeps a delta base cache for every pack it has opened, released only with the
+/// repository handle. A large snapshot writes thousands of packs, so a single long-lived
+/// handle would accumulate gigabytes of cache.
+const REOPEN_EVERY_FLUSHES: usize = 64;
+
 /// Like [`commit_all`], but calls `progress(current, total)` after staging each file.
 ///
 /// `pack_threshold` controls how many bytes of blob data are buffered in memory
@@ -144,118 +151,150 @@ pub fn commit_all_with_progress(
     pack_threshold: u64,
     progress: impl Fn(u64, u64),
 ) -> Result<bool> {
+    commit_all_reopening(
+        worktree,
+        message,
+        pack_threshold,
+        REOPEN_EVERY_FLUSHES,
+        progress,
+    )
+}
+
+/// Implements [`commit_all_with_progress`], reopening the repository every `reopen_every` flushes.
+fn commit_all_reopening(
+    worktree: &PreparedWorktree,
+    message: &str,
+    pack_threshold: u64,
+    reopen_every: usize,
+    progress: impl Fn(u64, u64),
+) -> Result<bool> {
     let worktree_path = &worktree.worktree_path;
     // Index::open would silently create an empty index if scratch data was lost.
     fs::metadata(worktree_path.join(".git/index")).context("Missing prepared worktree index")?;
-    {
-        let repo = open_worktree(worktree)?;
-        let current = match repo.find_reference(&worktree.branch) {
-            Ok(reference) => Some(reference.peel_to_commit()?.id()),
-            Err(error) if error.code() == ErrorCode::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
-        if current != worktree.base_commit {
-            return Err(WorktreeError::BranchChanged(worktree.branch.clone()).into());
-        }
-        let mut index = repo.index()?;
 
+    let git_dir = worktree_path.join(".git");
+    let total = WalkDir::new(worktree_path)
+        .into_iter()
+        .filter_entry(|e| e.path() != git_dir)
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .count() as u64;
+
+    let mut entries = WalkDir::new(worktree_path)
+        .into_iter()
+        .filter_entry(|e| e.path() != git_dir);
+    let mut staged = 0u64;
+    let mut first = true;
+    loop {
+        let repo = open_worktree(worktree)?;
+        let mut index = repo.index()?;
         let odb = repo.odb()?;
         let mempack = odb.add_new_mempack_backend(1000)?;
 
-        // Downloaded key sets replace the old set, including keys removed by rotation.
-        if worktree_path.join("metadata/keys").is_dir() {
-            let keys: Vec<_> = index
-                .iter()
-                .filter(|entry| entry.path.starts_with(b"metadata/keys/"))
-                .map(|entry| entry.path)
-                .collect();
-            for key in keys {
-                index.remove_path(Path::new(from_utf8(&key)?))?;
+        if first {
+            first = false;
+            let current = match repo.find_reference(&worktree.branch) {
+                Ok(reference) => Some(reference.peel_to_commit()?.id()),
+                Err(error) if error.code() == ErrorCode::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            if current != worktree.base_commit {
+                return Err(WorktreeError::BranchChanged(worktree.branch.clone()).into());
+            }
+
+            // Downloaded key sets replace the old set, including keys removed by rotation.
+            if worktree_path.join("metadata/keys").is_dir() {
+                let keys: Vec<_> = index
+                    .iter()
+                    .filter(|entry| entry.path.starts_with(b"metadata/keys/"))
+                    .map(|entry| entry.path)
+                    .collect();
+                for key in keys {
+                    index.remove_path(Path::new(from_utf8(&key)?))?;
+                }
             }
         }
 
-        let git_dir = worktree_path.join(".git");
-        let total = WalkDir::new(worktree_path)
-            .into_iter()
-            .filter_entry(|e| e.path() != git_dir)
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-            .count() as u64;
-
-        let mut staged = 0u64;
+        let mut flushes = 0;
         let mut buffered_bytes = 0u64;
         let mut buffered_objects = Vec::new();
-        let git_dir = worktree_path.join(".git");
-        for entry in WalkDir::new(worktree_path)
-            .into_iter()
-            .filter_entry(|e| e.path() != git_dir)
-        {
+        let mut finished = true;
+        for entry in entries.by_ref() {
             let entry = entry.context("failed to walk worktree")?;
-            if entry.file_type().is_file() {
-                let relative = entry
-                    .path()
-                    .strip_prefix(worktree_path)
-                    .context("file is not under worktree")?;
-                let logical = scratch::logical_path(relative);
-                if scratch::is_advisory(&logical) && !logical.starts_with("metadata") {
-                    for suffix in ["asc", "sha256", "sha512"] {
-                        let sidecar = logical.with_added_extension(suffix);
-                        if !worktree_path.join(&sidecar).exists()
-                            && index.get_path(&sidecar, 0).is_some()
-                        {
-                            index.remove_path(&sidecar)?;
-                        }
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(worktree_path)
+                .context("file is not under worktree")?;
+            let logical = scratch::logical_path(relative);
+            if scratch::is_advisory(&logical) && !logical.starts_with("metadata") {
+                for suffix in ["asc", "sha256", "sha512"] {
+                    let sidecar = logical.with_added_extension(suffix);
+                    if !worktree_path.join(&sidecar).exists()
+                        && index.get_path(&sidecar, 0).is_some()
+                    {
+                        index.remove_path(&sidecar)?;
                     }
                 }
-                if logical != relative {
-                    ensure!(
-                        !worktree_path.join(&logical).exists(),
-                        "Both plain and compressed scratch files exist: {}",
-                        logical.display()
-                    );
-                    let data = scratch::read(entry.path())?;
-                    buffered_bytes += data.len() as u64;
-                    let entry = index.get_path(&logical, 0).unwrap_or(IndexEntry {
-                        ctime: IndexTime::new(0, 0),
-                        mtime: IndexTime::new(0, 0),
-                        dev: 0,
-                        ino: 0,
-                        mode: 0o100644,
-                        uid: 0,
-                        gid: 0,
-                        file_size: 0,
-                        id: Oid::ZERO_SHA1,
-                        flags: 0,
-                        flags_extended: 0,
-                        path: logical
-                            .to_str()
-                            .context("Invalid scratch path")?
-                            .as_bytes()
-                            .to_vec(),
-                    });
-                    index.add_frombuffer(&entry, &data)?;
-                } else {
-                    buffered_bytes += entry.metadata()?.len();
-                    index.add_path(relative)?;
-                }
-                buffered_objects.push(
-                    index
-                        .get_path(&logical, 0)
-                        .context("Missing staged index entry")?
-                        .id,
+            }
+            if logical != relative {
+                ensure!(
+                    !worktree_path.join(&logical).exists(),
+                    "Both plain and compressed scratch files exist: {}",
+                    logical.display()
                 );
-                staged += 1;
-                progress(staged, total);
+                let data = scratch::read(entry.path())?;
+                buffered_bytes += data.len() as u64;
+                let entry = index.get_path(&logical, 0).unwrap_or(IndexEntry {
+                    ctime: IndexTime::new(0, 0),
+                    mtime: IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode: 0o100644,
+                    uid: 0,
+                    gid: 0,
+                    file_size: 0,
+                    id: Oid::ZERO_SHA1,
+                    flags: 0,
+                    flags_extended: 0,
+                    path: logical
+                        .to_str()
+                        .context("Invalid scratch path")?
+                        .as_bytes()
+                        .to_vec(),
+                });
+                index.add_frombuffer(&entry, &data)?;
+            } else {
+                buffered_bytes += entry.metadata()?.len();
+                index.add_path(relative)?;
+            }
+            buffered_objects.push(
+                index
+                    .get_path(&logical, 0)
+                    .context("Missing staged index entry")?
+                    .id,
+            );
+            staged += 1;
+            progress(staged, total);
 
-                if buffered_bytes >= pack_threshold {
-                    flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
-                    buffered_objects.clear();
-                    buffered_bytes = 0;
+            if buffered_bytes >= pack_threshold {
+                flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
+                buffered_objects.clear();
+                buffered_bytes = 0;
+                flushes += 1;
+                if flushes >= reopen_every {
+                    finished = false;
+                    break;
                 }
             }
         }
         flush_mempack(&mempack, &repo, &odb, &buffered_objects)?;
         index.write()?;
+        if finished {
+            break;
+        }
     }
 
     // Only blobs use the bounded mempack. Reopen without that backend so trees and
@@ -677,6 +716,7 @@ fn pretty_print_or_raw(blob: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::{ObjectType, TreeWalkMode, TreeWalkResult};
     use std::{collections::BTreeSet, fs, io, path::PathBuf};
 
     /// Lists pack and index filenames to isolate objects written by an incremental sync.
@@ -1152,6 +1192,56 @@ mod tests {
             }
         }
         count
+    }
+
+    /// Reopening the repository between flushes keeps every staged file and index removal.
+    #[test]
+    fn commit_reopening_keeps_all_changes() {
+        let (dir, bare_path) = create_test_repo(&[
+            ("metadata/keys/old.asc", b"old key"),
+            ("example.com/advisories/kept.json", b"kept"),
+        ]);
+        let work_path = dir.path().join("reopening");
+        let prepared = prepare_worktree(&bare_path, &work_path).unwrap();
+        scratch::write(&work_path, Path::new("metadata/keys/new.asc"), b"new key").unwrap();
+        for i in 0..10 {
+            scratch::write(
+                &work_path,
+                Path::new(&format!("example.com/advisories/{i}.json")),
+                format!("document {i}").as_bytes(),
+            )
+            .unwrap();
+        }
+
+        // Flush after every file and reopen after every second flush.
+        assert!(commit_all_reopening(&prepared, "reopening", 1, 2, |_, _| {}).unwrap());
+
+        let mut expected: Vec<String> = (0..10)
+            .map(|i| format!("example.com/advisories/{i}.json"))
+            .collect();
+        expected.extend([
+            "example.com/advisories/kept.json".into(),
+            "metadata/keys/new.asc".into(),
+        ]);
+        expected.sort();
+        let repo = Repository::open_bare(&bare_path).unwrap();
+        let tree = repo.head().unwrap().peel_to_tree().unwrap();
+        let mut paths = Vec::new();
+        tree.walk(TreeWalkMode::PreOrder, |dir, entry| {
+            if entry.kind() == Some(ObjectType::Blob) {
+                paths.push(format!("{dir}{}", entry.name().unwrap()));
+            }
+            TreeWalkResult::Ok
+        })
+        .unwrap();
+        paths.sort();
+        assert_eq!(paths, expected);
+        assert_eq!(
+            read_head_blob(&bare_path, "example.com/advisories/7.json")
+                .unwrap()
+                .unwrap(),
+            b"document 7"
+        );
     }
 
     #[test]
